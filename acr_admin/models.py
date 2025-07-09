@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 # Create your models here.
 class Channel(models.Model):
     name = models.CharField(max_length=255, blank=True)  # Optional label
-    channel_id = models.CharField(max_length=255, unique=True)
+    channel_id = models.CharField(max_length=255)
     project_id = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)  # To soft delete

@@ -3,7 +3,7 @@ from acr_admin.models import GeneralSetting
 
 class ACRCloudUtils:
     @staticmethod
-    def get_channel_name_by_id(pid: int, channel_id: int, access_token: str = None):
+    def get_channel_name_by_id(pid: int, channel_id, access_token: str = None):
         """
         Fetches the channel list for the given project id (pid) from ACRCloud API,
         finds the channel with the given channel_id, and returns its name.
@@ -11,6 +11,11 @@ class ACRCloudUtils:
         If channel_id is not found, returns error dict and 403 status code with a channel not found message.
         On success, returns (channel_name, None).
         """
+        # Ensure channel_id is an integer, or return error if not valid
+        try:
+            channel_id_int = int(channel_id)
+        except (ValueError, TypeError):
+            return {"error": "Invalid channel ID. Must be an integer or string of digits."}, 400
         url = f"https://api-v2.acrcloud.com/api/bm-bd-projects/{pid}/channels"
         if not access_token:
             settings = GeneralSetting.objects.first()
@@ -25,10 +30,10 @@ class ACRCloudUtils:
             response.raise_for_status()
             data = response.json().get("data", [])
             for channel in data:
-                if channel.get("id") == channel_id:
+                if channel.get("id") == channel_id_int:
                     return channel.get("name"), None
             # If channel_id not found
             return {"error": "Channel ID not found in this project"}, 403
         except Exception as e:
             # Optionally log the error
-            return {"error": "You don't have permission to access this project (invalid project id)"}, 403
+            return {"error": "You don't have permission to access this project"}, 403
