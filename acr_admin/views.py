@@ -13,58 +13,44 @@ from .utils import ACRCloudUtils
 
 
 
-@csrf_exempt
-@require_http_methods(["PUT"])
-def update_settings_and_buckets(request):
-    try:
-        data = json.loads(request.body)
-        print(data)
-        # Update or create GeneralSetting (assuming only one row)
-        settings_data = data.get('settings', {})
-        settings_obj, _ = GeneralSetting.objects.get_or_create(id=settings_data.get('id', 1))
-        for field in [
-            'openai_api_key', 'openai_org_id', 'arc_cloud_api_key', 'revai_access_token',
-            'summarize_transcript_prompt', 'sentiment_analysis_prompt', 'general_topics_prompt', 'iab_topics_prompt']:
-            if field in settings_data:
-                setattr(settings_obj, field, settings_data[field])
-        settings_obj.save()
+@method_decorator(csrf_exempt, name='dispatch')
+class SettingsAndBucketsView(View):
+    def get(self, request, *args, **kwargs):
+        try:
+            settings_obj = GeneralSetting.objects.first()
+            settings_data = general_setting_to_dict(settings_obj) if settings_obj else None
+            buckets = WellnessBucket.objects.all()
+            buckets_data = [wellness_bucket_to_dict(b) for b in buckets]
+            return JsonResponse({'success': True, 'settings': settings_data, 'buckets': buckets_data})
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
-        # Upsert WellnessBuckets
-        buckets = data.get('buckets', [])
-        bucket_ids_in_payload = set()
-        for bucket in buckets:
-            bucket_id = bucket.get('bucket_id')
-            # if bucket_id:
-            wb, _ = WellnessBucket.objects.get_or_create(bucket_id=bucket_id)
-            # else:
-            #     # Generate a new bucket_id (e.g., 'bucket_N')
-            #     last = WellnessBucket.objects.order_by('-id').first()
-            #     next_id = f"bucket_{(last.id + 1) if last else 1}"
-            #     wb = WellnessBucket(bucket_id=next_id)
-            wb.title = bucket.get('title', '')
-            wb.description = bucket.get('description', '')
-            wb.prompt = bucket.get('prompt', '')
-            wb.save()
-            bucket_ids_in_payload.add(wb.bucket_id)
+    def put(self, request, *args, **kwargs):
+        try:
+            data = json.loads(request.body)
+            settings_data = data.get('settings', {})
+            settings_obj, _ = GeneralSetting.objects.get_or_create(id=settings_data.get('id', 1))
+            for field in [
+                'openai_api_key', 'openai_org_id', 'arc_cloud_api_key', 'revai_access_token',
+                'summarize_transcript_prompt', 'sentiment_analysis_prompt', 'general_topics_prompt', 'iab_topics_prompt']:
+                if field in settings_data:
+                    setattr(settings_obj, field, settings_data[field])
+            settings_obj.save()
 
+            buckets = data.get('buckets', [])
+            bucket_ids_in_payload = set()
+            for bucket in buckets:
+                bucket_id = bucket.get('bucket_id')
+                wb, _ = WellnessBucket.objects.get_or_create(bucket_id=bucket_id)
+                wb.title = bucket.get('title', '')
+                wb.description = bucket.get('description', '')
+                wb.prompt = bucket.get('prompt', '')
+                wb.save()
+                bucket_ids_in_payload.add(wb.bucket_id)
 
-        return JsonResponse({'success': True, 'settings_id': settings_obj.id, 'bucket_ids': list(bucket_ids_in_payload)})
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=400)
-
-
-@csrf_exempt
-@require_http_methods(["GET"])
-def get_settings_and_buckets(request):
-    try:
-        # Assuming only one GeneralSetting row
-        settings_obj = GeneralSetting.objects.first()
-        settings_data = general_setting_to_dict(settings_obj) if settings_obj else None
-        buckets = WellnessBucket.objects.all()
-        buckets_data = [wellness_bucket_to_dict(b) for b in buckets]
-        return JsonResponse({'success': True, 'settings': settings_data, 'buckets': buckets_data})
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=400)
+            return JsonResponse({'success': True, 'settings_id': settings_obj.id, 'bucket_ids': list(bucket_ids_in_payload)})
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
 
 @method_decorator(csrf_exempt, name='dispatch')

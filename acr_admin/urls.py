@@ -1,9 +1,8 @@
 from django.urls import path
 from . import views
-from .views import update_settings_and_buckets, ChannelCRUDView, get_settings_and_buckets
+from .views import ChannelCRUDView, SettingsAndBucketsView
 
 urlpatterns = [
-    path('settings', update_settings_and_buckets, name='update_settings_and_buckets'),
-    path('settings/get', get_settings_and_buckets, name='get_settings_and_buckets'),
+    path('settings', SettingsAndBucketsView.as_view(), name='settings'),
     path('channels', ChannelCRUDView.as_view(), name='channels_crud'),
 ]
