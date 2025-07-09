@@ -8,29 +8,15 @@ from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from .serializer import channel_to_dict
+from .serializer import general_setting_to_dict, wellness_bucket_to_dict
+from .utils import ACRCloudUtils
 
-
-def create_channel(request):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            channel = Channel.objects.create(
-                name=data.get('name', ''),
-                channel_id=data['channel_id'],
-                project_id=data['project_id']
-            )
-            return JsonResponse({'success': True, 'id': channel.id})
-        except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=400)
-    return JsonResponse({'error': 'POST request required'}, status=405)
 
 
 @csrf_exempt
 @require_http_methods(["PUT"])
 def update_settings_and_buckets(request):
     try:
-        print("----------------")
-        print(request)
         data = json.loads(request.body)
         print(data)
         # Update or create GeneralSetting (assuming only one row)
@@ -67,6 +53,20 @@ def update_settings_and_buckets(request):
         return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
 
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_settings_and_buckets(request):
+    try:
+        # Assuming only one GeneralSetting row
+        settings_obj = GeneralSetting.objects.first()
+        settings_data = general_setting_to_dict(settings_obj) if settings_obj else None
+        buckets = WellnessBucket.objects.all()
+        buckets_data = [wellness_bucket_to_dict(b) for b in buckets]
+        return JsonResponse({'success': True, 'settings': settings_data, 'buckets': buckets_data})
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class ChannelCRUDView(View):
     def get(self, request, *args, **kwargs):
@@ -86,8 +86,14 @@ class ChannelCRUDView(View):
         # Create
         try:
             data = json.loads(request.body)
+            # Always validate project_id and channel_id first
+            result, status = ACRCloudUtils.get_channel_name_by_id(data['project_id'], data['channel_id'])
+            if status is not None:
+                return JsonResponse({'success': False, **result}, status=status)
+            # Use provided name if present, else use fetched name
+            name = data.get('name', '') or result
             channel = Channel.objects.create(
-                name=data.get('name', ''),
+                name=name,
                 channel_id=data['channel_id'],
                 project_id=data['project_id']
             )
