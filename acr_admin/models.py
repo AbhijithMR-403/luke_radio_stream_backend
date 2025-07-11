@@ -84,3 +84,54 @@ class BucketSentence(models.Model):
 
     def __str__(self):
         return f"Sentence for {self.bucket.keyword}"
+
+class UnrecognizedAudio(models.Model):
+    start_time = models.BigIntegerField(help_text="Start time as numeric value (e.g., 202507100328)")
+    end_time = models.BigIntegerField(help_text="End time as numeric value (e.g., 202507100328)")
+    duration = models.PositiveIntegerField(help_text="Duration in seconds")
+    media_path = models.CharField(max_length=512, unique=True)
+
+    def __str__(self):
+        return f"UnrecognizedAudio {self.start_time} - {self.end_time} ({self.duration}s)"
+
+class TranscriptionDetail(models.Model):
+    unrecognized_audio = models.OneToOneField(UnrecognizedAudio, on_delete=models.CASCADE, related_name="transcription_detail")
+    rev_job = models.OneToOneField('RevTranscriptionJob', on_delete=models.CASCADE, related_name="transcription_detail")
+    transcript = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Transcription for {self.unrecognized_audio} at {self.created_at}"
+
+class RevTranscriptionJob(models.Model):
+    """Model to store Rev API callback data for transcription jobs"""
+    
+    # Job identification
+    job_id = models.CharField(max_length=255, unique=True)
+    job_name = models.CharField(max_length=255)
+    media_url = models.URLField(max_length=512)
+    
+    # Status and timing
+    status = models.CharField(max_length=50)  # 'transcribed', 'failed', etc.
+    created_on = models.DateTimeField()
+    completed_on = models.DateTimeField(null=True, blank=True)
+    
+    # Job configuration
+    job_type = models.CharField(max_length=50, default='async')  # 'async', 'sync'
+    language = models.CharField(max_length=10, default='en')
+    strict_custom_vocabulary = models.BooleanField(default=False)
+    
+    # Duration (for successful transcriptions)
+    duration_seconds = models.FloatField(null=True, blank=True)
+    
+    # Failure details (for failed jobs)
+    failure = models.CharField(max_length=100, null=True, blank=True)
+    failure_detail = models.TextField(null=True, blank=True)
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.job_id} - {self.job_name} ({self.status})"
+    

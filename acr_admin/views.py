@@ -1,8 +1,9 @@
+from urllib.parse import urlparse
 from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
-from .models import Channel, GeneralSetting, WellnessBucket
+from .models import Channel, GeneralSetting, WellnessBucket, RevTranscriptionJob
 import json
 from django.views import View
 from django.utils.decorators import method_decorator
@@ -10,6 +11,11 @@ from django.views.decorators.csrf import csrf_exempt
 from .serializer import channel_to_dict
 from .serializer import general_setting_to_dict, wellness_bucket_to_dict
 from .utils import ACRCloudUtils
+from .utils import UnrecognizedAudioTimestamps
+from django.http import StreamingHttpResponse
+from .utils import AudioDownloader
+from datetime import datetime
+from .utils import RevAISpeechToText
 
 
 
@@ -119,3 +125,76 @@ class ChannelCRUDView(View):
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
+
+@method_decorator(csrf_exempt, name='dispatch')
+class UnrecognizedAudioSegmentsView(View):
+    def get(self, request, *args, **kwargs):
+        try:
+            project_id = request.GET.get('project_id')
+            channel_id = request.GET.get('channel_id')
+            date = request.GET.get('date')
+            hour_offset = int(request.GET.get('hour_offset', 0))
+            if not project_id or not channel_id:
+                return JsonResponse({'success': False, 'error': 'project_id and channel_id are required'}, status=400)
+            data = UnrecognizedAudioTimestamps.fetch_data(int(project_id), int(channel_id), date)
+            unrecognized = UnrecognizedAudioTimestamps.find_unrecognized_segments(data, hour_offset=hour_offset, date=date)
+            print(unrecognized[0].get("start_time"), "_---------", unrecognized[0].get("duration_seconds"))
+            val_path = AudioDownloader.bulk_download_audio(project_id, channel_id, unrecognized)
+            return JsonResponse({'success': True, 'unrecognized_segments': unrecognized, 'val_path': val_path})
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class RevCallbackView(View):
+    def post(self, request, *args, **kwargs):
+        data = json.loads(request.body)
+        # Extract job data from callback
+        job_data = data.get('job', {})
+        
+        # Parse datetime fields
+        created_on = None
+        completed_on = None
+        
+        if job_data.get('created_on'):
+            try:
+                created_on = datetime.fromisoformat(job_data['created_on'].replace('Z', '+00:00'))
+            except ValueError:
+                created_on = datetime.now()
+        
+        if job_data.get('completed_on'):
+            try:
+                completed_on = datetime.fromisoformat(job_data['completed_on'].replace('Z', '+00:00'))
+            except ValueError:
+                completed_on = None
+        
+        # Create or update RevTranscriptionJob record
+        job, created = RevTranscriptionJob.objects.update_or_create(
+            job_id=job_data['id'],
+            defaults={
+                'job_name': job_data.get('name', ''),
+                'media_url': job_data.get('media_url', ''),
+                'status': job_data.get('status', ''),
+                'created_on': created_on,
+                'completed_on': completed_on,
+                'job_type': job_data.get('type', 'async'),
+                'language': job_data.get('language', 'en'),
+                'strict_custom_vocabulary': job_data.get('strict_custom_vocabulary', False),
+                'duration_seconds': job_data.get('duration_seconds'),
+                'failure': job_data.get('failure'),
+                'failure_detail': job_data.get('failure_detail'),
+            }
+        )
+        
+
+        action = 'created' if created else 'updated'
+        print(f'RevTranscriptionJob {action}: {job.job_id} - {job.status}')
+
+        if job.status == 'transcribed':
+            try:
+                parsed_url = urlparse(job_data.get('media_url'))
+                RevAISpeechToText.get_transcript_by_job_id(job, parsed_url.path)
+            except Exception as e:
+                print(e)
+                return JsonResponse({'success': False, 'error': str(e)}, status=400)
+        return JsonResponse({'success': True, 'action': action, 'job_id': job.job_id})
