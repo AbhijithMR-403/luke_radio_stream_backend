@@ -16,7 +16,10 @@ from django.http import StreamingHttpResponse
 from .utils import AudioDownloader
 from datetime import datetime
 from .utils import RevAISpeechToText
-
+from django.http import FileResponse, Http404
+import os
+from django.conf import settings
+from urllib.parse import unquote
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -198,3 +201,22 @@ class RevCallbackView(View):
                 print(e)
                 return JsonResponse({'success': False, 'error': str(e)}, status=400)
         return JsonResponse({'success': True, 'action': action, 'job_id': job.job_id})
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class MediaDownloadView(View):
+    def get(self, request, file_path, *args, **kwargs):
+        # Remove any leading slashes and decode URL encoding
+        file_path = unquote(file_path.lstrip('/'))
+        
+        # Prevent directory traversal
+        if '..' in file_path or file_path.startswith('/'):
+            return JsonResponse({'success': False, 'error': 'Invalid file path'}, status=400)
+        abs_file_path = os.path.join(file_path)
+        if not os.path.exists(abs_file_path):
+            return JsonResponse({'success': False, 'error': 'File not found'}, status=404)
+        try:
+            response = FileResponse(open(abs_file_path, 'rb'), as_attachment=True, filename=os.path.basename(file_path))
+            return response
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
