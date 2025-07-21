@@ -15,10 +15,10 @@ class Channel(models.Model):
 class GeneralSetting(models.Model):
 
     # Auth Keys
-    openai_api_key = models.CharField(max_length=255)
+    openai_api_key = models.TextField()
     openai_org_id = models.CharField(max_length=255)
-    arc_cloud_api_key = models.CharField(max_length=255)
-    revai_access_token = models.CharField(max_length=255)
+    arc_cloud_api_key = models.TextField()
+    revai_access_token = models.TextField()
 
     # Prompts
     summarize_transcript_prompt = models.TextField()
@@ -30,7 +30,7 @@ class GeneralSetting(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Settings: {self.heading}"
+        return "General Settings"
 
 
 class WellnessBucket(models.Model):
