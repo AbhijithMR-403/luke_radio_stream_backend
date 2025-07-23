@@ -3,6 +3,8 @@ from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
+
+from acr_admin.tasks import analyze_transcription_task, bulk_download_audio_task
 from .models import Channel, GeneralSetting, WellnessBucket, RevTranscriptionJob
 import json
 from django.views import View
@@ -149,9 +151,8 @@ class UnrecognizedAudioSegmentsView(View):
                 return JsonResponse({'success': False, 'error': 'project_id and channel_id are required'}, status=400)
             data = UnrecognizedAudioTimestamps.fetch_data(int(project_id), int(channel_id), date)
             unrecognized = UnrecognizedAudioTimestamps.find_unrecognized_segments(data, hour_offset=hour_offset, date=date)
-            print(unrecognized[0].get("start_time"), "_---------", unrecognized[0].get("duration_seconds"))
-            val_path = AudioDownloader.bulk_download_audio(project_id, channel_id, unrecognized)
-            return JsonResponse({'success': True, 'unrecognized_segments': unrecognized, 'val_path': val_path})
+            val_path = bulk_download_audio_task.delay(project_id, channel_id, unrecognized)
+            return JsonResponse({'success': True, 'unrecognized_segments': unrecognized})
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
@@ -204,10 +205,8 @@ class RevCallbackView(View):
         if job.status == 'transcribed':
             try:
                 parsed_url = urlparse(job_data.get('media_url'))
-                transcription_detail = RevAISpeechToText.get_transcript_by_job_id(job, parsed_url.path)
-                TranscriptionAnalyzer.analyze_transcription(transcription_detail)
+                analyze_transcription_task.delay(job.pk, parsed_url.path)
             except Exception as e:
-                print(e)
                 return JsonResponse({'success': False, 'error': str(e)}, status=400)
         return JsonResponse({'success': True, 'action': action, 'job_id': job.job_id})
 
