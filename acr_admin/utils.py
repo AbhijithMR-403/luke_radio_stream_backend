@@ -186,7 +186,7 @@ class AudioDownloader:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     f.write(chunk)
-        media_url = f"/media/{filename}"
+        media_url = f"/api/media/{filename}"
         return media_url
 
     @staticmethod
