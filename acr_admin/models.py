@@ -29,6 +29,61 @@ class GeneralSetting(models.Model):
 
     updated_at = models.DateTimeField(auto_now=True)
 
+    # --- Added fields for bucket and radio segment classification ---
+    bucket_prompt = models.TextField(
+        help_text="Prompt describing the definitions and classification rules for wellness buckets.",
+        null=True, blank=True
+    )
+    bucket_definition_error_rate = models.PositiveIntegerField(
+        default=80,
+        help_text="Minimum accuracy percentage required for bucket classification (e.g., 80).",
+        null=True, blank=True
+    )
+    chatgpt_model = models.CharField(
+        max_length=100,
+        default="gpt-3.5-turbo",
+        help_text="ChatGPT model to use for classification (e.g., gpt-40).",
+        null=True, blank=True
+    )
+    chatgpt_max_tokens = models.PositiveIntegerField(
+        default=0,
+        help_text="Maximum tokens for ChatGPT response (0 for default).",
+        null=True, blank=True
+    )
+    chatgpt_temperature = models.FloatField(
+        default=1.0,
+        help_text="ChatGPT temperature parameter.",
+        null=True, blank=True
+    )
+    chatgpt_top_p = models.FloatField(
+        default=1.0,
+        help_text="ChatGPT top_p parameter.",
+        null=True, blank=True
+    )
+    chatgpt_frequency_penalty = models.FloatField(
+        default=0.0,
+        help_text="ChatGPT frequency penalty parameter.",
+        null=True, blank=True
+    )
+    chatgpt_presence_penalty = models.FloatField(
+        default=0.0,
+        help_text="ChatGPT presence penalty parameter.",
+        null=True, blank=True
+    )
+    determine_radio_content_type_prompt = models.TextField(
+        help_text="Prompt for determining radio content type from transcript.",
+        null=True, blank=True
+    )
+    radio_segment_types = models.TextField(
+        help_text="Comma-separated list of radio segment/content types.",
+        null=True, blank=True
+    )
+    radio_segment_error_rate = models.PositiveIntegerField(
+        default=80,
+        help_text="Minimum accuracy percentage required for radio segment classification (e.g., 80).",
+        null=True, blank=True
+    )
+
     def __str__(self):
         return "General Settings"
 
@@ -134,4 +189,16 @@ class RevTranscriptionJob(models.Model):
     
     def __str__(self):
         return f"{self.job_id} - {self.job_name} ({self.status})"
+
+
+class TranscriptionAnalysis(models.Model):
+    transcription_detail = models.OneToOneField('TranscriptionDetail', on_delete=models.CASCADE, related_name='analysis')
+    summary = models.TextField()
+    sentiment = models.CharField(max_length=50)
+    general_topics = models.TextField(help_text="General topics identified in the transcript")
+    iab_topics = models.TextField(help_text="IAB topics identified in the transcript")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Analysis for {self.transcription_detail}"  
     

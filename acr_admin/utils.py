@@ -6,6 +6,10 @@ import os
 from django.utils import timezone
 from decouple import config
 
+import openai
+from acr_admin.models import TranscriptionAnalysis, GeneralSetting
+from openai import OpenAI
+
 class ACRCloudUtils:
     @staticmethod
     def get_channel_name_by_id(pid: int, channel_id, access_token: str = None):
@@ -238,7 +242,7 @@ class RevAISpeechToText:
         Uses revai_access_token from GeneralSetting if api_key is not provided.
         Returns the API response as JSON.
         """
-        base_url = config('PUBLIC_BASE_URL', default='http://localhost:8000')
+        base_url = config('PUBLIC_BASE_URL')
         notification_url = f"{base_url}/api/rev-callback"
         media_url = f"{base_url}{media_path}"
         settings = GeneralSetting.objects.first()
@@ -308,21 +312,77 @@ class RevAISpeechToText:
             if existing_by_audio == existing_by_job:
                 # Both point to the same TranscriptionDetail (already present)
                 print("\033[93mAlready present\033[0m")  # Yellow
-                return transcript
+                return existing_by_audio
             else:
                 # Conflict: both exist but are different objects
                 print("\033[91mConflict: UnrecognizedAudio and RevTranscriptionJob do not match for existing TranscriptionDetail\033[0m")  # Red
-                return transcript
+                return existing_by_audio or existing_by_job
         elif existing_by_audio or existing_by_job:
             # Conflict: one exists but not both together
             print("\033[91mConflict: UnrecognizedAudio or RevTranscriptionJob already linked to a different TranscriptionDetail\033[0m")  # Red
-            return transcript
+            return existing_by_audio or existing_by_job
 
         # Create TranscriptionDetail if neither exists
-        TranscriptionDetail.objects.create(
+        transcription_detail = TranscriptionDetail.objects.create(
             unrecognized_audio=unrec_audio,
             rev_job=revid,
             transcript=transcript
         )
-        return transcript
+        return transcription_detail
+
+
+class TranscriptionAnalyzer:
+    @staticmethod
+    def analyze_transcription(transcription_detail):
+        print(transcription_detail)
+        settings = GeneralSetting.objects.first()
+        client = OpenAI(api_key=settings.openai_api_key)
+
+        transcript = transcription_detail.transcript
+
+        def chat_params(prompt, transcript, max_tokens):
+            return {
+                "model": settings.chatgpt_model or "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": transcript}
+                ],
+                "max_tokens": max_tokens if max_tokens > 0 else None,
+                "temperature": settings.chatgpt_temperature,
+                "top_p": settings.chatgpt_top_p,
+                "frequency_penalty": settings.chatgpt_frequency_penalty,
+                "presence_penalty": settings.chatgpt_presence_penalty,
+            }
+
+        # Summary
+        summary_resp = client.chat.completions.create(
+            **{k: v for k, v in chat_params(settings.summarize_transcript_prompt, transcript, 150).items() if v is not None}
+        )
+        summary = summary_resp.choices[0].message.content.strip()
+        # Sentiment
+        sentiment_resp = client.chat.completions.create(
+            **{k: v for k, v in chat_params(settings.sentiment_analysis_prompt, transcript, 10).items() if v is not None}
+        )
+        sentiment = sentiment_resp.choices[0].message.content.strip()
+
+        # General topics
+        general_topics_resp = client.chat.completions.create(
+            **{k: v for k, v in chat_params(settings.general_topics_prompt, transcript, 100).items() if v is not None}
+        )
+        general_topics = general_topics_resp.choices[0].message.content.strip()
+
+        # IAB topics
+        iab_topics_resp = client.chat.completions.create(
+            **{k: v for k, v in chat_params(settings.iab_topics_prompt, transcript, 100).items() if v is not None}
+        )
+        iab_topics = iab_topics_resp.choices[0].message.content.strip()
+
+        # Store in TranscriptionAnalysis
+        TranscriptionAnalysis.objects.create(
+            transcription_detail=transcription_detail,
+            summary=summary,
+            sentiment=sentiment,
+            general_topics=general_topics,
+            iab_topics=iab_topics
+        )
 

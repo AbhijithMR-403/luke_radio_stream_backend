@@ -20,6 +20,7 @@ from django.http import FileResponse, Http404
 import os
 from django.conf import settings
 from urllib.parse import unquote
+from acr_admin.utils import TranscriptionAnalyzer
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -39,9 +40,16 @@ class SettingsAndBucketsView(View):
             data = json.loads(request.body)
             settings_data = data.get('settings', {})
             settings_obj, _ = GeneralSetting.objects.get_or_create(id=settings_data.get('id', 1))
-            for field in [
+            # List of all fields in GeneralSetting
+            general_setting_fields = [
                 'openai_api_key', 'openai_org_id', 'arc_cloud_api_key', 'revai_access_token',
-                'summarize_transcript_prompt', 'sentiment_analysis_prompt', 'general_topics_prompt', 'iab_topics_prompt']:
+                'summarize_transcript_prompt', 'sentiment_analysis_prompt', 'general_topics_prompt', 'iab_topics_prompt',
+                'bucket_prompt', 'bucket_definition_error_rate',
+                'chatgpt_model', 'chatgpt_max_tokens', 'chatgpt_temperature', 'chatgpt_top_p',
+                'chatgpt_frequency_penalty', 'chatgpt_presence_penalty',
+                'determine_radio_content_type_prompt', 'radio_segment_types', 'radio_segment_error_rate'
+            ]
+            for field in general_setting_fields:
                 if field in settings_data:
                     setattr(settings_obj, field, settings_data[field])
             settings_obj.save()
@@ -196,7 +204,8 @@ class RevCallbackView(View):
         if job.status == 'transcribed':
             try:
                 parsed_url = urlparse(job_data.get('media_url'))
-                RevAISpeechToText.get_transcript_by_job_id(job, parsed_url.path)
+                transcription_detail = RevAISpeechToText.get_transcript_by_job_id(job, parsed_url.path)
+                TranscriptionAnalyzer.analyze_transcription(transcription_detail)
             except Exception as e:
                 print(e)
                 return JsonResponse({'success': False, 'error': str(e)}, status=400)
