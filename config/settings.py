@@ -26,7 +26,7 @@ SECRET_KEY = "django-insecure-cv)v)d6d*psg1-_tgzt5*=6%0ir7s6g+31dr*%_gu=vj7+&3di
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1").split(",")
 
 
 # Application definition
@@ -142,3 +142,6 @@ MEDIA_ROOT = BASE_DIR / "media"
 # Celery Configuration
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+
+# CORS configuration
+CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="").split(",") if config("CORS_ALLOWED_ORIGINS", default="") else []
