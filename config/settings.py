@@ -22,7 +22,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = "django-insecure-cv)v)d6d*psg1-_tgzt5*=6%0ir7s6g+31dr*%_gu=vj7+&3di"
-
+FIELD_ENCRYPTION_KEY = "Y5HjnryWNfLF9Ahxon_48t3ODo6P2TlJ4t2BOFMk3Xs="
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "acr_admin",
     "corsheaders",
+    'encrypted_model_fields',
 ]
 
 MIDDLEWARE = [

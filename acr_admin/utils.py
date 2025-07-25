@@ -28,9 +28,9 @@ class ACRCloudUtils:
         url = f"https://api-v2.acrcloud.com/api/bm-bd-projects/{pid}/channels"
         if not access_token:
             settings = GeneralSetting.objects.first()
-            if not settings or not settings.arc_cloud_api_key:
+            if not settings or not settings.acr_cloud_api_key:
                 return {"error": "ACRCloud API key not configured"}, 403
-            access_token = settings.arc_cloud_api_key
+            access_token = settings.acr_cloud_api_key
         headers = {"Authorization": f"Bearer {access_token}"}
         try:
             response = requests.get(url, headers=headers)
@@ -67,9 +67,9 @@ class UnrecognizedAudioTimestamps:
     @staticmethod
     def fetch_data(project_id: int, channel_id: int, date: Optional[str] = None):
         settings = GeneralSetting.objects.first()
-        if not settings or not settings.arc_cloud_api_key:
+        if not settings or not settings.acr_cloud_api_key:
             raise ValueError("ACRCloud API key not configured")
-        token = settings.arc_cloud_api_key
+        token = settings.acr_cloud_api_key
         url = UnrecognizedAudioTimestamps._construct_url(project_id, channel_id, date)
         headers = {
             "Content-Type": "application/json",
@@ -159,9 +159,9 @@ class AudioDownloader:
         Returns the file path of the downloaded mp3.
         """
         settings = GeneralSetting.objects.first()
-        if not settings or not settings.arc_cloud_api_key:
+        if not settings or not settings.acr_cloud_api_key:
             raise ValueError("ACRCloud API key not configured")
-        token = settings.arc_cloud_api_key
+        token = settings.acr_cloud_api_key
         params = {
             "timestamp_utc": start_time,
             "played_duration": min(duration_seconds, 600)

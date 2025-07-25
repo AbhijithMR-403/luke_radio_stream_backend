@@ -44,7 +44,7 @@ class SettingsAndBucketsView(View):
             settings_obj, _ = GeneralSetting.objects.get_or_create(id=settings_data.get('id', 1))
             # List of all fields in GeneralSetting
             general_setting_fields = [
-                'openai_api_key', 'openai_org_id', 'arc_cloud_api_key', 'revai_access_token',
+                'openai_api_key', 'openai_org_id', 'acr_cloud_api_key', 'revai_access_token',
                 'summarize_transcript_prompt', 'sentiment_analysis_prompt', 'general_topics_prompt', 'iab_topics_prompt',
                 'bucket_prompt', 'bucket_definition_error_rate',
                 'chatgpt_model', 'chatgpt_max_tokens', 'chatgpt_temperature', 'chatgpt_top_p',

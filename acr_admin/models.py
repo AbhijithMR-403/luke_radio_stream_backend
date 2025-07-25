@@ -1,5 +1,6 @@
 from django.db import models
 from django.core.exceptions import ValidationError
+from encrypted_model_fields.fields import EncryptedTextField
 
 # Create your models here.
 class Channel(models.Model):
@@ -15,10 +16,10 @@ class Channel(models.Model):
 class GeneralSetting(models.Model):
 
     # Auth Keys
-    openai_api_key = models.TextField()
+    openai_api_key = EncryptedTextField(null=True, blank=True)
     openai_org_id = models.CharField(max_length=255)
-    arc_cloud_api_key = models.TextField()
-    revai_access_token = models.TextField()
+    acr_cloud_api_key = EncryptedTextField(null=True, blank=True)
+    revai_access_token = EncryptedTextField(null=True, blank=True)
 
     # Prompts
     summarize_transcript_prompt = models.TextField()
