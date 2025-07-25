@@ -15,7 +15,7 @@ def general_setting_to_dict(settings):
         'id': settings.id,
         'openai_api_key': settings.openai_api_key,
         'openai_org_id': settings.openai_org_id,
-        'arc_cloud_api_key': settings.arc_cloud_api_key,
+        'acr_cloud_api_key': settings.acr_cloud_api_key,
         'revai_access_token': settings.revai_access_token,
         'summarize_transcript_prompt': settings.summarize_transcript_prompt,
         'sentiment_analysis_prompt': settings.sentiment_analysis_prompt,
