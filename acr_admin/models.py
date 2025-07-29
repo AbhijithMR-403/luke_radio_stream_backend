@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from django.db import models
 from django.core.exceptions import ValidationError
 from encrypted_model_fields.fields import EncryptedTextField
@@ -5,13 +6,18 @@ from encrypted_model_fields.fields import EncryptedTextField
 # Create your models here.
 class Channel(models.Model):
     name = models.CharField(max_length=255, blank=True)  # Optional label
-    channel_id = models.CharField(max_length=255)
-    project_id = models.CharField(max_length=255)
+    channel_id = models.PositiveIntegerField(max_length=255)
+    project_id = models.PositiveIntegerField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)  # To soft delete
 
     def __str__(self):
         return f"Channel {self.channel_id} in Project {self.project_id}"
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['channel_id', 'project_id'], name='unique_channel_per_project')
+        ]
 
 class GeneralSetting(models.Model):
 
@@ -106,9 +112,7 @@ class WellnessBucket(models.Model):
         import re
         # If bucket_id is provided, validate it
         if self.bucket_id:
-            print(self.bucket_id)
             match = re.match(r'^bucket_(\d{1,2})$', self.bucket_id)
-            print(match)
             if not match:
                 raise ValidationError("bucket_id must be in the format 'bucket_N' where N is 1-20.")
             number = int(match.group(1))
@@ -118,13 +122,10 @@ class WellnessBucket(models.Model):
         else:
             # Auto-generate next available bucket_id
             existing = WellnessBucket.objects.all().order_by('bucket_id')
-            print(existing)
             existing_ids = {
                 int(bucket.bucket_id.split('_')[1])
                 for bucket in existing if bucket.bucket_id.startswith("bucket_")
             }
-            print("---**-----")
-            print(existing_ids)
             for i in range(1, 21):
                 if i not in existing_ids:
                     self.bucket_id = f"bucket_{i}"
@@ -133,23 +134,136 @@ class WellnessBucket(models.Model):
                 raise ValidationError("Max 20 buckets already created.")
         super().save(*args, **kwargs)
 
-class BucketSentence(models.Model):
-    bucket = models.ForeignKey(WellnessBucket, on_delete=models.CASCADE, related_name="sentences")
-    content = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Sentence for {self.bucket.keyword}"
 
 class UnrecognizedAudio(models.Model):
-    start_time = models.BigIntegerField(help_text="Start time as numeric value (e.g., 202507100328)")
-    end_time = models.BigIntegerField(help_text="End time as numeric value (e.g., 202507100328)")
+    start_time = models.DateTimeField(help_text="Start time as datetime")
+    end_time = models.DateTimeField(help_text="End time as datetime")
     duration = models.PositiveIntegerField(help_text="Duration in seconds")
     media_path = models.CharField(max_length=512, unique=True)
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="unrecognized_audios")
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"UnrecognizedAudio {self.start_time} - {self.end_time} ({self.duration}s)"
+
+    def clean(self):
+        """Validate the model data"""
+        super().clean()
+        
+        # Validate that end_time is after start_time
+        if self.start_time and self.end_time and self.end_time <= self.start_time:
+            raise ValidationError("End time must be after start time")
+        
+        # Validate duration matches the time difference
+        if self.start_time and self.end_time and self.duration:
+            expected_duration = int((self.end_time - self.start_time).total_seconds())
+            if self.duration != expected_duration:
+                raise ValidationError(f"Duration ({self.duration}s) doesn't match time difference ({expected_duration}s)")
+
+    @staticmethod
+    def validate_start_time_format(start_time):
+        """Validate start_time format and convert to datetime if needed"""
+        if isinstance(start_time, datetime):
+            return start_time
+        
+        if isinstance(start_time, str):
+            # Try to parse as YYYYMMDDHHMMSS format
+            try:
+                return datetime.strptime(start_time, "%Y%m%d%H%M%S")
+            except ValueError:
+                pass
+            
+            # Try to parse as ISO format
+            try:
+                return datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            except ValueError:
+                pass
+            
+            # Try to parse as standard datetime format
+            try:
+                return datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                pass
+        
+        if isinstance(start_time, (int, float)):
+            # Assume it's a timestamp in YYYYMMDDHHMMSS format
+            try:
+                return datetime.strptime(str(int(start_time)), "%Y%m%d%H%M%S")
+            except ValueError:
+                pass
+        
+        raise ValidationError(f"Invalid start_time format: {start_time}. Expected datetime, YYYYMMDDHHMMSS string, or numeric timestamp")
+
+    @staticmethod
+    def validate_end_time_format(end_time, start_time=None):
+        """Validate end_time format and convert to datetime if needed"""
+        if isinstance(end_time, datetime):
+            return end_time
+        
+        if isinstance(end_time, str):
+            # Try to parse as YYYYMMDDHHMMSS format
+            try:
+                return datetime.strptime(end_time, "%Y%m%d%H%M%S")
+            except ValueError:
+                pass
+            
+            # Try to parse as ISO format
+            try:
+                return datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            except ValueError:
+                pass
+            
+            # Try to parse as standard datetime format
+            try:
+                return datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                pass
+        
+        if isinstance(end_time, (int, float)):
+            # Assume it's a timestamp in YYYYMMDDHHMMSS format
+            try:
+                return datetime.strptime(str(int(end_time)), "%Y%m%d%H%M%S")
+            except ValueError:
+                pass
+        
+        raise ValidationError(f"Invalid end_time format: {end_time}. Expected datetime, YYYYMMDDHHMMSS string, or numeric timestamp")
+
+    @staticmethod
+    def validate_duration(duration):
+        """Validate duration is a positive integer"""
+        if not isinstance(duration, (int, float)) or duration <= 0:
+            raise ValidationError(f"Duration must be a positive number, got: {duration}")
+        return int(duration)
+
+    @staticmethod
+    def validate_segment_data(segment):
+        """Validate segment data before processing"""
+        if not isinstance(segment, dict):
+            raise ValidationError("Segment must be a dictionary")
+        
+        required_fields = ['start_time', 'duration_seconds']
+        for field in required_fields:
+            if field not in segment:
+                raise ValidationError(f"Segment missing required field: {field}")
+        
+        # Validate and convert start_time
+        start_time = UnrecognizedAudio.validate_start_time_format(segment['start_time'])
+        
+        # Validate duration
+        duration = UnrecognizedAudio.validate_duration(segment['duration_seconds'])
+        
+        # Calculate end_time if not provided
+        end_time = segment.get('end_time')
+        if end_time:
+            end_time = UnrecognizedAudio.validate_end_time_format(end_time)
+        else:
+            end_time = start_time + timedelta(seconds=duration)
+        
+        return {
+            'start_time': start_time,
+            'end_time': end_time,
+            'duration_seconds': duration
+        }
 
 class TranscriptionDetail(models.Model):
     unrecognized_audio = models.OneToOneField(UnrecognizedAudio, on_delete=models.CASCADE, related_name="transcription_detail")

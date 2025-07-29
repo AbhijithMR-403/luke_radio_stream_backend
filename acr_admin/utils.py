@@ -7,7 +7,101 @@ from django.utils import timezone
 from decouple import config
 from acr_admin.models import TranscriptionAnalysis, GeneralSetting
 from openai import OpenAI
-from acr_admin.models import UnrecognizedAudio, TranscriptionDetail
+from acr_admin.models import UnrecognizedAudio, TranscriptionDetail, Channel
+from django.core.exceptions import ValidationError
+
+class ValidationUtils:
+    """Utility class for validating function calls and parameters"""
+    
+    @staticmethod
+    def validate_channel_exists(project_id: int, channel_id: int):
+        """Validate that the channel exists and is not deleted"""
+        try:
+            channel = Channel.objects.get(project_id=project_id, channel_id=channel_id, is_deleted=False)
+            return channel
+        except Channel.DoesNotExist:
+            raise ValidationError(f"Channel with project_id {project_id} and channel_id {channel_id} not found or is deleted")
+    
+    @staticmethod
+    def validate_settings_exist():
+        """Validate that GeneralSetting exists"""
+        settings = GeneralSetting.objects.first()
+        if not settings:
+            raise ValidationError("GeneralSetting not found. Please configure the application settings.")
+        return settings
+    
+    @staticmethod
+    def validate_acr_cloud_api_key():
+        """Validate that ACRCloud API key is configured"""
+        settings = ValidationUtils.validate_settings_exist()
+        if not settings.acr_cloud_api_key:
+            raise ValidationError("ACRCloud API key not configured in GeneralSetting")
+        return settings.acr_cloud_api_key
+    
+    @staticmethod
+    def validate_revai_api_key():
+        """Validate that Rev.ai API key is configured"""
+        settings = ValidationUtils.validate_settings_exist()
+        if not settings.revai_access_token:
+            raise ValidationError("Rev.ai API key not configured in GeneralSetting")
+        return settings.revai_access_token
+    
+    @staticmethod
+    def validate_openai_api_key():
+        """Validate that OpenAI API key is configured"""
+        settings = ValidationUtils.validate_settings_exist()
+        if not settings.openai_api_key:
+            raise ValidationError("OpenAI API key not configured in GeneralSetting")
+        return settings.openai_api_key
+    
+    @staticmethod
+    def validate_positive_integer(value, field_name: str):
+        """Validate that a value is a positive integer"""
+        if not isinstance(value, int) or value <= 0:
+            raise ValidationError(f"{field_name} must be a positive integer, got: {value}")
+        return value
+    
+    @staticmethod
+    def validate_positive_number(value, field_name: str):
+        """Validate that a value is a positive number"""
+        if not isinstance(value, (int, float)) or value <= 0:
+            raise ValidationError(f"{field_name} must be a positive number, got: {value}")
+        return value
+    
+    @staticmethod
+    def validate_required_field(value, field_name: str):
+        """Validate that a required field is not None or empty"""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValidationError(f"{field_name} is required and cannot be empty")
+        return value
+    
+    @staticmethod
+    def validate_list_not_empty(value, field_name: str):
+        """Validate that a list is not empty"""
+        if not isinstance(value, list):
+            raise ValidationError(f"{field_name} must be a list, got: {type(value)}")
+        if not value:
+            raise ValidationError(f"{field_name} cannot be empty")
+        return value
+    
+    @staticmethod
+    def validate_file_path(file_path: str):
+        """Validate that a file path is valid"""
+        if not file_path or not isinstance(file_path, str):
+            raise ValidationError("File path must be a non-empty string")
+        if not file_path.startswith('/'):
+            raise ValidationError("File path must start with '/'")
+        return file_path
+    
+    @staticmethod
+    def validate_url(url: str):
+        """Validate that a URL is valid"""
+        if not url or not isinstance(url, str):
+            raise ValidationError("URL must be a non-empty string")
+        if not url.startswith(('http://', 'https://')):
+            raise ValidationError("URL must start with http:// or https://")
+        return url
+
 
 class ACRCloudUtils:
     @staticmethod
@@ -19,17 +113,19 @@ class ACRCloudUtils:
         If channel_id is not found, returns error dict and 403 status code with a channel not found message.
         On success, returns (channel_name, None).
         """
+        # Validate parameters
+        ValidationUtils.validate_positive_integer(pid, "project_id")
+        
         # Ensure channel_id is an integer, or return error if not valid
         try:
             channel_id_int = int(channel_id)
+            ValidationUtils.validate_positive_integer(channel_id_int, "channel_id")
         except (ValueError, TypeError):
             return {"error": "Invalid channel ID. Must be an integer or string of digits."}, 400
+        
         url = f"https://api-v2.acrcloud.com/api/bm-bd-projects/{pid}/channels"
         if not access_token:
-            settings = GeneralSetting.objects.first()
-            if not settings or not settings.acr_cloud_api_key:
-                return {"error": "ACRCloud API key not configured"}, 403
-            access_token = settings.acr_cloud_api_key
+            access_token = ValidationUtils.validate_acr_cloud_api_key()
         headers = {"Authorization": f"Bearer {access_token}"}
         try:
             response = requests.get(url, headers=headers)
@@ -57,6 +153,10 @@ class UnrecognizedAudioTimestamps:
 
     @staticmethod
     def _construct_url(project_id: int, channel_id: int, date: Optional[str] = None):
+        # Validate parameters
+        ValidationUtils.validate_positive_integer(project_id, "project_id")
+        ValidationUtils.validate_positive_integer(channel_id, "channel_id")
+        
         query_date = date or UnrecognizedAudioTimestamps._get_default_date()
         return f"{UnrecognizedAudioTimestamps.BASE_URL}?type=day&date={query_date}".format(
             pid=project_id,
@@ -65,10 +165,11 @@ class UnrecognizedAudioTimestamps:
 
     @staticmethod
     def fetch_data(project_id: int, channel_id: int, date: Optional[str] = None):
-        settings = GeneralSetting.objects.first()
-        if not settings or not settings.acr_cloud_api_key:
-            raise ValueError("ACRCloud API key not configured")
-        token = settings.acr_cloud_api_key
+        # Validate parameters
+        ValidationUtils.validate_positive_integer(project_id, "project_id")
+        ValidationUtils.validate_positive_integer(channel_id, "channel_id")
+        
+        token = ValidationUtils.validate_acr_cloud_api_key()
         url = UnrecognizedAudioTimestamps._construct_url(project_id, channel_id, date)
         headers = {
             "Content-Type": "application/json",
@@ -149,20 +250,52 @@ class AudioDownloader:
     BASE_URL = "https://api-v2.acrcloud.com/api/bm-bd-projects/{pid}/channels/{channel_id}/recordings"
 
     @staticmethod
-    def download_audio(project_id: int, channel_id: int, start_time: str, duration_seconds: int):
+    def validate_download_parameters(project_id: int, channel_id: int, start_time, duration_seconds: int):
+        """Validate parameters before downloading audio"""
+        # Validate project_id
+        if not isinstance(project_id, int) or project_id <= 0:
+            raise ValidationError(f"Invalid project_id: {project_id}. Must be a positive integer.")
+        
+        # Validate channel_id
+        if not isinstance(channel_id, int) or channel_id <= 0:
+            raise ValidationError(f"Invalid channel_id: {channel_id}. Must be a positive integer.")
+        
+        # Validate start_time
+        if not start_time:
+            raise ValidationError("start_time is required")
+        
+        # Validate duration_seconds
+        if not isinstance(duration_seconds, (int, float)) or duration_seconds <= 0:
+            raise ValidationError(f"Invalid duration_seconds: {duration_seconds}. Must be a positive number.")
+        
+        # Convert start_time to string format if it's a datetime
+        if isinstance(start_time, datetime):
+            start_time_str = start_time.strftime("%Y%m%d%H%M%S")
+        else:
+            start_time_str = str(start_time)
+        
+        return start_time_str, int(duration_seconds)
+
+    @staticmethod
+    def download_audio(project_id: int, channel_id: int, start_time, duration_seconds: int):
         """
         Downloads audio from the ACRCloud API for the given parameters and saves it as an mp3 file.
-        - start_time: timestamp_utc (format: YYYYMMDDHHMMSS)
+        - start_time: timestamp_utc (format: YYYYMMDDHHMMSS) or datetime object
         - duration_seconds: played_duration (int)
         - If duration_seconds > 600, sets record_after=duration_seconds-600
         Returns the file path of the downloaded mp3.
         """
+        # Validate parameters before proceeding
+        start_time_str, duration_seconds = AudioDownloader.validate_download_parameters(
+            project_id, channel_id, start_time, duration_seconds
+        )
+        
         settings = GeneralSetting.objects.first()
         if not settings or not settings.acr_cloud_api_key:
             raise ValueError("ACRCloud API key not configured")
         token = settings.acr_cloud_api_key
         params = {
-            "timestamp_utc": start_time,
+            "timestamp_utc": start_time_str,
             "played_duration": min(duration_seconds, 600)
         }
         if duration_seconds > 600:
@@ -179,7 +312,7 @@ class AudioDownloader:
         # Ensure media directory exists
         media_dir = os.path.join(os.getcwd(), "media")
         os.makedirs(media_dir, exist_ok=True)
-        filename = f"audio_{project_id}_{channel_id}_{start_time}_{duration_seconds}.mp3"
+        filename = f"audio_{project_id}_{channel_id}_{start_time_str}_{duration_seconds}.mp3"
         file_path = os.path.join(media_dir, filename)
         with open(file_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
@@ -189,6 +322,34 @@ class AudioDownloader:
         return media_url
 
     @staticmethod
+    def validate_bulk_download_parameters(project_id: int, channel_id: int, segments: list):
+        """Validate all parameters before bulk download"""
+        # Validate project_id and channel_id
+        if not isinstance(project_id, int) or project_id <= 0:
+            raise ValidationError(f"Invalid project_id: {project_id}. Must be a positive integer.")
+        
+        if not isinstance(channel_id, int) or channel_id <= 0:
+            raise ValidationError(f"Invalid channel_id: {channel_id}. Must be a positive integer.")
+        
+        # Validate segments is a list
+        if not isinstance(segments, list):
+            raise ValidationError(f"segments must be a list, got: {type(segments)}")
+        
+        if not segments:
+            raise ValidationError("segments list cannot be empty")
+        
+        # Validate each segment
+        validated_segments = []
+        for i, segment in enumerate(segments):
+            try:
+                validated_segment = UnrecognizedAudio.validate_segment_data(segment)
+                validated_segments.append(validated_segment)
+            except ValidationError as e:
+                raise ValidationError(f"Segment {i}: {str(e)}")
+        
+        return validated_segments
+
+    @staticmethod
     def bulk_download_audio(project_id: int, channel_id: int, segments: list):
         """
         Downloads multiple audio segments in bulk.
@@ -196,38 +357,62 @@ class AudioDownloader:
         Returns a list of file paths for the downloaded mp3 files.
         Also inserts into UnrecognizedAudio and TranscriptionDetail for each segment.
         """
+        
+        # Validate all parameters before any processing
+        validated_segments = AudioDownloader.validate_bulk_download_parameters(project_id, channel_id, segments)
+        
+        # Get the channel object
+        try:
+            channel = Channel.objects.get(project_id=project_id, channel_id=channel_id, is_deleted=False)
+        except Channel.DoesNotExist:
+            raise ValueError(f"Channel with project_id {project_id} and channel_id {channel_id} not found")
+        
         file_paths = []
-        for segment in segments:
-            start_time = segment.get("start_time")
-            duration_seconds = segment.get("duration_seconds")
-            if start_time and duration_seconds:
-                # Download audio
-                file_path = AudioDownloader.download_audio(
-                    project_id,
-                    channel_id,
-                    start_time,
-                    duration_seconds,
+        for segment in validated_segments:
+            start_time = segment["start_time"]
+            duration_seconds = segment["duration_seconds"]
+            end_time = segment["end_time"]
+            
+            # Convert datetime to string format for download
+            start_time_str = start_time.strftime("%Y%m%d%H%M%S")
+            
+            # Download audio
+            file_path = AudioDownloader.download_audio(
+                project_id,
+                channel_id,
+                start_time_str,
+                duration_seconds,
+            )
+            file_paths.append(file_path)
+
+            try:
+                # Insert into UnrecognizedAudio, avoid duplicates by media_path
+                ua, created = UnrecognizedAudio.objects.get_or_create(
+                    media_path=file_path,
+                    defaults={
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "duration": duration_seconds,
+                        "channel": channel,
+                    }
                 )
-                file_paths.append(file_path)
+                
+                # Validate the created object
+                ua.full_clean()
+                
+            except Exception as e:
+                print(f"Error creating UnrecognizedAudio record: {e}")
+                # Continue with the next segment even if this one fails
+                continue
 
-                try:
-
-                    # Insert into UnrecognizedAudio, avoid duplicates by media_path
-                    ua, created = UnrecognizedAudio.objects.get_or_create(
-                        media_path=file_path,
-                        defaults={
-                            "start_time": start_time,
-                            "end_time": segment.get("end_time"),
-                            "duration": duration_seconds,
-                        }
-                    )
-                except Exception as e:
-                    print(f"Error creating UnrecognizedAudio record: {e}")
-                    # Continue with the next segment even if this one fails
-                    continue
-
-                # Call Rev.ai transcription
+            # Call Rev.ai transcription
+            try:
                 transcription_response = RevAISpeechToText.create_transcription_job(file_path)
+            except Exception as e:
+                print(f"Error creating transcription job: {e}")
+                # Continue with the next segment even if transcription fails
+                continue
+                
         return file_paths
 
 
@@ -239,13 +424,14 @@ class RevAISpeechToText:
         Uses revai_access_token from GeneralSetting if api_key is not provided.
         Returns the API response as JSON.
         """
+        # Validate parameters
+        ValidationUtils.validate_file_path(media_path)
+        
         base_url = config('PUBLIC_BASE_URL')
         notification_url = f"{base_url}/api/rev-callback"
         media_url = f"{base_url}{media_path}"
-        settings = GeneralSetting.objects.first()
-        if not settings or not settings.revai_access_token:
-            raise ValueError("Rev.ai API key not configured")
-        api_key = settings.revai_access_token
+        
+        api_key = ValidationUtils.validate_revai_api_key()
         url = "https://api.rev.ai/speechtotext/v1/jobs"
         headers = {
             "Content-Type": "application/json",
@@ -271,10 +457,12 @@ class RevAISpeechToText:
         Inserts a TranscriptionDetail linked to the UnrecognizedAudio (by media_path) and the RevTranscriptionJob.
         Returns the transcript as plain text.
         """
-        settings = GeneralSetting.objects.first()
-        if not settings or not settings.revai_access_token:
-            raise ValueError("Rev.ai API key not configured")
-        api_key = settings.revai_access_token
+        # Validate parameters
+        if not isinstance(revid, RevTranscriptionJob):
+            raise ValidationError("revid must be a RevTranscriptionJob instance")
+        ValidationUtils.validate_file_path(media_path)
+        
+        api_key = ValidationUtils.validate_revai_api_key()
         url = f"https://api.rev.ai/speechtotext/v1/jobs/{revid.job_id}/transcript"
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -330,9 +518,17 @@ class RevAISpeechToText:
 class TranscriptionAnalyzer:
     @staticmethod
     def analyze_transcription(transcription_detail):
-        settings = GeneralSetting.objects.first()
-        client = OpenAI(api_key=settings.openai_api_key)
-
+        if not isinstance(transcription_detail, TranscriptionDetail):
+            raise ValidationError("transcription_detail must be a TranscriptionDetail instance")
+        
+        # Validate that transcription_detail has a transcript
+        if not transcription_detail.transcript or not transcription_detail.transcript.strip():
+            raise ValidationError("transcription_detail must have a non-empty transcript")
+        
+        # Validate OpenAI API key
+        api_key = ValidationUtils.validate_openai_api_key()
+        settings = ValidationUtils.validate_settings_exist()
+        client = OpenAI(api_key=api_key)
         transcript = transcription_detail.transcript
 
         def chat_params(prompt, transcript, max_tokens):
