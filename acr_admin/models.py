@@ -146,6 +146,7 @@ class UnrecognizedAudio(models.Model):
     end_time = models.BigIntegerField(help_text="End time as numeric value (e.g., 202507100328)")
     duration = models.PositiveIntegerField(help_text="Duration in seconds")
     media_path = models.CharField(max_length=512, unique=True)
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="unrecognized_audios")
 
     def __str__(self):
         return f"UnrecognizedAudio {self.start_time} - {self.end_time} ({self.duration}s)"

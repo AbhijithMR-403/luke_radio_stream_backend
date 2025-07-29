@@ -143,15 +143,18 @@ class ChannelCRUDView(View):
 class UnrecognizedAudioSegmentsView(View):
     def get(self, request, *args, **kwargs):
         try:
-            project_id = request.GET.get('project_id')
-            channel_id = request.GET.get('channel_id')
+            channel_pk = request.GET.get('channel_id')
             date = request.GET.get('date')
             hour_offset = int(request.GET.get('hour_offset', 0))
-            if not project_id or not channel_id:
-                return JsonResponse({'success': False, 'error': 'project_id and channel_id are required'}, status=400)
-            data = UnrecognizedAudioTimestamps.fetch_data(int(project_id), int(channel_id), date)
+            if not channel_pk:
+                return JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
+            try:
+                channel = Channel.objects.get(id=channel_pk, is_deleted=False)
+            except Channel.DoesNotExist:
+                return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
+            data = UnrecognizedAudioTimestamps.fetch_data(int(channel.project_id), int(channel.channel_id), date)
             unrecognized = UnrecognizedAudioTimestamps.find_unrecognized_segments(data, hour_offset=hour_offset, date=date)
-            val_path = bulk_download_audio_task.delay(project_id, channel_id, unrecognized)
+            val_path = bulk_download_audio_task.delay(channel.project_id, channel.channel_id, unrecognized)
             return JsonResponse({'success': True, 'unrecognized_segments': unrecognized})
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)

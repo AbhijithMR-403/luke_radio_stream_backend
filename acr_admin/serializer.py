@@ -22,6 +22,17 @@ def general_setting_to_dict(settings):
         'general_topics_prompt': settings.general_topics_prompt,
         'iab_topics_prompt': settings.iab_topics_prompt,
         'updated_at': settings.updated_at.isoformat() if settings.updated_at else None,
+        'bucket_prompt': settings.bucket_prompt,
+        'bucket_definition_error_rate': settings.bucket_definition_error_rate,
+        'chatgpt_model': settings.chatgpt_model,
+        'chatgpt_max_tokens': settings.chatgpt_max_tokens,
+        'chatgpt_temperature': settings.chatgpt_temperature,
+        'chatgpt_top_p': settings.chatgpt_top_p,
+        'chatgpt_frequency_penalty': settings.chatgpt_frequency_penalty,
+        'chatgpt_presence_penalty': settings.chatgpt_presence_penalty,
+        'determine_radio_content_type_prompt': settings.determine_radio_content_type_prompt,
+        'radio_segment_types': settings.radio_segment_types,
+        'radio_segment_error_rate': settings.radio_segment_error_rate,
     }
 
 def wellness_bucket_to_dict(bucket):

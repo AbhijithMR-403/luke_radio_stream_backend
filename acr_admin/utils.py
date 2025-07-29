@@ -5,10 +5,9 @@ from typing import Optional
 import os
 from django.utils import timezone
 from decouple import config
-
-import openai
 from acr_admin.models import TranscriptionAnalysis, GeneralSetting
 from openai import OpenAI
+from acr_admin.models import UnrecognizedAudio, TranscriptionDetail
 
 class ACRCloudUtils:
     @staticmethod
@@ -197,8 +196,6 @@ class AudioDownloader:
         Returns a list of file paths for the downloaded mp3 files.
         Also inserts into UnrecognizedAudio and TranscriptionDetail for each segment.
         """
-        from acr_admin.models import UnrecognizedAudio, TranscriptionDetail
-        from datetime import datetime, timedelta
         file_paths = []
         for segment in segments:
             start_time = segment.get("start_time")
@@ -274,7 +271,6 @@ class RevAISpeechToText:
         Inserts a TranscriptionDetail linked to the UnrecognizedAudio (by media_path) and the RevTranscriptionJob.
         Returns the transcript as plain text.
         """
-        from acr_admin.models import UnrecognizedAudio, TranscriptionDetail
         settings = GeneralSetting.objects.first()
         if not settings or not settings.revai_access_token:
             raise ValueError("Rev.ai API key not configured")
@@ -334,7 +330,6 @@ class RevAISpeechToText:
 class TranscriptionAnalyzer:
     @staticmethod
     def analyze_transcription(transcription_detail):
-        print(transcription_detail)
         settings = GeneralSetting.objects.first()
         client = OpenAI(api_key=settings.openai_api_key)
 
