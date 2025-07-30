@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "acr_admin",
     "corsheaders",
     'encrypted_model_fields',
+    "data_analysis",
 ]
 
 MIDDLEWARE = [
