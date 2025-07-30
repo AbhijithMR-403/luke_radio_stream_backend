@@ -10,8 +10,8 @@ from django.http import FileResponse, JsonResponse
 
 from acr_admin.models import Channel
 from data_analysis.models import RevTranscriptionJob
+from data_analysis.services.unrecognized_audio import UnrecognizedAudioTimestamps
 from data_analysis.tasks import analyze_transcription_task, bulk_download_audio_task
-from data_analysis.utils import UnrecognizedAudioTimestamps
 
 # Create your views here.
 

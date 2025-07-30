@@ -1,5 +1,5 @@
 import requests
-from data_analysis.utils import ValidationUtils
+from config.validation import ValidationUtils
 
 
 class ACRCloudUtils:
