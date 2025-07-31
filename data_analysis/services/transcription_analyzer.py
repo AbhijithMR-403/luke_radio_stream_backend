@@ -4,7 +4,7 @@ from typing import Optional
 import os
 from django.utils import timezone
 from decouple import config
-from acr_admin.models import GeneralSetting, Channel
+from acr_admin.models import GeneralSetting, Channel, WellnessBucket
 from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
@@ -12,6 +12,53 @@ from config.validation import ValidationUtils
 from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail, UnrecognizedAudio
 
 class TranscriptionAnalyzer:
+    @staticmethod
+    def get_bucket_prompt():
+        """
+        Fetches all wellness buckets and constructs a prompt string.
+        Returns the constructed prompt or None if no buckets are found.
+        """
+        try:
+            # Fetch all wellness buckets
+            buckets = WellnessBucket.objects.all()
+            
+            if not buckets.exists():
+                print("No wellness buckets found")
+                return None
+            
+            prompt_intro = "Where"
+            bucket_prompt_parts = []
+            
+            for bucket in buckets:
+                # Convert bucket description to list of lines
+                description_lines = bucket.description.strip().split('\n') if bucket.description else []
+                # Filter out empty lines
+                description_lines = [line.strip() for line in description_lines if line.strip()]
+                
+                part = f"{bucket.title} is defined as\n" + "\n".join(f"• {line}" for line in description_lines)
+                bucket_prompt_parts.append(part)
+            
+            if not bucket_prompt_parts:
+                print("No valid bucket descriptions found")
+                return None
+            
+            full_prompt = prompt_intro + " " + " and ".join(bucket_prompt_parts)
+            
+            # Get list of bucket names for category_list
+            category_list = [bucket.title for bucket in buckets]
+            
+            # Add classification prompt at the end
+            classification_prompt = f"""Could you classify the following transcript with one of the following categories only: {category_list}. You must classify the transcript into a primary category and secondary category only. If the accuracy of these classifications are less than 80% accurate, then classify them undefined. Output a comma-separated value of the primary category followed by the percentage confidence measured in whole percentages then the secondary category followed by the percentage confidence measured in whole percentages. The most alike category, the primary category, should be first, with the secondary category second. It is ok to only have one category but not OK to add a third. All of the outputs should be comma-separated, i.e category one (or undefined), confidence percentage, category two (or undefined), confidence percentage. Where you cannot identify any decipherable text just return an empty result."""
+            
+            full_prompt += "\n\n" + classification_prompt
+            print(full_prompt)
+            print("-----------------\n\n\n")
+            return full_prompt
+            
+        except Exception as e:
+            print(f"Error constructing bucket prompt: {e}")
+            return None
+
     @staticmethod
     def analyze_transcription(transcription_detail):
         if not isinstance(transcription_detail, TranscriptionDetail):
@@ -29,7 +76,7 @@ class TranscriptionAnalyzer:
             
             if existing_analysis:
                 # Check if all required fields have values
-                required_fields = ['summary', 'sentiment', 'general_topics', 'iab_topics']
+                required_fields = ['summary', 'sentiment', 'general_topics', 'iab_topics', 'bucket_prompt']
                 missing_fields = []
                 
                 for field in required_fields:
@@ -91,6 +138,17 @@ class TranscriptionAnalyzer:
         )
         iab_topics = iab_topics_resp.choices[0].message.content.strip()
 
+        # Wellness bucket analysis
+        bucket_prompt = TranscriptionAnalyzer.get_bucket_prompt()
+        wellness_buckets = ""
+        if bucket_prompt:
+            wellness_buckets_resp = client.chat.completions.create(
+                **{k: v for k, v in chat_params(bucket_prompt, transcript, 50).items() if v is not None}
+            )
+            wellness_buckets = wellness_buckets_resp.choices[0].message.content.strip()
+        else:
+            print("No wellness bucket prompt available, skipping bucket analysis")
+
         # Store in TranscriptionAnalysis
         try:
             analysis = TranscriptionAnalysis.objects.create(
@@ -98,7 +156,8 @@ class TranscriptionAnalyzer:
                 summary=summary,
                 sentiment=sentiment,
                 general_topics=general_topics,
-                iab_topics=iab_topics
+                iab_topics=iab_topics,
+                bucket_prompt=wellness_buckets
             )
             print(f"Created new transcription analysis for transcription_detail {transcription_detail.id}")
             return analysis

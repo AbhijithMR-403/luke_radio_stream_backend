@@ -96,41 +96,19 @@ class GeneralSetting(models.Model):
 
 
 class WellnessBucket(models.Model):
-    bucket_id = models.CharField(max_length=20, unique=True, editable=False)  # Auto "bucket_1", "bucket_2", ...
     title = models.CharField(max_length=255)  # eg: "Emotional Wellness"
     description = models.TextField()
-    prompt = models.TextField(help_text="Prompt to use when analyzing transcript for this bucket")
 
     def __str__(self):
-        return f"{self.bucket_id} - {self.title}"
+        return f"Bucket {self.id} - {self.title}"
 
     def clean(self):
         if not self.pk and WellnessBucket.objects.count() >= 20:
             raise ValidationError("You cannot have more than 20 wellness buckets.")
 
     def save(self, *args, **kwargs):
-        import re
-        # If bucket_id is provided, validate it
-        if self.bucket_id:
-            match = re.match(r'^bucket_(\d{1,2})$', self.bucket_id)
-            if not match:
-                raise ValidationError("bucket_id must be in the format 'bucket_N' where N is 1-20.")
-            number = int(match.group(1))
-            if not (1 <= number <= 20):
-                raise ValidationError("bucket_id must be between bucket_1 and bucket_20.")
-            # Ensure uniqueness is handled by the model's unique constraint
-        else:
-            # Auto-generate next available bucket_id
-            existing = WellnessBucket.objects.all().order_by('bucket_id')
-            existing_ids = {
-                int(bucket.bucket_id.split('_')[1])
-                for bucket in existing if bucket.bucket_id.startswith("bucket_")
-            }
-            for i in range(1, 21):
-                if i not in existing_ids:
-                    self.bucket_id = f"bucket_{i}"
-                    break
-            else:
-                raise ValidationError("Max 20 buckets already created.")
+        # Check if we're at the limit before saving
+        if not self.pk and WellnessBucket.objects.count() >= 20:
+            raise ValidationError("You cannot have more than 20 wellness buckets.")
         super().save(*args, **kwargs)
 

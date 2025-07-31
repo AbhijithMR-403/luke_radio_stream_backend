@@ -50,13 +50,24 @@ class SettingsAndBucketsView(View):
             buckets = data.get('buckets', [])
             bucket_ids_in_payload = set()
             for bucket in buckets:
-                bucket_id = bucket.get('bucket_id')
-                wb, _ = WellnessBucket.objects.get_or_create(bucket_id=bucket_id)
+                bucket_id = bucket.get('id')  # Use 'id' instead of 'bucket_id'
+                if bucket_id:
+                    # Update existing bucket
+                    wb = WellnessBucket.objects.get(id=bucket_id)
+                else:
+                    # Create new bucket
+                    wb = WellnessBucket()
+                
                 wb.title = bucket.get('title', '')
                 wb.description = bucket.get('description', '')
-                wb.prompt = bucket.get('prompt', '')
                 wb.save()
-                bucket_ids_in_payload.add(wb.bucket_id)
+                bucket_ids_in_payload.add(wb.id)
+
+            # Delete buckets that are not present in the payload
+            existing_bucket_ids = set(WellnessBucket.objects.values_list('id', flat=True))
+            buckets_to_delete = existing_bucket_ids - bucket_ids_in_payload
+            if buckets_to_delete:
+                WellnessBucket.objects.filter(id__in=buckets_to_delete).delete()
 
             return JsonResponse({'success': True, 'settings_id': settings_obj.id, 'bucket_ids': list(bucket_ids_in_payload)})
         except Exception as e:

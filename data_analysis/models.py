@@ -119,6 +119,7 @@ class TranscriptionAnalysis(models.Model):
     sentiment = models.CharField(max_length=50)
     general_topics = models.TextField(help_text="General topics identified in the transcript")
     iab_topics = models.TextField(help_text="IAB topics identified in the transcript")
+    bucket_prompt = models.TextField(help_text="Bucket prompt for categorization")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

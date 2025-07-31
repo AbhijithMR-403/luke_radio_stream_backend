@@ -37,8 +37,7 @@ def general_setting_to_dict(settings):
 
 def wellness_bucket_to_dict(bucket):
     return {
-        'bucket_id': bucket.bucket_id,
+        'id': bucket.id,
         'title': bucket.title,
         'description': bucket.description,
-        'prompt': bucket.prompt,
     }
