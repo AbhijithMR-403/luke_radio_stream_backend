@@ -32,7 +32,7 @@ class AudioSegments:
         )
 
     @staticmethod
-    def fetch_data(project_id: int, channel_id: int, date: Optional[str] = None):
+    def fetch_data(project_id: int, channel_id: int, date: Optional[str] = None, hours: Optional[list] = None):
         # Validate parameters
         ValidationUtils.validate_positive_integer(project_id, "project_id")
         ValidationUtils.validate_positive_integer(channel_id, "channel_id")
@@ -45,7 +45,22 @@ class AudioSegments:
         }
         response = requests.get(url, headers=headers)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        
+        # Filter data by hours if specified
+        if hours is not None and 'data' in data:
+            filtered_data = {'data': []}
+            for item in data['data']:
+                if 'metadata' in item and 'record_timestamp' in item['metadata']:
+                    # Extract hour from record_timestamp (format: "20250802000011")
+                    timestamp = item['metadata']['record_timestamp']
+                    if len(timestamp) >= 10:  # Ensure we have enough characters
+                        hour = int(timestamp[8:10])  # Extract hour from position 8-9
+                        if hour in hours:
+                            filtered_data['data'].append(item)
+            return filtered_data
+        
+        return data
 
     @staticmethod
     def find_unrecognized_segments(data, hour_offset=0, date=None):

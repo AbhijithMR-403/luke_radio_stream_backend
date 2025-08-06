@@ -44,6 +44,7 @@ class SeparatedAudioSegmentsView(View):
         try:
             channel_pk = request.GET.get('channel_id')
             date = request.GET.get('date')
+            hour = request.GET.get('hour')  # New parameter for specific hour
             
             if not channel_pk:
                 return JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
@@ -71,29 +72,58 @@ class SeparatedAudioSegmentsView(View):
             # Convert date_obj back to string format for the API call
             date_string = date_obj.strftime('%Y%m%d')
             
-            # First, fetch data from ACRCloud API and populate database
-            data = AudioSegments.fetch_data(
-                project_id=int(channel.project_id), 
-                channel_id=int(channel.channel_id), 
-                date=date_string
-            )
+            # Determine which hours to fetch
+            if hour is not None:
+                # Fetch only the specified hour
+                try:
+                    hour_int = int(hour)
+                    if hour_int < 0 or hour_int > 23:
+                        return JsonResponse({'success': False, 'error': 'Hour must be between 0 and 23'}, status=400)
+                    hours_to_fetch = [hour_int]
+                except ValueError:
+                    return JsonResponse({'success': False, 'error': 'Invalid hour format. Use 0-23'}, status=400)
+            else:
+                # Default to hour 0 if no hour specified
+                hours_to_fetch = [0]
             
-            # Populate database with the fetched data
-            AudioSegments.get_audio_segments_with_recognition_status(
-                data=data,
-                channel=channel,
-            )
+            # Fetch data for the entire date once
+            try:
+                data = AudioSegments.fetch_data(
+                    project_id=int(channel.project_id), 
+                    channel_id=int(channel.channel_id), 
+                    date=date_string,
+                    hours=hours_to_fetch
+                )
+                
+                # Process and get segments for the date (already filtered by hours)
+                all_segments = AudioSegments.get_audio_segments_with_recognition_status(
+                    data=data,
+                    channel=channel,
+                )
+                
+                # Add hour information to each segment
+                for segment in all_segments:
+                    if 'start_time' in segment and segment['start_time']:
+                        segment['hour'] = segment['start_time'].hour
+                
+            except Exception as e:
+                print(f"Error fetching data: {str(e)}")
+                all_segments = []
             
             # Create timezone-aware datetime range for the selected date
             start_of_day = timezone.make_aware(datetime.combine(date_obj, datetime.min.time()))
             end_of_day = timezone.make_aware(datetime.combine(date_obj, datetime.max.time()))
             
-            # Now fetch segments from database for the specified date range
+            # Now fetch segments from database for the specified date range and hours
+            # Filter by specific hour(s) - now always a single hour (either specified or default 0)
+            hour_start = timezone.make_aware(datetime.combine(date_obj, datetime.min.time().replace(hour=hours_to_fetch[0])))
+            hour_end = timezone.make_aware(datetime.combine(date_obj, datetime.max.time().replace(hour=hours_to_fetch[0])))
+            
             db_segments = AudioSegmentsModel.objects.filter(
                 channel=channel,
                 is_active=True,
-                start_time__gte=start_of_day,
-                start_time__lte=end_of_day
+                start_time__gte=hour_start,
+                start_time__lt=hour_end
             ).order_by('start_time')
             
             # Convert database objects to dictionary format
