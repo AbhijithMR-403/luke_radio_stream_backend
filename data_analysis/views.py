@@ -10,8 +10,9 @@ from django.http import FileResponse, JsonResponse
 from django.utils import timezone
 
 from acr_admin.models import Channel
-from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel
+from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionAnalysis
 from data_analysis.services.audio_segments import AudioSegments
+from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.tasks import analyze_transcription_task, bulk_download_audio_task
 
 # Create your views here.
@@ -130,6 +131,7 @@ class SeparatedAudioSegmentsView(View):
             all_segments = []
             for segment in db_segments:
                 segment_data = {
+                    'id': segment.id,
                     'start_time': segment.start_time,
                     'end_time': segment.end_time,
                     'duration_seconds': segment.duration_seconds,
@@ -141,7 +143,8 @@ class SeparatedAudioSegmentsView(View):
                     'title_before': segment.title_before,
                     'title_after': segment.title_after,
                     'notes': segment.notes,
-                    'created_at': segment.created_at.isoformat() if segment.created_at else None
+                    'created_at': segment.created_at.isoformat() if segment.created_at else None,
+                    'is_analysis_completed': segment.is_analysis_completed
                 }
                 all_segments.append(segment_data)
             
@@ -241,5 +244,136 @@ class MediaDownloadView(View):
         try:
             response = FileResponse(open(abs_file_path, 'rb'), as_attachment=True, filename=os.path.basename(file_path))
             return response
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AudioSegmentAnalysisView(View):
+    def get(self, request, pk, *args, **kwargs):
+        """
+        API to fetch analysis and transcription details for AudioSegments
+        On first hit, checks if is_recognized=False and is_analysis_completed status
+        If is_analysis_completed=False, calls create_transcription_job
+        When is_analysis_completed=True, returns all analysis and transcript data
+        """
+        try:
+            # Get the AudioSegments object by pk
+            try:
+                audio_segment = AudioSegmentsModel.objects.get(pk=pk)
+            except AudioSegmentsModel.DoesNotExist:
+                return JsonResponse({'success': False, 'error': 'AudioSegment not found'}, status=404)
+            
+            # Check if it's unrecognized and analysis status
+            if not audio_segment.is_recognized:
+                if not audio_segment.is_analysis_completed:
+                    # Create transcription job
+                    try:
+                        # Create the transcription job using the file_path
+                        job_response = RevAISpeechToText.create_transcription_job(audio_segment.file_path)
+                        
+                        # Create RevTranscriptionJob record
+                        rev_job = RevTranscriptionJob.objects.create(
+                            job_id=job_response['id'],
+                            job_name=job_response.get('name', ''),
+                            media_url=job_response.get('media_url', ''),
+                            status=job_response.get('status', ''),
+                            created_on=timezone.now(),
+                            job_type=job_response.get('type', 'async'),
+                            language=job_response.get('language', 'en'),
+                            strict_custom_vocabulary=job_response.get('strict_custom_vocabulary', False)
+                        )
+                        
+                        return JsonResponse({
+                            'success': True,
+                            'status': 'transcription_job_created',
+                            'message': 'Transcription job created successfully',
+                            'job_id': rev_job.job_id,
+                            'audio_segment_id': audio_segment.id,
+                            'is_analysis_completed': False
+                        })
+                        
+                    except Exception as e:
+                        return JsonResponse({
+                            'success': False, 
+                            'error': f'Failed to create transcription job: {str(e)}'
+                        }, status=500)
+                else:
+                    # Analysis is completed, fetch the data
+                    try:
+                        # Get TranscriptionDetail
+                        transcription_detail = TranscriptionDetail.objects.get(audio_segment=audio_segment)
+                        
+                        # Get TranscriptionAnalysis if it exists
+                        analysis = None
+                        try:
+                            analysis = TranscriptionAnalysis.objects.get(transcription_detail=transcription_detail)
+                        except TranscriptionAnalysis.DoesNotExist:
+                            pass
+                        
+                        # Prepare response data
+                        response_data = {
+                            'success': True,
+                            'status': 'analysis_completed',
+                            'audio_segment': {
+                                'id': audio_segment.id,
+                                'start_time': audio_segment.start_time,
+                                'end_time': audio_segment.end_time,
+                                'duration_seconds': audio_segment.duration_seconds,
+                                'file_name': audio_segment.file_name,
+                                'file_path': audio_segment.file_path,
+                                'title_before': audio_segment.title_before,
+                                'title_after': audio_segment.title_after,
+                                'is_recognized': audio_segment.is_recognized,
+                                'is_analysis_completed': audio_segment.is_analysis_completed,
+                                'channel_id': audio_segment.channel.id,
+                                'channel_name': audio_segment.channel.name
+                            },
+                            'transcription': {
+                                'id': transcription_detail.id,
+                                'transcript': transcription_detail.transcript,
+                                'created_at': transcription_detail.created_at,
+                                'rev_job_id': transcription_detail.rev_job.job_id if transcription_detail.rev_job else None
+                            }
+                        }
+                        
+                        # Add analysis data if available
+                        if analysis:
+                            response_data['analysis'] = {
+                                'id': analysis.id,
+                                'summary': analysis.summary,
+                                'sentiment': analysis.sentiment,
+                                'general_topics': analysis.general_topics,
+                                'iab_topics': analysis.iab_topics,
+                                'bucket_prompt': analysis.bucket_prompt,
+                                'created_at': analysis.created_at
+                            }
+                        
+                        return JsonResponse(response_data)
+                        
+                    except TranscriptionDetail.DoesNotExist:
+                        return JsonResponse({
+                            'success': False, 
+                            'error': 'Transcription detail not found for this audio segment'
+                        }, status=404)
+            else:
+                # Recognized segment - return basic info
+                return JsonResponse({
+                    'success': True,
+                    'status': 'recognized_segment',
+                    'message': 'This is a recognized segment, no analysis available',
+                    'audio_segment': {
+                        'id': audio_segment.id,
+                        'start_time': audio_segment.start_time,
+                        'end_time': audio_segment.end_time,
+                        'duration_seconds': audio_segment.duration_seconds,
+                        'file_name': audio_segment.file_name,
+                        'title': audio_segment.title,
+                        'is_recognized': audio_segment.is_recognized,
+                        'channel_id': audio_segment.channel.id,
+                        'channel_name': audio_segment.channel.name
+                    }
+                })
+                
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=500)

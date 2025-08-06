@@ -6,7 +6,7 @@ from data_analysis.services.transcription_analyzer import TranscriptionAnalyzer
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.services.audio_segments import AudioDownloader
 from data_analysis.services.audio_download import ACRCloudAudioDownloader
-from data_analysis.models import RevTranscriptionJob
+from data_analysis.models import RevTranscriptionJob, AudioSegments
 
 @shared_task
 def bulk_download_audio_task(project_id, channel_id, unrecognized):
@@ -58,6 +58,14 @@ def analyze_transcription_task(job_id, media_url_path):
         job = RevTranscriptionJob.objects.get(pk=job_id)
         transcription_detail = RevAISpeechToText.get_transcript_by_job_id(job, media_url_path)
         TranscriptionAnalyzer.analyze_transcription(transcription_detail)
+        
+        # Set is_analysis_completed = True on the AudioSegments object
+        if transcription_detail.audio_segment:
+            audio_segment = transcription_detail.audio_segment
+            audio_segment.is_analysis_completed = True
+            audio_segment.save()
+            print(f"Set is_analysis_completed=True for AudioSegments ID: {audio_segment.id}")
+        
         print(f"Successfully completed transcription analysis for job {job_id}")
         return True
     except Exception as e:

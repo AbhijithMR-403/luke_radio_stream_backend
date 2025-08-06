@@ -72,13 +72,27 @@ class UnrecognizedAudio(models.Model):
         }
 
 class TranscriptionDetail(models.Model):
-    unrecognized_audio = models.OneToOneField(UnrecognizedAudio, on_delete=models.CASCADE, related_name="transcription_detail")
+    unrecognized_audio = models.OneToOneField(UnrecognizedAudio, on_delete=models.CASCADE, related_name="transcription_detail", null=True, blank=True)
+    audio_segment = models.OneToOneField('AudioSegments', on_delete=models.CASCADE, related_name="transcription_detail", null=True, blank=True)
     rev_job = models.OneToOneField('RevTranscriptionJob', on_delete=models.CASCADE, related_name="transcription_detail")
     transcript = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Transcription for {self.unrecognized_audio} at {self.created_at}"
+        if self.unrecognized_audio:
+            return f"Transcription for {self.unrecognized_audio} at {self.created_at}"
+        elif self.audio_segment:
+            return f"Transcription for {self.audio_segment} at {self.created_at}"
+        else:
+            return f"Transcription at {self.created_at}"
+
+    def clean(self):
+        """Validate that either unrecognized_audio or audio_segment is set, but not both"""
+        super().clean()
+        if not self.unrecognized_audio and not self.audio_segment:
+            raise ValidationError("Either unrecognized_audio or audio_segment must be set")
+        if self.unrecognized_audio and self.audio_segment:
+            raise ValidationError("Cannot set both unrecognized_audio and audio_segment")
 
 class RevTranscriptionJob(models.Model):
     """Model to store Rev API callback data for transcription jobs"""
@@ -132,6 +146,7 @@ class AudioSegments(models.Model):
     duration_seconds = models.PositiveIntegerField(help_text="Duration in seconds")
     is_recognized = models.BooleanField(default=False, help_text="Whether the segment was recognized")
     is_active = models.BooleanField(default=True, help_text="Whether the segment is active (not superseded by newer data)")
+    is_analysis_completed = models.BooleanField(default=False, help_text="Whether data analysis has been completed for this audio segment")
     file_name = models.CharField(max_length=255)  # e.g., "def_channel_20250804_101500"
     file_path = models.CharField(max_length=512)  # e.g., "/mnt/audio_storage/def_channel_20250804_101500.wav"
     title = models.CharField(

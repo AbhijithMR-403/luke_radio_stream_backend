@@ -10,7 +10,7 @@ from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
 
-from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail, UnrecognizedAudio
+from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail, UnrecognizedAudio, AudioSegments
 
 
 class RevAISpeechToText:
@@ -51,7 +51,7 @@ class RevAISpeechToText:
     def get_transcript_by_job_id(revid: RevTranscriptionJob, media_path: str):
         """
         Fetches the transcript for a given Rev.ai job ID using the access token from GeneralSetting.
-        Inserts a TranscriptionDetail linked to the UnrecognizedAudio (by media_path) and the RevTranscriptionJob.
+        Inserts a TranscriptionDetail linked to the AudioSegments (by file_path) and the RevTranscriptionJob.
         Returns the transcript as plain text.
         """
         # Validate parameters
@@ -70,18 +70,18 @@ class RevAISpeechToText:
         response.raise_for_status()
         transcript = response.text
 
-        # Find the UnrecognizedAudio object by media_path
+        # Find the AudioSegments object by file_path
         try:
-            unrec_audio = UnrecognizedAudio.objects.get(media_path=media_path)
-        except UnrecognizedAudio.DoesNotExist:
-            raise ValueError(f"UnrecognizedAudio with media_path {media_path} not found")
+            audio_segment = AudioSegments.objects.get(file_path=media_path)
+        except AudioSegments.DoesNotExist:
+            raise ValueError(f"AudioSegments with file_path {media_path} not found")
 
-        # Check for existing TranscriptionDetail by unrecognized_audio and rev_job
+        # Check for existing TranscriptionDetail by audio_segment and rev_job
         from django.core.exceptions import ObjectDoesNotExist
-        existing_by_audio = None
+        existing_by_segment = None
         existing_by_job = None
         try:
-            existing_by_audio = TranscriptionDetail.objects.get(unrecognized_audio=unrec_audio)
+            existing_by_segment = TranscriptionDetail.objects.get(audio_segment=audio_segment)
         except ObjectDoesNotExist:
             pass
         try:
@@ -89,23 +89,30 @@ class RevAISpeechToText:
         except ObjectDoesNotExist:
             pass
 
-        if existing_by_audio and existing_by_job:
-            if existing_by_audio == existing_by_job:
+        if existing_by_segment and existing_by_job:
+            if existing_by_segment == existing_by_job:
                 # Both point to the same TranscriptionDetail (already present)
                 print("\033[93mAlready present\033[0m")  # Yellow
-                return existing_by_audio
+                return existing_by_segment
             else:
                 # Conflict: both exist but are different objects
-                print("\033[91mConflict: UnrecognizedAudio and RevTranscriptionJob do not match for existing TranscriptionDetail\033[0m")  # Red
-                return existing_by_audio or existing_by_job
-        elif existing_by_audio or existing_by_job:
+                print("\033[91mConflict: AudioSegments and RevTranscriptionJob do not match for existing TranscriptionDetail\033[0m")  # Red
+                return existing_by_segment or existing_by_job
+        elif existing_by_segment or existing_by_job:
             # Conflict: one exists but not both together
-            print("\033[91mConflict: UnrecognizedAudio or RevTranscriptionJob already linked to a different TranscriptionDetail\033[0m")  # Red
-            return existing_by_audio or existing_by_job
+            print("\033[91mConflict: AudioSegments or RevTranscriptionJob already linked to a different TranscriptionDetail\033[0m")  # Red
+            
+            # Set is_analysis_completed = True on the AudioSegments object
+            if audio_segment:
+                audio_segment.is_analysis_completed = True
+                audio_segment.save()
+                print(f"\033[92mSet is_analysis_completed=True for AudioSegments ID: {audio_segment.id}\033[0m")  # Green
+            
+            return existing_by_segment or existing_by_job
 
         # Create TranscriptionDetail if neither exists
         transcription_detail = TranscriptionDetail.objects.create(
-            unrecognized_audio=unrec_audio,
+            audio_segment=audio_segment,
             rev_job=revid,
             transcript=transcript
         )
