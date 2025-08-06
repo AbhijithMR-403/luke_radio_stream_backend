@@ -1,3 +1,4 @@
+from data_analysis.services.transcription_analyzer import TranscriptionAnalyzer
 from .models import Channel, GeneralSetting, WellnessBucket
 
 def channel_to_dict(channel):
@@ -22,7 +23,7 @@ def general_setting_to_dict(settings):
         'general_topics_prompt': settings.general_topics_prompt,
         'iab_topics_prompt': settings.iab_topics_prompt,
         'updated_at': settings.updated_at.isoformat() if settings.updated_at else None,
-        'bucket_prompt': settings.bucket_prompt,
+        'bucket_prompt': TranscriptionAnalyzer.get_bucket_prompt(),
         'bucket_definition_error_rate': settings.bucket_definition_error_rate,
         'chatgpt_model': settings.chatgpt_model,
         'chatgpt_max_tokens': settings.chatgpt_max_tokens,

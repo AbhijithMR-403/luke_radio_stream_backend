@@ -125,3 +125,70 @@ class TranscriptionAnalysis(models.Model):
     def __str__(self):
         return f"Analysis for {self.transcription_detail}"  
     
+class AudioSegments(models.Model):
+    """Model to store audio segments with recognition status and title relationships"""
+    start_time = models.DateTimeField(help_text="Start time of the audio segment")
+    end_time = models.DateTimeField(help_text="End time of the audio segment")
+    duration_seconds = models.PositiveIntegerField(help_text="Duration in seconds")
+    is_recognized = models.BooleanField(default=False, help_text="Whether the segment was recognized")
+    is_active = models.BooleanField(default=True, help_text="Whether the segment is active (not superseded by newer data)")
+    file_name = models.CharField(max_length=255)  # e.g., "def_channel_20250804_101500"
+    file_path = models.CharField(max_length=512)  # e.g., "/mnt/audio_storage/def_channel_20250804_101500.wav"
+    title = models.CharField(
+        max_length=500,
+        null=True, 
+        blank=True, 
+        help_text="To store Title of recognized segments"
+    )
+    title_before = models.CharField(
+        max_length=500,
+        null=True, 
+        blank=True, 
+        help_text="To store the before Title of recognized segments"
+    )
+    title_after = models.CharField(
+        max_length=500,
+        null=True, 
+        blank=True, 
+        help_text="To store the after Title of recognized segments"
+    )
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="audios_segments")
+    notes = models.TextField(null=True, blank=True, help_text="Optional reason/log/debug info")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        status = "ACTIVE" if self.is_active else "INACTIVE"
+        if self.is_recognized and self.title:
+            return f"Recognized: {self.title} ({self.start_time} - {self.end_time}) [{status}]"
+        else:
+            return f"Unrecognized: {self.start_time} - {self.end_time} ({self.duration_seconds}s) [{status}]"
+
+    def clean(self):
+        """Validate the model data"""
+        super().clean()
+        
+        # Validate that end_time is after start_time
+        if self.start_time and self.end_time and self.end_time <= self.start_time:
+            raise ValidationError("End time must be after start time")
+        
+        # Validate duration matches the time difference
+        if self.start_time and self.end_time and self.duration_seconds:
+            expected_duration = int((self.end_time - self.start_time).total_seconds())
+            if self.duration_seconds != expected_duration:
+                raise ValidationError(f"Duration ({self.duration_seconds}s) doesn't match time difference ({expected_duration}s)")
+        
+        # Validate business rules for recognized vs unrecognized segments
+        if self.is_recognized:
+            # For recognized segments: title is mandatory
+            if not self.title:
+                raise ValidationError("Recognized segments must have a title")
+        else:
+            # For unrecognized segments: title_before and title_after are mandatory
+            if not self.title_before:
+                raise ValidationError("Unrecognized segments must have a title_before")
+            if not self.title_after:
+                raise ValidationError("Unrecognized segments must have a title_after")
+
+    class Meta:
+        ordering = ['start_time'] 
+    
