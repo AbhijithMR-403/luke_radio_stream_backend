@@ -148,16 +148,15 @@ class SeparatedAudioSegmentsView(View):
                 }
                 all_segments.append(segment_data)
             
-            # Separate recognized and unrecognized segments
-            recognized_segments = [segment for segment in all_segments if segment["is_recognized"]]
-            unrecognized_segments = [segment for segment in all_segments if not segment["is_recognized"]]
+            # Count recognized and unrecognized segments
+            total_recognized = sum(1 for segment in all_segments if segment["is_recognized"])
+            total_unrecognized = sum(1 for segment in all_segments if not segment["is_recognized"])
             
             result = {
-                "recognized": recognized_segments,
-                "unrecognized": unrecognized_segments,
-                "total_recognized": len(recognized_segments),
-                "total_unrecognized": len(unrecognized_segments),
-                "total_segments": len(all_segments)
+                "segments": all_segments,
+                "total_segments": len(all_segments),
+                "total_recognized": total_recognized,
+                "total_unrecognized": total_unrecognized
             }
             
             return JsonResponse({
