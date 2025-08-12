@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "corsheaders",
     'encrypted_model_fields',
     "data_analysis",
+    "django_celery_beat",
 ]
 
 MIDDLEWARE = [
@@ -144,6 +145,21 @@ MEDIA_ROOT = BASE_DIR / "media"
 # Celery Configuration
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+
+# Celery Beat Configuration
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+CELERY_BEAT_MAX_LOOP_INTERVAL = 300  # 5 minutes
+CELERY_TIMEZONE = 'UTC'
+
+# Celery Task Configuration
+CELERY_TASK_SOFT_TIME_LIMIT = 300  # 5 minutes
+CELERY_TASK_TIME_LIMIT = 600  # 10 minutes
+CELERY_TASK_ALWAYS_EAGER = False  # Set to True for testing without workers
+CELERY_TASK_EAGER_PROPAGATES = True
+
+# Celery Result Configuration
+CELERY_RESULT_EXPIRES = 3600  # 1 hour
+CELERY_TASK_IGNORE_RESULT = False
 
 # CORS configuration
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="").split(",") if config("CORS_ALLOWED_ORIGINS", default="") else []

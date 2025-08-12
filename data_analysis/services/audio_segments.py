@@ -63,6 +63,44 @@ class AudioSegments:
         return data
 
     @staticmethod
+    def get_today_data_excluding_last_hour(project_id: int, channel_id: int):
+        """
+        Fetches all data from today excluding the last 1 hour from current time.
+        For example, if current time is 11:25, it excludes everything after 10:25.
+        
+        Args:
+            project_id: ACRCloud project ID
+            channel_id: ACRCloud channel ID
+            
+        Returns:
+            dict: All today's data except the last hour from current time
+        """
+        # Validate parameters
+        ValidationUtils.validate_positive_integer(project_id, "project_id")
+        ValidationUtils.validate_positive_integer(channel_id, "channel_id")
+        
+        # Get current time and calculate the cutoff time (1 hour ago)
+        current_time = timezone.now()
+        cutoff_time = current_time - timedelta(hours=1)
+        
+        # Get the hour of the cutoff time
+        cutoff_hour = cutoff_time.hour
+        print(f"Cutoff hour: {cutoff_hour}")
+        # If cutoff is in a previous day, return empty data
+        if cutoff_time.date() < current_time.date():
+            return {'data': []}
+        
+        # Create list of all hours from 0 to cutoff_hour-1
+        # This excludes the cutoff hour and current hour
+        if cutoff_hour == 0:
+            # If cutoff is at midnight (hour 0), return empty data
+            return {'data': []}
+        else:
+            # Get all hours from 0 to cutoff_hour-1
+            past_hours = list(range(cutoff_hour))
+            return AudioSegments.fetch_data(project_id, channel_id, hours=past_hours)
+
+    @staticmethod
     def find_unrecognized_segments(data, hour_offset=0, date=None):
         results = []
 
@@ -224,6 +262,122 @@ class AudioSegments:
         # Insert segments into database if channel is provided
         if channel:
             AudioSegments._insert_segments_to_database(all_segments, channel)
+        
+        return all_segments
+
+    @staticmethod
+    def process_audio_data(data_list, channel=None):
+        """
+        Process data from custom_files or music format and create unrecognized audio segments.
+        
+        Args:
+            data_list: List of dictionaries with metadata containing custom_files or music
+            channel: Channel object for generating file names and paths
+            
+        Returns:
+            list: List of dictionaries containing all segments (recognized and unrecognized)
+        """
+        results = []
+        
+        # Extract recognized segments from the data
+        for item in data_list:
+            metadata = item.get("metadata", {})
+            timestamp_str = metadata.get("timestamp_utc")
+            played_duration = metadata.get("played_duration", 0)
+            custom_files = metadata.get("custom_files", [])
+            music = metadata.get("music", [])
+            
+            # Check if we have either custom_files or music data
+            if timestamp_str and played_duration and (custom_files or music):
+                # Parse UTC timestamp and make it timezone-aware
+                naive_start_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                start_time = timezone.make_aware(naive_start_time, timezone=dt_timezone.utc)
+                end_time = start_time + timedelta(seconds=played_duration)
+                
+                # Get title from either custom_files or music
+                title = "Unknown Title"
+                if custom_files:
+                    title = custom_files[0].get("title", "Unknown Title")
+                elif music:
+                    title = music[0].get("title", "Unknown Title")
+                
+                # Skip segments with zero duration (same start and end time)
+                if start_time == end_time:
+                    print(f"Warning: Skipping zero-duration segment at {start_time}")
+                    continue
+                
+                # Set is_active to False if duration is less than 10 seconds
+                is_active = played_duration >= 10
+                
+                # Generate file name and path if channel is provided
+                file_name = None
+                file_path = None
+                if channel:
+                    start_time_str = start_time.strftime("%Y%m%d%H%M%S")
+                    file_name = f"audio_{channel.project_id}_{channel.channel_id}_{start_time_str}_{int(played_duration)}.mp3"
+                    # Create folder structure: start_date/file_name
+                    start_date = start_time.strftime("%Y%m%d")
+                    file_path = f"media/{start_date}/{file_name}"
+                
+                results.append({
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "duration_seconds": int(played_duration),
+                    "title": title,
+                    "is_recognized": True,
+                    "is_active": is_active,
+                    "file_name": file_name,
+                    "file_path": file_path
+                })
+
+        # Sort by start time
+        results.sort(key=lambda x: x["start_time"])
+
+        # Find unrecognized segments (gaps between recognized segments)
+        all_segments = []
+        
+        # Add recognized segments
+        all_segments.extend(results)
+        
+        # Find gaps between recognized segments
+        for i in range(len(results) - 1):
+            current_segment = results[i]
+            next_segment = results[i + 1]
+            
+            # Only create gap if there's actually a gap (not touching segments)
+            if next_segment["start_time"] > current_segment["end_time"]:
+                gap_duration = (next_segment["start_time"] - current_segment["end_time"]).total_seconds()
+                # Set is_active to False if duration is less than 10 seconds
+                is_active = gap_duration >= 10
+                
+                # Generate file name and path if channel is provided
+                file_name = None
+                file_path = None
+                if channel:
+                    start_time_str = current_segment["end_time"].strftime("%Y%m%d%H%M%S")
+                    file_name = f"audio_{channel.project_id}_{channel.channel_id}_{start_time_str}_{int(gap_duration)}.mp3"
+                    # Create folder structure: start_date/file_name
+                    start_date = current_segment["end_time"].strftime("%Y%m%d")
+                    file_path = f"media/{start_date}/{file_name}"
+                
+                unrecognized_segment = {
+                    "start_time": current_segment["end_time"],
+                    "end_time": next_segment["start_time"],
+                    "duration_seconds": int(gap_duration),
+                    "title_before": current_segment["title"],
+                    "title_after": next_segment["title"],
+                    "is_recognized": False,
+                    "is_active": is_active,
+                    "file_name": file_name,
+                    "file_path": file_path
+                }
+                all_segments.append(unrecognized_segment)
+            elif next_segment["start_time"] == current_segment["end_time"]:
+                # Segments are touching (no gap), skip creating unrecognized segment
+                print(f"Segments touching at {current_segment['end_time']}, skipping gap creation")
+        
+        # Sort all segments by start time
+        all_segments.sort(key=lambda x: x["start_time"])
         
         return all_segments
 

@@ -147,6 +147,7 @@ class AudioSegments(models.Model):
     is_recognized = models.BooleanField(default=False, help_text="Whether the segment was recognized")
     is_active = models.BooleanField(default=True, help_text="Whether the segment is active (not superseded by newer data)")
     is_analysis_completed = models.BooleanField(default=False, help_text="Whether data analysis has been completed for this audio segment")
+    is_audio_downloaded = models.BooleanField(default=False, help_text="Whether the audio file has been downloaded")
     file_name = models.CharField(max_length=255)  # e.g., "def_channel_20250804_101500"
     file_path = models.CharField(max_length=512)  # e.g., "/mnt/audio_storage/def_channel_20250804_101500.wav"
     title = models.CharField(
@@ -207,3 +208,124 @@ class AudioSegments(models.Model):
     class Meta:
         ordering = ['start_time'] 
     
+    @staticmethod
+    def insert_audio_segments(segments_data, channel_id=None):
+        """
+        Insert multiple audio segments into the database.
+        
+        Args:
+            segments_data (list): List of dictionaries containing segment data
+            channel_id (int, optional): Channel ID for the segments. If not provided, 
+                                      must be included in each segment data.
+        
+        Returns:
+            list: List of created AudioSegments instances
+        
+        Example:
+            segments_data = [
+                {
+                    'start_time': datetime.datetime(2025, 8, 12, 9, 59, 29, tzinfo=datetime.timezone.utc),
+                    'end_time': datetime.datetime(2025, 8, 12, 9, 59, 34, tzinfo=datetime.timezone.utc),
+                    'duration_seconds': 5,
+                    'title_before': '024010108',
+                    'title_after': 'TRUSTFALL',
+                    'is_recognized': False,
+                    'is_active': False,
+                    'file_name': 'def_channel_20250812_095929',
+                    'file_path': '/mnt/audio_storage/def_channel_20250812_095929.wav',
+                    'channel': channel_instance  # or channel_id if channel_id not provided globally
+                },
+                {
+                    'start_time': datetime.datetime(2025, 8, 12, 9, 59, 34, tzinfo=datetime.timezone.utc),
+                    'end_time': datetime.datetime(2025, 8, 12, 10, 3, 13, tzinfo=datetime.timezone.utc),
+                    'duration_seconds': 219,
+                    'title': 'TRUSTFALL',
+                    'is_recognized': True,
+                    'is_active': True,
+                    'file_name': 'def_channel_20250812_095934',
+                    'file_path': '/mnt/audio_storage/def_channel_20250812_095934.wav',
+                    'channel': channel_instance  # or channel_id if channel_id not provided globally
+                }
+            ]
+        """
+        if not isinstance(segments_data, list):
+            raise ValidationError("segments_data must be a list")
+        
+        created_segments = []
+        
+        for i, segment_data in enumerate(segments_data):
+            if not isinstance(segment_data, dict):
+                raise ValidationError(f"Segment data at index {i} must be a dictionary")
+            
+            # Create a copy to avoid modifying the original data
+            segment_dict = segment_data.copy()
+            
+            # Handle channel assignment
+            if channel_id and 'channel' not in segment_dict:
+                try:
+                    channel = Channel.objects.get(id=channel_id)
+                    segment_dict['channel'] = channel
+                except Channel.DoesNotExist:
+                    raise ValidationError(f"Channel with id {channel_id} does not exist")
+            elif 'channel' not in segment_dict:
+                raise ValidationError(f"Channel must be provided either globally or in segment data at index {i}")
+            
+            # Validate required fields
+            required_fields = ['start_time', 'end_time', 'duration_seconds', 'file_name', 'file_path']
+            for field in required_fields:
+                if field not in segment_dict:
+                    raise ValidationError(f"Required field '{field}' missing in segment data at index {i}")
+            
+            # Validate datetime fields
+            if not isinstance(segment_dict['start_time'], datetime):
+                raise ValidationError(f"start_time must be a datetime object in segment data at index {i}")
+            if not isinstance(segment_dict['end_time'], datetime):
+                raise ValidationError(f"end_time must be a datetime object in segment data at index {i}")
+            
+            # Validate duration
+            if not isinstance(segment_dict['duration_seconds'], (int, float)) or segment_dict['duration_seconds'] <= 0:
+                raise ValidationError(f"duration_seconds must be a positive number in segment data at index {i}")
+            
+            # Validate business rules for recognized vs unrecognized segments
+            is_recognized = segment_dict.get('is_recognized', False)
+            if is_recognized:
+                if 'title' not in segment_dict or not segment_dict['title']:
+                    raise ValidationError(f"Recognized segments must have a title in segment data at index {i}")
+            else:
+                if 'title_before' not in segment_dict or not segment_dict['title_before']:
+                    raise ValidationError(f"Unrecognized segments must have a title_before in segment data at index {i}")
+                if 'title_after' not in segment_dict or not segment_dict['title_after']:
+                    raise ValidationError(f"Unrecognized segments must have a title_after in segment data at index {i}")
+            
+            # Check if file_path already exists
+            existing_segment = AudioSegments.objects.filter(file_path=segment_dict['file_path']).first()
+            if existing_segment:
+                # If segment with same file_path exists, add it to the return list and continue
+                created_segments.append(existing_segment)
+                continue
+            
+            # Create the AudioSegments instance
+            try:
+                audio_segment = AudioSegments(**segment_dict)
+                audio_segment.full_clean()  # Validate the model
+                audio_segment.save()
+                created_segments.append(audio_segment)
+            except Exception as e:
+                raise ValidationError(f"Error creating audio segment at index {i}: {str(e)}")
+        
+        return created_segments
+    
+    @staticmethod
+    def insert_single_audio_segment(segment_data, channel_id=None):
+        """
+        Insert a single audio segment into the database.
+        
+        Args:
+            segment_data (dict): Dictionary containing segment data
+            channel_id (int, optional): Channel ID for the segment. If not provided, 
+                                      must be included in segment data.
+        
+        Returns:
+            AudioSegments: Created AudioSegments instance
+        """
+        return AudioSegments.insert_audio_segments([segment_data], channel_id)[0]
