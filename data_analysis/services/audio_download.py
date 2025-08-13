@@ -3,6 +3,7 @@ import requests
 from datetime import datetime
 from django.core.exceptions import ValidationError
 from acr_admin.models import GeneralSetting
+from data_analysis.models import AudioSegments
 
 
 class ACRCloudAudioDownloader:
@@ -108,3 +109,122 @@ class ACRCloudAudioDownloader:
                     f.write(chunk)
         media_url = f"/api/media/{filename}"
         return media_url
+
+    @staticmethod
+    def download_audio_segments_batch(audio_segments: list[AudioSegments]):
+        """
+        Downloads audio for a list of AudioSegments and updates their is_audio_downloaded field.
+        
+        Args:
+            audio_segments (list[AudioSegments]): List of AudioSegments objects
+        
+        Returns:
+            dict: Dictionary with results for each segment
+                 {
+                     'success': [list of successfully downloaded segments],
+                     'failed': [list of failed segments with error messages],
+                     'skipped': [list of already downloaded segments]
+                 }
+        """
+        results = {
+            'success': [],
+            'failed': [],
+            'skipped': []
+        }
+        
+        # Process each segment
+        for segment in audio_segments:
+            print(segment)
+            try:
+                # Skip if already downloaded
+                if segment.is_audio_downloaded:
+                    results['skipped'].append({
+                        'segment_id': segment.id,
+                        'file_name': segment.file_name,
+                        'reason': 'Already downloaded'
+                    })
+                    continue
+                
+                # Get project_id from the first segment's channel
+                project_id = segment.channel.project_id
+                channel_id = segment.channel.channel_id
+                
+                # Use default media directory
+                media_dir = os.path.join(os.getcwd(), "media")
+                os.makedirs(media_dir, exist_ok=True)
+                
+                # Check if file_name and file_path are present
+                if not segment.file_name or not segment.file_path:
+                    print(f"Skipping segment {segment.id}: Missing file_name or file_path")
+                    results['skipped'].append({
+                        'segment_id': segment.id,
+                        'file_name': segment.file_name,
+                        'reason': 'Missing file_name or file_path'
+                    })
+                    continue
+                
+                # Use segment's file_name and file_path
+                filename = segment.file_name
+                file_path = segment.file_path
+                
+                # Check if file already exists
+                if os.path.exists(file_path):
+                    # File exists, just update the database
+                    segment.is_audio_downloaded = True
+                    segment.save()
+                    results['success'].append({
+                        'segment_id': segment.id,
+                        'file_name': filename,
+                        'file_path': file_path,
+                        'status': 'File already existed, marked as downloaded'
+                    })
+                    continue
+                print("-----------------")
+                # Download the audio
+                media_url = ACRCloudAudioDownloader.download_audio(
+                    project_id=project_id,
+                    channel_id=channel_id,
+                    start_time=segment.start_time,
+                    duration_seconds=segment.duration_seconds,
+                    filepath=file_path
+                )
+                print(media_url)
+                # Update the segment
+                segment.is_audio_downloaded = True
+                segment.save()
+                
+                results['success'].append({
+                    'segment_id': segment.id,
+                    'file_name': filename,
+                    'file_path': file_path,
+                    'media_url': media_url,
+                    'status': 'Successfully downloaded'
+                })
+                
+            except Exception as e:
+                results['failed'].append({
+                    'segment_id': segment.id if hasattr(segment, 'id') else 'Unknown',
+                    'file_name': getattr(segment, 'file_name', 'Unknown'),
+                    'error': str(e)
+                })
+        
+        return results
+
+
+# Usage Example for Celery:
+#
+# from data_analysis.services.audio_download import ACRCloudAudioDownloader
+# from data_analysis.models import AudioSegments
+#
+# # Get AudioSegments objects
+# segments = AudioSegments.objects.filter(channel_id=5, is_audio_downloaded=False)
+#
+# # Download audio for all segments
+# results = ACRCloudAudioDownloader.download_audio_segments_batch(
+#     audio_segments=segments
+# )
+#
+# # Results will contain:
+# # - success: list of successfully downloaded segments
+# # - failed: list of failed segments with error messages  
+# # - skipped: list of already downloaded segments

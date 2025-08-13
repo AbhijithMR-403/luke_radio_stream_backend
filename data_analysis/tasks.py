@@ -7,7 +7,8 @@ from data_analysis.services.transcription_analyzer import TranscriptionAnalyzer
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.services.audio_segments import AudioDownloader, AudioSegments
 from data_analysis.services.audio_download import ACRCloudAudioDownloader
-from data_analysis.models import RevTranscriptionJob, AudioSegments
+from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel 
+from acr_admin.models import Channel
 
 @shared_task
 def bulk_download_audio_task(project_id, channel_id, unrecognized):
@@ -75,56 +76,134 @@ def analyze_transcription_task(job_id, media_url_path):
         return False
 
 @shared_task
-def process_today_audio_data_excluding_last_hour():
+def process_today_audio_data():
     """
-    Periodic task to process today's audio data excluding the last hour.
+    Periodic task to process today's audio data excluding the last hour for all channels.
     This ensures we don't process incomplete data from the most recent hour.
     Runs daily at 1 AM.
     """
     try:
-        # For now, we'll use a default project_id and channel_id
-        # In a real implementation, you might want to iterate through all active projects/channels
-        project_id = 1  # Default project ID
-        channel_id = 1  # Default channel ID
+        # Fetch all channels
+        channels = Channel.objects.filter(is_deleted=False)
         
-        print(f"Starting daily audio data processing for project {project_id}, channel {channel_id}")
-        
-        # Use the new combined method to process today's data excluding last hour
-        segments = AudioSegments.process_today_data_excluding_last_hour(project_id, channel_id)
-        
-        if segments:
-            print(f"Successfully processed {len(segments)} audio segments")
-            
-            # Count recognized vs unrecognized segments
-            recognized_count = sum(1 for seg in segments if seg.get('is_recognized', False))
-            unrecognized_count = len(segments) - recognized_count
-            
-            print(f"Segments breakdown: {recognized_count} recognized, {unrecognized_count} unrecognized")
-            
+        if not channels:
+            print("No active channels found")
             return {
                 'status': 'success',
-                'total_segments': len(segments),
-                'recognized_segments': recognized_count,
-                'unrecognized_segments': unrecognized_count,
-                'project_id': project_id,
-                'channel_id': channel_id,
-                'timestamp': datetime.now().isoformat()
-            }
-        else:
-            print("No audio segments were processed")
-            return {
-                'status': 'success',
+                'total_channels': 0,
                 'total_segments': 0,
                 'recognized_segments': 0,
                 'unrecognized_segments': 0,
-                'project_id': project_id,
-                'channel_id': channel_id,
                 'timestamp': datetime.now().isoformat(),
-                'message': 'No segments found to process'
+                'message': 'No active channels found'
             }
+        
+        print(f"Starting daily audio data processing for {len(channels)} channels")
+        
+        total_segments = 0
+        total_recognized = 0
+        total_unrecognized = 0
+        channel_results = []
+        
+        for channel in channels:
+            try:
+                print(f"Processing channel {channel.id} (Project: {channel.project_id}, Channel: {channel.channel_id})")
+                
+                # Step 1: Get today's data excluding last hour for this channel
+                segments_data = AudioSegments.get_today_data_excluding_last_hour(channel.project_id, channel.channel_id)
+                
+                if not segments_data or not segments_data.get('data'):
+                    print(f"No data found for channel {channel.id}")
+                    channel_results.append({
+                        'channel_id': channel.id,
+                        'project_id': channel.project_id,
+                        'channel_id_acr': channel.channel_id,
+                        'status': 'no_data',
+                        'segments': 0
+                    })
+                    continue
+                
+                # Step 2: Process the audio data with channel object
+                processed_segments = AudioSegments.process_audio_data(segments_data['data'], channel)
+                
+                if not processed_segments:
+                    print(f"No processed segments for channel {channel.id}")
+                    channel_results.append({
+                        'channel_id': channel.id,
+                        'project_id': channel.project_id,
+                        'channel_id_acr': channel.channel_id,
+                        'status': 'no_processed_segments',
+                        'segments': 0
+                    })
+                    continue
+                print(f"Processed segments: {processed_segments}")
+                # Step 3: Insert audio segments into database
+                inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
+                
+                if not inserted_segments:
+                    print(f"No segments inserted for channel {channel.id}")
+                    channel_results.append({
+                        'channel_id': channel.id,
+                        'project_id': channel.project_id,
+                        'channel_id_acr': channel.channel_id,
+                        'status': 'no_inserted_segments',
+                        'segments': 0
+                    })
+                    continue
+                
+                # Step 4: Download audio for the inserted segments
+                download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments[:20])
+                
+                # Step 5: Create and save transcription jobs using download results
+                transcription_jobs = RevAISpeechToText.create_and_save_transcription_job(download_results)
+                
+                # Count segments for this channel
+                channel_segments = len(inserted_segments)
+                channel_recognized = sum(1 for seg in inserted_segments if seg.is_recognized)
+                channel_unrecognized = channel_segments - channel_recognized
+                
+                total_segments += channel_segments
+                total_recognized += channel_recognized
+                total_unrecognized += channel_unrecognized
+                
+                print(f"Channel {channel.id}: {channel_segments} segments ({channel_recognized} recognized, {channel_unrecognized} unrecognized)")
+                
+                channel_results.append({
+                    'channel_id': channel.id,
+                    'project_id': channel.project_id,
+                    'channel_id_acr': channel.channel_id,
+                    'status': 'success',
+                    'segments': channel_segments,
+                    'recognized': channel_recognized,
+                    'unrecognized': channel_unrecognized,
+                    'transcription_jobs': len(transcription_jobs) if transcription_jobs else 0
+                })
+                
+            except Exception as e:
+                print(f"Error processing channel {channel.id}: {e}")
+                channel_results.append({
+                    'channel_id': channel.id,
+                    'project_id': channel.project_id,
+                    'channel_id_acr': channel.channel_id,
+                    'status': 'error',
+                    'error': str(e),
+                    'segments': 0
+                })
+        
+        print(f"Completed processing {len(channels)} channels. Total: {total_segments} segments ({total_recognized} recognized, {total_unrecognized} unrecognized)")
+        
+        return {
+            'status': 'success',
+            'total_channels': len(channels),
+            'total_segments': total_segments,
+            'recognized_segments': total_recognized,
+            'unrecognized_segments': total_unrecognized,
+            'channel_results': channel_results,
+            'timestamp': datetime.now().isoformat()
+        }
             
     except Exception as e:
-        print(f"Error in process_today_audio_data_excluding_last_hour: {e}")
+        print(f"Error in process_today_audio_data: {e}")
         return {
             'status': 'error',
             'error': str(e),

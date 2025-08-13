@@ -46,13 +46,12 @@ class TranscriptionAnalyzer:
             
             # Get list of bucket names for category_list
             category_list = [bucket.title for bucket in buckets]
+            category_string = ", ".join(category_list)
             
             # Add classification prompt at the end
-            classification_prompt = f"""Could you classify the following transcript with one of the following categories only: {category_list}. You must classify the transcript into a primary category and secondary category only. If the accuracy of these classifications are less than 80% accurate, then classify them undefined. Output a comma-separated value of the primary category followed by the percentage confidence measured in whole percentages then the secondary category followed by the percentage confidence measured in whole percentages. The most alike category, the primary category, should be first, with the secondary category second. It is ok to only have one category but not OK to add a third. All of the outputs should be comma-separated, i.e category one (or undefined), confidence percentage, category two (or undefined), confidence percentage. Where you cannot identify any decipherable text just return an empty result."""
+            classification_prompt = f"""Could you classify the following transcript with one of the following categories only: {category_string}. You must classify the transcript into a primary category and secondary category only. If the accuracy of these classifications are less than 80% accurate, then classify them undefined. Output a comma-separated value of the primary category followed by the percentage confidence measured in whole percentages then the secondary category followed by the percentage confidence measured in whole percentages. The most alike category, the primary category, should be first, with the secondary category second. It is ok to only have one category but not OK to add a third. All of the outputs should be comma-separated, i.e category one (or undefined), confidence percentage, category two (or undefined), confidence percentage. Where you cannot identify any decipherable text just return an empty result."""
             
-            full_prompt += "\n\n" + classification_prompt
-            print(full_prompt)
-            print("-----------------\n\n\n")
+            full_prompt += "\n" + classification_prompt
             return full_prompt
             
         except Exception as e:

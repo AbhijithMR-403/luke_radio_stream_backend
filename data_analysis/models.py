@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from acr_admin.models import Channel
 
@@ -119,12 +120,48 @@ class RevTranscriptionJob(models.Model):
     failure = models.CharField(max_length=100, null=True, blank=True)
     failure_detail = models.TextField(null=True, blank=True)
     
+    # Related audio segment
+    audio_segment = models.ForeignKey('AudioSegments', on_delete=models.CASCADE, related_name='rev_transcription_jobs', null=True, blank=True)
+    
+    # Retry tracking
+    retry_count = models.PositiveIntegerField(default=0)
+    last_retry_at = models.DateTimeField(null=True, blank=True)
+    
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
         return f"{self.job_id} - {self.job_name} ({self.status})"
+    
+    def clean(self):
+        """Validate the model data"""
+        super().clean()
+        
+        # Validate retry count
+        if self.retry_count < 0:
+            raise ValidationError("Retry count cannot be negative")
+    
+    @property
+    def is_completed(self):
+        """Check if the job is completed (successfully or failed)"""
+        return self.status in ['transcribed', 'failed', 'cancelled']
+    
+    @property
+    def is_successful(self):
+        """Check if the job completed successfully"""
+        return self.status == 'transcribed'
+    
+    @property
+    def is_failed(self):
+        """Check if the job failed"""
+        return self.status == 'failed'
+    
+    def increment_retry_count(self):
+        """Increment retry count and update last retry timestamp"""
+        self.retry_count += 1
+        self.last_retry_at = timezone.now()
+        self.save(update_fields=['retry_count', 'last_retry_at'])
 
 
 class TranscriptionAnalysis(models.Model):
