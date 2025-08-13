@@ -152,8 +152,8 @@ CELERY_BEAT_MAX_LOOP_INTERVAL = 300  # 5 minutes
 CELERY_TIMEZONE = 'UTC'
 
 # Celery Task Configuration
-CELERY_TASK_SOFT_TIME_LIMIT = 300  # 5 minutes
-CELERY_TASK_TIME_LIMIT = 600  # 10 minutes
+CELERY_TASK_SOFT_TIME_LIMIT = 1200  # 5 minutes
+CELERY_TASK_TIME_LIMIT = 3600  # 10 minutes
 CELERY_TASK_ALWAYS_EAGER = False  # Set to True for testing without workers
 CELERY_TASK_EAGER_PROPAGATES = True
 
