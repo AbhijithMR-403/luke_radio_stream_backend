@@ -20,7 +20,7 @@ app.conf.beat_schedule = {
     # Process today's audio data excluding last hour - runs every hour
     'process-today-audio-data': {
         'task': 'data_analysis.tasks.process_today_audio_data',
-        'schedule': 60.0,  # Every 60 seconds (1 minute)
+        'schedule': 3600.0,  # Every 3600 seconds (1 hour)
     }
 }
 
