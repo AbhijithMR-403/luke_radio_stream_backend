@@ -152,7 +152,7 @@ def process_today_audio_data():
                     continue
                 
                 # Step 4: Download audio for the inserted segments
-                download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments[:20])
+                download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments)
                 
                 # Step 5: Create and save transcription jobs using download results
                 transcription_jobs = RevAISpeechToText.create_and_save_transcription_job(download_results)
