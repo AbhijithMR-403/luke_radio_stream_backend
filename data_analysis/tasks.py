@@ -1,18 +1,14 @@
 from celery import shared_task
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from data_analysis.services.transcription_analyzer import TranscriptionAnalyzer
 from data_analysis.services.transcription_service import RevAISpeechToText
-from data_analysis.services.audio_segments import AudioDownloader, AudioSegments
+from data_analysis.services.audio_segments import AudioSegments
 from data_analysis.services.audio_download import ACRCloudAudioDownloader
 from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel 
 from acr_admin.models import Channel
-
-@shared_task
-def bulk_download_audio_task(project_id, channel_id, unrecognized):
-    return AudioDownloader.bulk_download_audio(project_id, channel_id, unrecognized)
 
 # Latest update download audio task
 @shared_task
