@@ -122,7 +122,6 @@ class SeparatedAudioSegmentsView(View):
             
             db_segments = AudioSegmentsModel.objects.filter(
                 channel=channel,
-                is_active=True,
                 start_time__gte=hour_start,
                 start_time__lt=hour_end
             ).order_by('start_time')
