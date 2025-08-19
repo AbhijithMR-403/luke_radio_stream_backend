@@ -21,6 +21,11 @@ app.conf.beat_schedule = {
     'process-today-audio-data': {
         'task': 'data_analysis.tasks.process_today_audio_data',
         'schedule': 3600.0,  # Every 3600 seconds (1 hour)
+    },
+    # Process previous day's audio data - runs daily at 2 AM
+    'process-previous-day-audio-data': {
+        'task': 'data_analysis.tasks.process_previous_day_audio_data',
+        'schedule': crontab(hour=2, minute=0),  # Daily at 2:00 AM
     }
 }
 
