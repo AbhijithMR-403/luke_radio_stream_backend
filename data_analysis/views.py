@@ -23,7 +23,8 @@ class AudioSegmentsWithTranscriptionView(View):
         try:
             channel_pk = request.GET.get('channel_id')
             date = request.GET.get('date')
-            hour = request.GET.get('hour')  # New parameter for specific hour
+            start_time = request.GET.get('start_time')
+            end_time = request.GET.get('end_time')
             
             if not channel_pk:
                 return JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
@@ -48,30 +49,39 @@ class AudioSegmentsWithTranscriptionView(View):
                 # If no date provided, use today's date
                 date_obj = timezone.now().date()
             
-            # Determine which hours to fetch
-            if hour is not None:
-                # Fetch only the specified hour
+            # Build filter conditions
+            filter_conditions = {'channel': channel}
+            
+            # Add date filter if provided
+            if date:
+                # Create timezone-aware datetime range for the entire date
+                date_start = timezone.make_aware(datetime.combine(date_obj, datetime.min.time()))
+                date_end = timezone.make_aware(datetime.combine(date_obj, datetime.max.time()))
+                filter_conditions['start_time__gte'] = date_start
+                filter_conditions['start_time__lt'] = date_end
+            
+            # Add start_time filter if provided
+            if start_time:
                 try:
-                    hour_int = int(hour)
-                    if hour_int < 0 or hour_int > 23:
-                        return JsonResponse({'success': False, 'error': 'Hour must be between 0 and 23'}, status=400)
-                    hours_to_fetch = [hour_int]
+                    # Parse start_time in HH:MM:SS format
+                    start_time_obj = datetime.strptime(start_time, '%H:%M:%S').time()
+                    start_datetime = timezone.make_aware(datetime.combine(date_obj, start_time_obj))
+                    filter_conditions['start_time__gte'] = start_datetime
                 except ValueError:
-                    return JsonResponse({'success': False, 'error': 'Invalid hour format. Use 0-23'}, status=400)
-            else:
-                # Default to hour 0 if no hour specified
-                hours_to_fetch = [0]
+                    return JsonResponse({'success': False, 'error': 'Invalid start_time format. Use HH:MM:SS'}, status=400)
             
-            # Create timezone-aware datetime range for the selected date and hour
-            hour_start = timezone.make_aware(datetime.combine(date_obj, datetime.min.time().replace(hour=hours_to_fetch[0])))
-            hour_end = timezone.make_aware(datetime.combine(date_obj, datetime.max.time().replace(hour=hours_to_fetch[0])))
+            # Add end_time filter if provided
+            if end_time:
+                try:
+                    # Parse end_time in HH:MM:SS format
+                    end_time_obj = datetime.strptime(end_time, '%H:%M:%S').time()
+                    end_datetime = timezone.make_aware(datetime.combine(date_obj, end_time_obj))
+                    filter_conditions['start_time__lte'] = end_datetime
+                except ValueError:
+                    return JsonResponse({'success': False, 'error': 'Invalid end_time format. Use HH:MM:SS'}, status=400)
             
-            # Fetch segments from database for the specified date range and hours
-            db_segments = AudioSegmentsModel.objects.filter(
-                channel=channel,
-                start_time__gte=hour_start,
-                start_time__lt=hour_end
-            ).order_by('start_time')
+            # Fetch segments from database for the specified filters
+            db_segments = AudioSegmentsModel.objects.filter(**filter_conditions).order_by('start_time')
             
             # Convert database objects to dictionary format with transcription and analysis data
             all_segments = []
