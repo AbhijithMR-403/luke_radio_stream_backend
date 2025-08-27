@@ -169,6 +169,156 @@ class AudioSegmentsWithTranscriptionView(View):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
+class AudioSegments(View):
+    def get(self, request, *args, **kwargs):
+        try:
+            channel_pk = request.GET.get('channel_id')
+            start_datetime = request.GET.get('start_datetime')
+            end_datetime = request.GET.get('end_datetime')
+            
+            if not channel_pk:
+                return JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
+            
+            try:
+                channel = Channel.objects.get(id=channel_pk, is_deleted=False)
+            except Channel.DoesNotExist:
+                return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
+            
+            # Build filter conditions
+            filter_conditions = {'channel': channel}
+            
+            # Parse and add start_datetime filter if provided
+            if start_datetime:
+                try:
+                    # Try ISO format first (e.g., 2025-08-02T10:30:00)
+                    if 'T' in start_datetime:
+                        start_dt = datetime.fromisoformat(start_datetime.replace('Z', '+00:00'))
+                    else:
+                        # Try YYYY-MM-DD HH:MM:SS format
+                        start_dt = datetime.strptime(start_datetime, '%Y-%m-%d %H:%M:%S')
+                    
+                    # Make timezone-aware if not already
+                    if timezone.is_naive(start_dt):
+                        start_dt = timezone.make_aware(start_dt)
+                    
+                    filter_conditions['start_time__gte'] = start_dt
+                except ValueError:
+                    return JsonResponse({'success': False, 'error': 'Invalid start_datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS) or YYYY-MM-DD HH:MM:SS'}, status=400)
+            
+            # Parse and add end_datetime filter if provided
+            if end_datetime:
+                try:
+                    # Try ISO format first (e.g., 2025-08-02T10:30:00)
+                    if 'T' in end_datetime:
+                        end_dt = datetime.fromisoformat(end_datetime.replace('Z', '+00:00'))
+                    else:
+                        # Try YYYY-MM-DD HH:MM:SS format
+                        end_dt = datetime.strptime(end_datetime, '%Y-%m-%d %H:%M:%S')
+                    
+                    # Make timezone-aware if not already
+                    if timezone.is_naive(end_dt):
+                        end_dt = timezone.make_aware(end_dt)
+                    
+                    filter_conditions['start_time__lte'] = end_dt
+                except ValueError:
+                    return JsonResponse({'success': False, 'error': 'Invalid end_datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS) or YYYY-MM-DD HH:MM:SS'}, status=400)
+            
+            # If no datetime filters provided, use today's date as default
+            if not start_datetime and not end_datetime:
+                today_start = timezone.make_aware(datetime.combine(timezone.now().date(), datetime.min.time()))
+                today_end = timezone.make_aware(datetime.combine(timezone.now().date(), datetime.max.time()))
+                filter_conditions['start_time__gte'] = today_start
+                filter_conditions['start_time__lt'] = today_end
+            
+            # Fetch segments from database for the specified filters
+            db_segments = AudioSegmentsModel.objects.filter(**filter_conditions).order_by('start_time')
+            
+            # Convert database objects to dictionary format with transcription and analysis data
+            all_segments = []
+            for segment in db_segments:
+                segment_data = {
+                    'id': segment.id,
+                    'start_time': segment.start_time,
+                    'end_time': segment.end_time,
+                    'duration_seconds': segment.duration_seconds,
+                    'is_recognized': segment.is_recognized,
+                    'is_active': segment.is_active,
+                    'file_name': segment.file_name,
+                    'file_path': segment.file_path,
+                    'title': segment.title,
+                    'title_before': segment.title_before,
+                    'title_after': segment.title_after,
+                    'notes': segment.notes,
+                    'created_at': segment.created_at.isoformat() if segment.created_at else None,
+                    'is_analysis_completed': segment.is_analysis_completed,
+                    'is_audio_downloaded': segment.is_audio_downloaded
+                }
+                
+                # Fetch transcription details regardless of is_active flag
+                try:
+                    transcription_detail = TranscriptionDetail.objects.get(audio_segment=segment)
+                    segment_data['transcription'] = {
+                        'id': transcription_detail.id,
+                        'transcript': transcription_detail.transcript,
+                        'created_at': transcription_detail.created_at.isoformat() if transcription_detail.created_at else None,
+                        'rev_job_id': transcription_detail.rev_job.job_id if transcription_detail.rev_job else None
+                    }
+                    
+                    # Fetch analysis data regardless of is_analysis_completed flag
+                    try:
+                        analysis = TranscriptionAnalysis.objects.get(transcription_detail=transcription_detail)
+                        segment_data['analysis'] = {
+                            'id': analysis.id,
+                            'summary': analysis.summary,
+                            'sentiment': analysis.sentiment,
+                            'general_topics': analysis.general_topics,
+                            'iab_topics': analysis.iab_topics,
+                            'bucket_prompt': analysis.bucket_prompt,
+                            'created_at': analysis.created_at.isoformat() if analysis.created_at else None
+                        }
+                    except TranscriptionAnalysis.DoesNotExist:
+                        # No analysis found
+                        segment_data['analysis'] = None
+                        
+                except TranscriptionDetail.DoesNotExist:
+                    # No transcription detail found
+                    segment_data['transcription'] = None
+                    segment_data['analysis'] = None
+                
+                all_segments.append(segment_data)
+            
+            # Count recognized and unrecognized segments
+            total_recognized = sum(1 for segment in all_segments if segment["is_recognized"])
+            total_unrecognized = sum(1 for segment in all_segments if not segment["is_recognized"])
+            
+            # Count segments with transcription and analysis
+            total_with_transcription = sum(1 for segment in all_segments if segment.get("transcription") is not None)
+            total_with_analysis = sum(1 for segment in all_segments if segment.get("analysis") is not None)
+            
+            result = {
+                "segments": all_segments,
+                "total_segments": len(all_segments),
+                "total_recognized": total_recognized,
+                "total_unrecognized": total_unrecognized,
+                "total_with_transcription": total_with_transcription,
+                "total_with_analysis": total_with_analysis
+            }
+            
+            return JsonResponse({
+                'success': True,
+                'data': result,
+                'channel_info': {
+                    'channel_id': channel.channel_id,
+                    'project_id': channel.project_id,
+                    'channel_name': channel.name
+                }
+            })
+            
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
 class RevCallbackView(View):
     def post(self, request, *args, **kwargs):
         data = json.loads(request.body)
