@@ -130,12 +130,26 @@ class AudioSegments:
                 start_time = timezone.make_aware(naive_start_time, timezone=dt_timezone.utc)
                 end_time = start_time + timedelta(seconds=played_duration)
                 
-                # Get title from either custom_files or music
+                # Get title and metadata from either custom_files or music
                 title = "Unknown Title"
-                if custom_files:
-                    title = custom_files[0].get("title", "Unknown Title")
-                elif music:
-                    title = music[0].get("title", "Unknown Title")
+                metadata_json = None
+                
+                if music:
+                    music_data = music[0] if music else {}
+                    title = music_data.get("title", "")
+                    
+                    # Extract comprehensive metadata from music data
+                    metadata_json = {
+                        "source": "music",
+                        "artists": music_data.get("artists", []),
+                        "external_metadata": music_data.get("external_metadata", {}),
+                        "external_ids": music_data.get("external_ids", {}),
+                        "sample_begin_time_offset_ms": music_data.get("sample_begin_time_offset_ms"),
+                        "sample_end_time_offset_ms": music_data.get("sample_end_time_offset_ms"),
+                        "play_offset_ms": music_data.get("play_offset_ms"),
+                        "result_from": music_data.get("result_from"),
+                        "created_at": music_data.get("created_at"),
+                    }
                 
                 # Skip segments with zero duration (same start and end time)
                 if start_time == end_time:
@@ -163,7 +177,8 @@ class AudioSegments:
                     "is_recognized": True,
                     "is_active": is_active,
                     "file_name": file_name,
-                    "file_path": file_path
+                    "file_path": file_path,
+                    "metadata_json": metadata_json
                 })
 
         # Sort by start time

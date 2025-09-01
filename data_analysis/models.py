@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+import json
 
 from acr_admin.models import Channel
 
@@ -205,6 +206,11 @@ class AudioSegments(models.Model):
         blank=True, 
         help_text="To store the after Title of recognized segments"
     )
+    metadata_json = models.JSONField(
+        null=True, 
+        blank=True, 
+        help_text="JSON field to store metadata like artists, albums, external IDs, etc. from music recognition data"
+    )
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="audios_segments")
     notes = models.TextField(null=True, blank=True, help_text="Optional reason/log/debug info")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -241,6 +247,63 @@ class AudioSegments(models.Model):
                 raise ValidationError("Unrecognized segments must have a title_before")
             if not self.title_after:
                 raise ValidationError("Unrecognized segments must have a title_after")
+        
+        # Validate metadata_json if provided
+        if self.metadata_json is not None:
+            if not isinstance(self.metadata_json, dict):
+                raise ValidationError("metadata_json must be a dictionary")
+
+    def set_metadata(self, metadata_dict):
+        """
+        Set metadata from music recognition data
+        
+        Args:
+            metadata_dict (dict): Dictionary containing metadata like artists, albums, etc.
+        """
+        if not isinstance(metadata_dict, dict):
+            raise ValidationError("metadata_dict must be a dictionary")
+        
+        self.metadata_json = metadata_dict
+        self.save(update_fields=['metadata_json'])
+
+    def get_artists(self):
+        """
+        Get list of artists from metadata
+        
+        Returns:
+            list: List of artist names, empty list if no artists found
+        """
+        if not self.metadata_json:
+            return []
+        
+        artists = self.metadata_json.get('artists', [])
+        if isinstance(artists, list):
+            return [artist.get('name', '') for artist in artists if isinstance(artist, dict) and artist.get('name')]
+        return []
+
+    def get_external_metadata(self):
+        """
+        Get external metadata (Spotify, Deezer, etc.) from metadata
+        
+        Returns:
+            dict: External metadata dictionary, empty dict if not found
+        """
+        if not self.metadata_json:
+            return {}
+        
+        return self.metadata_json.get('external_metadata', {})
+
+    def get_external_ids(self):
+        """
+        Get external IDs (UPC, ISRC, etc.) from metadata
+        
+        Returns:
+            dict: External IDs dictionary, empty dict if not found
+        """
+        if not self.metadata_json:
+            return {}
+        
+        return self.metadata_json.get('external_ids', {})
 
     class Meta:
         ordering = ['start_time'] 
@@ -281,6 +344,14 @@ class AudioSegments(models.Model):
                     'is_active': True,
                     'file_name': 'def_channel_20250812_095934',
                     'file_path': '/mnt/audio_storage/def_channel_20250812_095934.wav',
+                    'metadata_json': {
+                        'source': 'music',
+                        'artists': [{'name': 'Lewis Capaldi'}],
+                        'external_metadata': {
+                            'spotify': [{'track': {'id': '7ce20yLkzuXXLUhzIDoZih', 'name': 'Before You Go'}}]
+                        },
+                        'external_ids': {'isrc': ['DEUM72000017']}
+                    },
                     'channel': channel_instance  # or channel_id if channel_id not provided globally
                 }
             ]

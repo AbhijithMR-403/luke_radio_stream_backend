@@ -251,7 +251,8 @@ class AudioSegments(View):
                     'notes': segment.notes,
                     'created_at': segment.created_at.isoformat() if segment.created_at else None,
                     'is_analysis_completed': segment.is_analysis_completed,
-                    'is_audio_downloaded': segment.is_audio_downloaded
+                    'is_audio_downloaded': segment.is_audio_downloaded,
+                    'metadata_json': segment.metadata_json
                 }
                 
                 # Fetch transcription details regardless of is_active flag
