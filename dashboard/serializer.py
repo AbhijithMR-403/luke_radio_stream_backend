@@ -9,6 +9,7 @@ from collections import defaultdict
 class DashboardStatsSerializer(serializers.Serializer):
     dashboardStats = serializers.DictField()
     topicsDistribution = serializers.ListField()
+    topTopicsRanking = serializers.ListField()
     sentimentData = serializers.ListField()
     dateRange = serializers.DictField(required=False)
 
@@ -119,7 +120,7 @@ def _get_topics_stats(analyses):
         analyses: QuerySet of TranscriptionAnalysis objects
     
     Returns:
-        tuple: (unique_topics_count, topics_distribution, unique_topics)
+        tuple: (unique_topics_count, topics_distribution, top_topics_ranking, unique_topics)
     """
     unique_topics = set()
     topic_counts = defaultdict(int)
@@ -154,7 +155,24 @@ def _get_topics_stats(analyses):
     
     # Sort by count descending (highest count first)
     topics_distribution.sort(key=lambda x: x['value'], reverse=True)
-    return unique_topics_count, topics_distribution, unique_topics
+    
+    # Create top topics ranking with rank, count, and percentage (top 10 only)
+    total_analyses = len(analyses) if analyses else 1
+    top_topics_ranking = []
+    
+    # Get top 10 topics by count
+    top_10_topics = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    
+    for rank, (topic, count) in enumerate(top_10_topics, 1):
+        percentage = round((count / total_analyses) * 100, 1)
+        top_topics_ranking.append({
+            'rank': rank,
+            'topic': topic.upper(),
+            'count': count,
+            'percentage': percentage
+        })
+    
+    return unique_topics_count, topics_distribution, top_topics_ranking, unique_topics
 
 
 def _get_channel_stats(channel_id):
@@ -267,7 +285,7 @@ def get_dashboard_stats(start_date, end_date, channel_id):
     # Get all statistics using separate functions
     total_transcriptions = _get_transcription_stats(date_filter, channel_id)
     avg_sentiment, sentiment_breakdown, analyses = _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id)
-    unique_topics_count, topics_distribution, unique_topics = _get_topics_stats(analyses)
+    unique_topics_count, topics_distribution, top_topics_ranking, unique_topics = _get_topics_stats(analyses)
     active_shifts, channel_details = _get_channel_stats(channel_id)
     sentiment_data = _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id)
     
@@ -288,6 +306,7 @@ def get_dashboard_stats(start_date, end_date, channel_id):
             }
         },
         'topicsDistribution': topics_distribution,
+        'topTopicsRanking': top_topics_ranking,
         'sentimentData': sentiment_data,
         'dateRange': {
             'startDate': start_date,
