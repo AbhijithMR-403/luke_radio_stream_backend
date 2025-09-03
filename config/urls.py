@@ -23,6 +23,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path('api/', include('acr_admin.urls')),
     path('api/', include('data_analysis.urls')),
+    path('api/', include('dashboard.urls')),
 ]
 
 if settings.DEBUG:

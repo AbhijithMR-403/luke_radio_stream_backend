@@ -38,11 +38,13 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "rest_framework",
     "acr_admin",
     "corsheaders",
     'encrypted_model_fields',
     "data_analysis",
     "django_celery_beat",
+    "dashboard",
 ]
 
 MIDDLEWARE = [
