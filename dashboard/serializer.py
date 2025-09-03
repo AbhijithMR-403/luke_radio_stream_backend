@@ -267,6 +267,144 @@ def _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id):
     return sentiment_data
 
 
+def _get_shift_analytics_data(start_dt, end_dt, channel_id):
+    """
+    Get shift analytics data grouped by time shifts
+    
+    Args:
+        start_dt: Start datetime object
+        end_dt: End datetime object
+        channel_id (int): Channel ID to filter by
+    
+    Returns:
+        dict: Shift analytics data
+    """
+    if not start_dt or not end_dt:
+        return {}
+    
+    # Define shift time ranges
+    shifts = {
+        'morning': {'start': 6, 'end': 14, 'title': 'Morning Shift (6AM-2PM)'},
+        'afternoon': {'start': 14, 'end': 22, 'title': 'Afternoon Shift (2PM-10PM)'},
+        'night': {'start': 22, 'end': 6, 'title': 'Night Shift (10PM-6AM)'}
+    }
+    
+    shift_data = {}
+    sentiment_by_shift = []
+    transcription_count_by_shift = []
+    top_topics_by_shift = {}
+    
+    for shift_key, shift_info in shifts.items():
+        # Get transcriptions for this shift
+        shift_transcriptions = []
+        shift_sentiments = []
+        shift_topics = defaultdict(int)
+        
+        # Query AudioSegments for this shift and channel
+        audio_segments = AudioSegments.objects.filter(
+            channel_id=channel_id,
+            start_time__range=(start_dt, end_dt),
+            is_active=True
+        )
+        
+        for segment in audio_segments:
+            # Check if segment falls within this shift
+            segment_hour = segment.start_time.hour
+            
+            if shift_key == 'night':
+                # Night shift spans across midnight
+                if segment_hour >= shift_info['start'] or segment_hour < shift_info['end']:
+                    shift_transcriptions.append(segment)
+            else:
+                # Regular shifts within same day
+                if shift_info['start'] <= segment_hour < shift_info['end']:
+                    shift_transcriptions.append(segment)
+        
+        # Get transcription details and analysis for this shift
+        for segment in shift_transcriptions:
+            try:
+                transcription_detail = segment.transcription_detail
+                if transcription_detail and hasattr(transcription_detail, 'analysis'):
+                    analysis = transcription_detail.analysis
+                    if analysis:
+                        # Get sentiment
+                        if analysis.sentiment:
+                            try:
+                                sentiment_value = int(analysis.sentiment.strip())
+                                shift_sentiments.append(sentiment_value)
+                            except (ValueError, TypeError):
+                                continue
+                        
+                        # Get topics
+                        if analysis.general_topics:
+                            topics_text = analysis.general_topics
+                            topic_lines = topics_text.split('\n')
+                            
+                            for line in topic_lines:
+                                line = line.strip()
+                                if line:
+                                    if line[0].isdigit() and '. ' in line:
+                                        topic = line.split('. ', 1)[1] if '. ' in line else line
+                                    else:
+                                        topic = line
+                                    
+                                    topic = topic.strip()
+                                    if topic:
+                                        shift_topics[topic] += 1
+            except:
+                continue
+        
+        # Calculate shift statistics
+        total_transcriptions = len(shift_transcriptions)
+        avg_sentiment = round(sum(shift_sentiments) / len(shift_sentiments), 2) if shift_sentiments else 0.0
+        
+        # Get top topic for this shift
+        top_topic = 'N/A'
+        if shift_topics:
+            top_topic = max(shift_topics.items(), key=lambda x: x[1])[0]
+        
+        # Build shift data
+        shift_data[shift_key] = {
+            'title': shift_info['title'],
+            'total': total_transcriptions,
+            'avgSentiment': avg_sentiment,
+            'topTopic': top_topic
+        }
+        
+        # Build sentiment by shift data
+        sentiment_by_shift.append({
+            'shift': shift_info['title'],
+            'value': int(avg_sentiment) if avg_sentiment > 0 else 0
+        })
+        
+        # Build transcription count by shift data
+        colors = {'morning': '#3b82f6', 'afternoon': '#10b981', 'night': '#f59e0b'}
+        transcription_count_by_shift.append({
+            'shift': shift_info['title'].split(' ')[0],  # Just the shift name (Morning, Afternoon, Night)
+            'count': total_transcriptions,
+            'color': colors[shift_key]
+        })
+        
+        # Build top topics by shift data
+        top_topics_list = []
+        sorted_topics = sorted(shift_topics.items(), key=lambda x: x[1], reverse=True)[:3]
+        for rank, (topic, count) in enumerate(sorted_topics, 1):
+            top_topics_list.append({
+                'rank': rank,
+                'topic': topic,
+                'count': count
+            })
+        
+        top_topics_by_shift[shift_key] = top_topics_list
+    
+    return {
+        'shiftData': shift_data,
+        'sentimentByShift': sentiment_by_shift,
+        'transcriptionCountByShift': transcription_count_by_shift,
+        'topTopicsByShift': top_topics_by_shift
+    }
+
+
 def get_dashboard_stats(start_date, end_date, channel_id):
     """
     Main function to get all dashboard statistics with required date filtering and channel filtering
@@ -308,6 +446,40 @@ def get_dashboard_stats(start_date, end_date, channel_id):
         'topicsDistribution': topics_distribution,
         'topTopicsRanking': top_topics_ranking,
         'sentimentData': sentiment_data,
+        'dateRange': {
+            'startDate': start_date,
+            'endDate': end_date
+        },
+        'channelFilter': {
+            'channelId': channel_id
+        }
+    }
+    
+    return response
+
+
+def get_shift_analytics(start_date, end_date, channel_id):
+    """
+    Main function to get shift analytics data
+    
+    Args:
+        start_date (str): Start date in YYYY-MM-DD format
+        end_date (str): End date in YYYY-MM-DD format
+        channel_id (int): Channel ID to filter by
+    
+    Returns:
+        dict: Complete shift analytics data
+    """
+    # Build date filter
+    date_filter, start_dt, end_dt = _build_date_filter(start_date, end_date)
+    print(start_dt, end_dt)
+    # Get shift analytics data
+    shift_analytics = _get_shift_analytics_data(start_dt, end_dt, channel_id)
+    print(shift_analytics)
+    
+    # Add metadata
+    response = {
+        **shift_analytics,
         'dateRange': {
             'startDate': start_date,
             'endDate': end_date
