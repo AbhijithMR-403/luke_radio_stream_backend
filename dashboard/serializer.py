@@ -124,11 +124,21 @@ def _get_topics_stats(analyses):
     """
     unique_topics = set()
     topic_counts = defaultdict(int)
+    topic_audio_segments = defaultdict(set)  # Track audio segment IDs for each topic
     
     for analysis in analyses:
         if analysis.general_topics:
             topics_text = analysis.general_topics
             topic_lines = topics_text.split('\n')
+            
+            # Get audio segment ID from the analysis
+            audio_segment_id = None
+            if analysis.transcription_detail:
+                if analysis.transcription_detail.audio_segment:
+                    audio_segment_id = analysis.transcription_detail.audio_segment.id
+                elif analysis.transcription_detail.unrecognized_audio:
+                    # For unrecognized audio, we'll use a different identifier
+                    audio_segment_id = f"unrecognized_{analysis.transcription_detail.unrecognized_audio.id}"
             
             for line in topic_lines:
                 line = line.strip()
@@ -142,15 +152,19 @@ def _get_topics_stats(analyses):
                     if topic:
                         unique_topics.add(topic)
                         topic_counts[topic] += 1
+                        # Add audio segment ID to the topic's set
+                        if audio_segment_id:
+                            topic_audio_segments[topic].add(audio_segment_id)
     
     unique_topics_count = len(unique_topics)
     
-    # Create topics distribution with total count instead of percentage
+    # Create topics distribution with total count and audio segment IDs
     topics_distribution = []
     for topic, count in topic_counts.items():
         topics_distribution.append({
             'topic': topic.upper(),
-            'value': count  # Use total count instead of percentage
+            'value': count,  # Use total count instead of percentage
+            'audioSegmentIds': list(topic_audio_segments[topic])  # List of audio segment IDs
         })
     
     # Sort by count descending (highest count first)
@@ -437,7 +451,6 @@ def get_dashboard_stats(start_date, end_date, channel_id):
             'details': {
                 'sentimentBreakdown': sentiment_breakdown,
                 'totalAnalyses': len(analyses),
-                'topicsList': list(unique_topics),
                 'channels': channel_details,
                 'dateFilterApplied': True,
                 'channelFilterApplied': True
