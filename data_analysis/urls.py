@@ -7,4 +7,6 @@ urlpatterns = [
     path('audio_segments', views.AudioSegments.as_view(), name='audio_segments'),
     path('rev-callback', views.RevCallbackView.as_view(), name='rev-callback'),
     path('download_media/<path:file_path>', views.MediaDownloadView.as_view(), name='download_media'),
+    path('transcribe_and_analyze', views.AudioTranscriptionAndAnalysisView.as_view(), name='transcribe_and_analyze'),
+    path('transcription_queue_status', views.TranscriptionQueueStatusView.as_view(), name='transcription_queue_status'),
 ]

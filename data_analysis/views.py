@@ -1,15 +1,17 @@
 from datetime import datetime
 import json
 import os
+import time
 from urllib.parse import unquote, urlparse
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.http import FileResponse, JsonResponse
 from django.utils import timezone
+from decouple import config
 
 from acr_admin.models import Channel
-from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionAnalysis
+from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionAnalysis, TranscriptionQueue
 from data_analysis.services.audio_segments import AudioSegments
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.tasks import analyze_transcription_task
@@ -318,6 +320,271 @@ class AudioSegments(View):
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AudioTranscriptionAndAnalysisView(View):
+    def post(self, request, *args, **kwargs):
+        try:
+            data = json.loads(request.body)
+            segment_id = data.get('segment_id')
+            
+            if not segment_id:
+                return JsonResponse({'success': False, 'error': 'segment_id is required'}, status=400)
+            
+            # Check if segment exists
+            try:
+                segment = AudioSegmentsModel.objects.get(id=segment_id)
+            except AudioSegmentsModel.DoesNotExist:
+                return JsonResponse({'success': False, 'error': 'Audio segment not found'}, status=404)
+            
+            # Check if transcription already exists
+            try:
+                existing_transcription = TranscriptionDetail.objects.get(audio_segment=segment)
+                return JsonResponse({
+                    'success': False, 
+                    'error': 'Transcription already exists for this segment',
+                    'transcription_id': existing_transcription.id,
+                    'status': 'already_exists'
+                }, status=400)
+            except TranscriptionDetail.DoesNotExist:
+                pass  # Continue with transcription
+            
+            # Check if already queued for transcription
+            try:
+                existing_queue = TranscriptionQueue.objects.get(audio_segment=segment)
+                
+                # Check if it's been more than 40 seconds since queued
+                time_since_queued = timezone.now() - existing_queue.queued_at
+                if time_since_queued.total_seconds() < 40:
+                    return JsonResponse({
+                        'success': False, 
+                        'error': f'Audio segment was queued recently. Please wait {40 - int(time_since_queued.total_seconds())} more seconds before trying again.',
+                        'queue_id': existing_queue.id,
+                        'queued_at': existing_queue.queued_at.isoformat(),
+                        'seconds_remaining': 40 - int(time_since_queued.total_seconds()),
+                        'status': 'recently_queued'
+                    }, status=400)
+                else:
+                    # More than 40 seconds have passed, allow calling transcription again
+                    print(f"More than 40 seconds passed since last queue. Allowing transcription call again for segment {segment_id}")
+                    # Continue with the transcription process below
+                    
+            except TranscriptionQueue.DoesNotExist:
+                pass  # Continue with queuing
+            
+            # Check if audio file exists, if not download it
+            if not segment.file_path or not os.path.exists(segment.file_path):
+                try:
+                    # Download the audio file first
+                    from data_analysis.services.audio_download import ACRCloudAudioDownloader
+                    
+                    # Get project_id and channel_id from the segment's channel
+                    project_id = segment.channel.project_id
+                    channel_id = segment.channel.channel_id
+                    
+                    # Ensure the directory exists for the file path
+                    file_dir = os.path.dirname(segment.file_path)
+                    if file_dir:
+                        os.makedirs(file_dir, exist_ok=True)
+                    
+                    # Download the audio file
+                    media_url = ACRCloudAudioDownloader.download_audio(
+                        project_id=project_id,
+                        channel_id=channel_id,
+                        start_time=segment.start_time,
+                        duration_seconds=segment.duration_seconds,
+                        filepath=segment.file_path
+                    )
+                    
+                    # Update the segment's is_audio_downloaded flag
+                    segment.is_audio_downloaded = True
+                    segment.save()
+                    
+                    print(f"Successfully downloaded audio for segment {segment_id} to {segment.file_path}")
+                    
+                except Exception as download_error:
+                    return JsonResponse({
+                        'success': False, 
+                        'error': f'Failed to download audio file: {str(download_error)}'
+                    }, status=500)
+            
+            # Create or update transcription queue entry
+            try:
+                # Check if we're updating an existing queue entry (after 40 seconds)
+                existing_queue = TranscriptionQueue.objects.filter(audio_segment=segment).first()
+                if existing_queue:
+                    # Update existing queue entry
+                    existing_queue.queued_at = timezone.now()
+                    existing_queue.is_transcribed = False
+                    existing_queue.is_analyzed = False
+                    existing_queue.completed_at = None
+                    existing_queue.save()
+                    queue_entry = existing_queue
+                    print(f"Updated existing TranscriptionQueue entry: {queue_entry.id}")
+                else:
+                    # Create new queue entry
+                    queue_entry = TranscriptionQueue.objects.create(
+                        audio_segment=segment,
+                        is_transcribed=False,
+                        is_analyzed=False
+                    )
+                    print(f"Successfully created TranscriptionQueue entry: {queue_entry.id}")
+            except Exception as db_error:
+                print(f"Database error creating/updating TranscriptionQueue: {str(db_error)}")
+                return JsonResponse({
+                    'success': False, 
+                    'error': f'Failed to create/update transcription queue entry: {str(db_error)}'
+                }, status=500)
+            
+            # Call transcription function immediately
+            try:
+                # Ensure file_path is properly formatted for the transcription service
+                media_path = "/"+segment.file_path
+                if not media_path:
+                    return JsonResponse({
+                        'success': False, 
+                        'error': 'File path is empty or null'
+                    }, status=400)
+                
+                # Ensure the path starts with '/' for validation
+                # if not media_path.startswith('/'):
+                #     media_path = '/' + media_path
+                
+                # Additional validation - ensure it's a valid file path
+                if '..' in media_path or media_path.startswith('//'):
+                    return JsonResponse({
+                        'success': False, 
+                        'error': 'Invalid file path format'
+                    }, status=400)
+                
+                print(f"Calling transcription service with media_path: {media_path}")
+                
+                # Call the transcription service
+                transcription_job = RevAISpeechToText.create_transcription_job(media_path)
+                job_id = transcription_job.get('id')
+                
+                if not job_id:
+                    return JsonResponse({
+                        'success': False, 
+                        'error': 'Failed to create transcription job'
+                    }, status=500)
+                
+                # Save the job to database
+                rev_job = RevTranscriptionJob.objects.create(
+                    job_id=job_id,
+                    job_name=f"Transcription for segment {segment_id}",
+                    media_url=f"{config('PUBLIC_BASE_URL')}{segment.file_path}",
+                    status='in_progress',
+                    job_type='async',
+                    language='en',
+                    created_on=timezone.now(),
+                    audio_segment=segment
+                )
+                
+                print(f"Successfully created RevTranscriptionJob: {rev_job.job_id}")
+                
+            except Exception as transcription_error:
+                print(f"Transcription service error: {str(transcription_error)}")
+                # Delete the queue entry if transcription fails
+                queue_entry.delete()
+                return JsonResponse({
+                    'success': False, 
+                    'error': f'Failed to start transcription: {str(transcription_error)}'
+                }, status=500)
+            
+            # Return success immediately after queuing
+            return JsonResponse({
+                'success': True,
+                'message': 'Audio segment queued for transcription and analysis',
+                'data': {
+                    'queue_id': queue_entry.id,
+                    'segment_id': segment_id,
+                    'rev_job_id': job_id,
+                    'queued_at': queue_entry.queued_at.isoformat(),
+                    'status': 'queued'
+                }
+            })
+                
+        except json.JSONDecodeError:
+            return JsonResponse({'success': False, 'error': 'Invalid JSON data'}, status=400)
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+@method_decorator(csrf_exempt, name='dispatch')
+class TranscriptionQueueStatusView(View):
+    def get(self, request, *args, **kwargs):
+        try:
+            segment_id = request.GET.get('segment_id')
+            
+            if not segment_id:
+                return JsonResponse({'success': False, 'error': 'segment_id is required'}, status=400)
+            
+            # Check if segment exists
+            try:
+                segment = AudioSegmentsModel.objects.get(id=segment_id)
+            except AudioSegmentsModel.DoesNotExist:
+                return JsonResponse({'success': False, 'error': 'Audio segment not found'}, status=404)
+            
+            # Check if queued for transcription
+            try:
+                queue_entry = TranscriptionQueue.objects.get(audio_segment=segment)
+                
+                # Check if transcription is completed
+                transcription_detail = None
+                analysis = None
+                
+                try:
+                    transcription_detail = TranscriptionDetail.objects.get(audio_segment=segment)
+                    queue_entry.is_transcribed = True
+                    
+                    # Check if analysis is completed
+                    try:
+                        analysis = TranscriptionAnalysis.objects.get(transcription_detail=transcription_detail)
+                        queue_entry.is_analyzed = True
+                        queue_entry.completed_at = timezone.now()
+                    except TranscriptionAnalysis.DoesNotExist:
+                        pass
+                    
+                    queue_entry.save()
+                    
+                except TranscriptionDetail.DoesNotExist:
+                    pass
+                
+                return JsonResponse({
+                    'success': True,
+                    'data': {
+                        'queue_id': queue_entry.id,
+                        'segment_id': segment_id,
+                        'is_transcribed': queue_entry.is_transcribed,
+                        'is_analyzed': queue_entry.is_analyzed,
+                        'queued_at': queue_entry.queued_at.isoformat(),
+                        'completed_at': queue_entry.completed_at.isoformat() if queue_entry.completed_at else None,
+                        'transcription': {
+                            'id': transcription_detail.id,
+                            'transcript': transcription_detail.transcript,
+                            'created_at': transcription_detail.created_at.isoformat()
+                        } if transcription_detail else None,
+                        'analysis': {
+                            'id': analysis.id,
+                            'summary': analysis.summary,
+                            'sentiment': analysis.sentiment,
+                            'general_topics': analysis.general_topics,
+                            'iab_topics': analysis.iab_topics,
+                            'bucket_prompt': analysis.bucket_prompt,
+                            'created_at': analysis.created_at.isoformat()
+                        } if analysis else None
+                    }
+                })
+                
+            except TranscriptionQueue.DoesNotExist:
+                return JsonResponse({
+                    'success': False, 
+                    'error': 'Audio segment is not queued for transcription',
+                    'status': 'not_queued'
+                }, status=404)
+                
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 @method_decorator(csrf_exempt, name='dispatch')
 class RevCallbackView(View):

@@ -165,6 +165,17 @@ class RevTranscriptionJob(models.Model):
         self.save(update_fields=['retry_count', 'last_retry_at'])
 
 
+class TranscriptionQueue(models.Model):
+    """Model to track audio segments queued for transcription"""
+    audio_segment = models.OneToOneField('AudioSegments', on_delete=models.CASCADE, related_name='transcription_queue')
+    is_transcribed = models.BooleanField(default=False, help_text="Whether the transcription has been completed")
+    is_analyzed = models.BooleanField(default=False, help_text="Whether the analysis has been completed")
+    queued_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    def __str__(self):
+        return f"Transcription Queue for {self.audio_segment} - Transcribed: {self.is_transcribed}, Analyzed: {self.is_analyzed}"
+
 class TranscriptionAnalysis(models.Model):
     transcription_detail = models.OneToOneField('TranscriptionDetail', on_delete=models.CASCADE, related_name='analysis')
     summary = models.TextField()
