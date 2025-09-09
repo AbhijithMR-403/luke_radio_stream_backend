@@ -143,8 +143,14 @@ def _get_topics_stats(analyses):
             for line in topic_lines:
                 line = line.strip()
                 if line:
-                    if line[0].isdigit() and '. ' in line:
-                        topic = line.split('. ', 1)[1] if '. ' in line else line
+                    if line[0].isdigit():
+                        # Handle both formats: "1. Topic" and "1 Topic"
+                        if '. ' in line:
+                            topic = line.split('. ', 1)[1]
+                        elif ' ' in line:
+                            topic = line.split(' ', 1)[1]
+                        else:
+                            topic = line
                     else:
                         topic = line
                     
