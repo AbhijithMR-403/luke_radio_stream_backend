@@ -439,7 +439,7 @@ class AudioTranscriptionAndAnalysisView(View):
             # Call transcription function immediately
             try:
                 # Ensure file_path is properly formatted for the transcription service
-                media_path = "/"+segment.file_path
+                media_path = "/api/"+segment.file_path
                 if not media_path:
                     return JsonResponse({
                         'success': False, 
@@ -658,110 +658,6 @@ class MediaDownloadView(View):
             return response
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@method_decorator(csrf_exempt, name='dispatch')
-class TopicsListView(View):
-    """API to fetch all general topics from TranscriptionAnalysis, excluding inactive topics"""
-    
-    def _get_topics_stats(self, include_inactive=False):
-        """Helper method to get topic statistics"""
-        # Get all inactive topics (topics that should be ignored) - optimized query
-        inactive_topics = set()
-        if not include_inactive:
-            inactive_objs = GeneralTopic.objects.filter(is_active=False).values_list('topic_name', flat=True)
-            inactive_topics = {topic.lower() for topic in inactive_objs}
-        
-        # Get all transcription analyses
-        analyses = TranscriptionAnalysis.objects.all()
-        
-        general_topics = set()
-        topic_frequency = {}
-        
-        for analysis in analyses:
-            # Process general topics only
-            if analysis.general_topics:
-                try:
-                    # Try to parse as JSON first
-                    import json
-                    topics_data = json.loads(analysis.general_topics)
-                    if isinstance(topics_data, list):
-                        for topic in topics_data:
-                            if isinstance(topic, str) and topic.strip():
-                                topic_clean = topic.strip()
-                                topic_lower = topic_clean.lower()
-                                if include_inactive or topic_lower not in inactive_topics:
-                                    general_topics.add(topic_clean)
-                                    topic_frequency[topic_clean] = topic_frequency.get(topic_clean, 0) + 1
-                    elif isinstance(topics_data, dict):
-                        # Handle dict format
-                        for key, value in topics_data.items():
-                            if isinstance(value, str) and value.strip():
-                                topic_clean = value.strip()
-                                topic_lower = topic_clean.lower()
-                                if include_inactive or topic_lower not in inactive_topics:
-                                    general_topics.add(topic_clean)
-                                    topic_frequency[topic_clean] = topic_frequency.get(topic_clean, 0) + 1
-                except (json.JSONDecodeError, TypeError):
-                    # If not JSON, treat as plain text
-                    topics_text = analysis.general_topics.strip()
-                    if topics_text:
-                        # Split by common delimiters
-                        for delimiter in [',', ';', '\n', '|']:
-                            if delimiter in topics_text:
-                                for topic in topics_text.split(delimiter):
-                                    topic = topic.strip()
-                                    if topic:
-                                        topic_lower = topic.lower()
-                                        if include_inactive or topic_lower not in inactive_topics:
-                                            general_topics.add(topic)
-                                            topic_frequency[topic] = topic_frequency.get(topic, 0) + 1
-                                break
-                        else:
-                            # No delimiter found, treat as single topic
-                            topic_lower = topics_text.lower()
-                            if include_inactive or topic_lower not in inactive_topics:
-                                general_topics.add(topics_text)
-                                topic_frequency[topics_text] = topic_frequency.get(topics_text, 0) + 1
-        
-        return {
-            'topics': sorted(list(general_topics)),
-            'topic_frequency': topic_frequency,
-            'total_analyses': analyses.count(),
-            'inactive_topics_count': len(inactive_topics) if not include_inactive else 0
-        }
-    
-    def get(self, request, *args, **kwargs):
-        try:
-            # Get query parameters
-            include_inactive = request.GET.get('include_inactive', 'false').lower() == 'true'
-            include_stats = request.GET.get('include_stats', 'false').lower() == 'true'
-            
-            # Get topics data
-            topics_data = self._get_topics_stats(include_inactive)
-            
-            # Prepare response data
-            result = {
-                'general_topics': {
-                    'count': len(topics_data['topics']),
-                    'topics': topics_data['topics']
-                },
-                'total_analyses': topics_data['total_analyses'],
-                'inactive_topics_count': topics_data['inactive_topics_count']
-            }
-            
-            # Include frequency stats if requested
-            if include_stats:
-                result['topic_frequency'] = topics_data['topic_frequency']
-            
-            return JsonResponse({
-                'success': True,
-                'data': result
-            })
-            
-        except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
 
 @method_decorator(csrf_exempt, name='dispatch')
 class GeneralTopicsManagementView(View):
