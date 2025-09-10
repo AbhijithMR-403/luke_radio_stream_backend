@@ -340,12 +340,33 @@ class AudioTranscriptionAndAnalysisView(View):
             # Check if transcription already exists
             try:
                 existing_transcription = TranscriptionDetail.objects.get(audio_segment=segment)
+                
+                # Get the analysis data if it exists
+                analysis_data = None
+                try:
+                    analysis = existing_transcription.analysis
+                    analysis_data = {
+                        'summary': analysis.summary,
+                        'sentiment': analysis.sentiment,
+                        'general_topics': analysis.general_topics,
+                        'iab_topics': analysis.iab_topics,
+                        'bucket_prompt': analysis.bucket_prompt,
+                        'created_at': analysis.created_at.isoformat()
+                    }
+                except:
+                    analysis_data = None
+                
                 return JsonResponse({
-                    'success': False, 
-                    'error': 'Transcription already exists for this segment',
-                    'transcription_id': existing_transcription.id,
-                    'status': 'already_exists'
-                }, status=400)
+                    'success': True,
+                    'message': 'Transcription and analysis already exist for this segment',
+                    'data': {
+                        'transcription_id': existing_transcription.id,
+                        'transcript': existing_transcription.transcript,
+                        'transcription_created_at': existing_transcription.created_at.isoformat(),
+                        'analysis': analysis_data,
+                        'status': 'already_exists'
+                    }
+                })
             except TranscriptionDetail.DoesNotExist:
                 pass  # Continue with transcription
             
