@@ -11,7 +11,7 @@ from django.utils import timezone
 from decouple import config
 
 from acr_admin.models import Channel
-from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionAnalysis, TranscriptionQueue
+from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionAnalysis, TranscriptionQueue, GeneralTopic
 from data_analysis.services.audio_segments import AudioSegments
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.tasks import analyze_transcription_task
@@ -658,4 +658,230 @@ class MediaDownloadView(View):
             return response
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class TopicsListView(View):
+    """API to fetch all general topics from TranscriptionAnalysis, excluding inactive topics"""
+    
+    def _get_topics_stats(self, include_inactive=False):
+        """Helper method to get topic statistics"""
+        # Get all inactive topics (topics that should be ignored) - optimized query
+        inactive_topics = set()
+        if not include_inactive:
+            inactive_objs = GeneralTopic.objects.filter(is_active=False).values_list('topic_name', flat=True)
+            inactive_topics = {topic.lower() for topic in inactive_objs}
+        
+        # Get all transcription analyses
+        analyses = TranscriptionAnalysis.objects.all()
+        
+        general_topics = set()
+        topic_frequency = {}
+        
+        for analysis in analyses:
+            # Process general topics only
+            if analysis.general_topics:
+                try:
+                    # Try to parse as JSON first
+                    import json
+                    topics_data = json.loads(analysis.general_topics)
+                    if isinstance(topics_data, list):
+                        for topic in topics_data:
+                            if isinstance(topic, str) and topic.strip():
+                                topic_clean = topic.strip()
+                                topic_lower = topic_clean.lower()
+                                if include_inactive or topic_lower not in inactive_topics:
+                                    general_topics.add(topic_clean)
+                                    topic_frequency[topic_clean] = topic_frequency.get(topic_clean, 0) + 1
+                    elif isinstance(topics_data, dict):
+                        # Handle dict format
+                        for key, value in topics_data.items():
+                            if isinstance(value, str) and value.strip():
+                                topic_clean = value.strip()
+                                topic_lower = topic_clean.lower()
+                                if include_inactive or topic_lower not in inactive_topics:
+                                    general_topics.add(topic_clean)
+                                    topic_frequency[topic_clean] = topic_frequency.get(topic_clean, 0) + 1
+                except (json.JSONDecodeError, TypeError):
+                    # If not JSON, treat as plain text
+                    topics_text = analysis.general_topics.strip()
+                    if topics_text:
+                        # Split by common delimiters
+                        for delimiter in [',', ';', '\n', '|']:
+                            if delimiter in topics_text:
+                                for topic in topics_text.split(delimiter):
+                                    topic = topic.strip()
+                                    if topic:
+                                        topic_lower = topic.lower()
+                                        if include_inactive or topic_lower not in inactive_topics:
+                                            general_topics.add(topic)
+                                            topic_frequency[topic] = topic_frequency.get(topic, 0) + 1
+                                break
+                        else:
+                            # No delimiter found, treat as single topic
+                            topic_lower = topics_text.lower()
+                            if include_inactive or topic_lower not in inactive_topics:
+                                general_topics.add(topics_text)
+                                topic_frequency[topics_text] = topic_frequency.get(topics_text, 0) + 1
+        
+        return {
+            'topics': sorted(list(general_topics)),
+            'topic_frequency': topic_frequency,
+            'total_analyses': analyses.count(),
+            'inactive_topics_count': len(inactive_topics) if not include_inactive else 0
+        }
+    
+    def get(self, request, *args, **kwargs):
+        try:
+            # Get query parameters
+            include_inactive = request.GET.get('include_inactive', 'false').lower() == 'true'
+            include_stats = request.GET.get('include_stats', 'false').lower() == 'true'
+            
+            # Get topics data
+            topics_data = self._get_topics_stats(include_inactive)
+            
+            # Prepare response data
+            result = {
+                'general_topics': {
+                    'count': len(topics_data['topics']),
+                    'topics': topics_data['topics']
+                },
+                'total_analyses': topics_data['total_analyses'],
+                'inactive_topics_count': topics_data['inactive_topics_count']
+            }
+            
+            # Include frequency stats if requested
+            if include_stats:
+                result['topic_frequency'] = topics_data['topic_frequency']
+            
+            return JsonResponse({
+                'success': True,
+                'data': result
+            })
+            
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class GeneralTopicsManagementView(View):
+    """API to manage general topics (add, update status, list)"""
+    
+    def get(self, request, *args, **kwargs):
+        """Get all general topics with their status"""
+        try:
+            # Get query parameters
+            status_filter = request.GET.get('status')  # 'active', 'inactive', or None for all
+            
+            # Build query with optimized filtering
+            topics_query = GeneralTopic.objects.all()
+            if status_filter == 'active':
+                topics_query = topics_query.filter(is_active=True)
+            elif status_filter == 'inactive':
+                topics_query = topics_query.filter(is_active=False)
+            
+            topics = topics_query.order_by('topic_name')
+            
+            topics_data = []
+            for topic in topics:
+                topics_data.append({
+                    'id': topic.id,
+                    'topic_name': topic.topic_name,
+                    'is_active': topic.is_active,
+                    'created_at': topic.created_at.isoformat(),
+                    'updated_at': topic.updated_at.isoformat()
+                })
+            
+            return JsonResponse({
+                'success': True,
+                'data': {
+                    'topics': topics_data,
+                    'total_count': len(topics_data),
+                    'active_count': GeneralTopic.objects.filter(is_active=True).count(),
+                    'inactive_count': GeneralTopic.objects.filter(is_active=False).count()
+                }
+            })
+            
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    
+    def post(self, request, *args, **kwargs):
+        """Add or update topics (upsert functionality) - accepts list of topics"""
+        try:
+            data = json.loads(request.body)
+            
+            # Debug: Print the data type and content
+            print(f"Data type: {type(data)}")
+            print(f"Data content: {data}")
+            
+            # Check if data is a list
+            if not isinstance(data, list):
+                return JsonResponse({'success': False, 'error': 'Request body must be a list of topics'}, status=400)
+            
+            if not data:
+                return JsonResponse({'success': False, 'error': 'Topics list cannot be empty'}, status=400)
+            
+            results = []
+            created_count = 0
+            updated_count = 0
+            
+            for i, topic_data in enumerate(data):
+                print(f"Processing topic {i}: {topic_data}, type: {type(topic_data)}")
+                
+                if not isinstance(topic_data, dict):
+                    return JsonResponse({'success': False, 'error': f'Topic at index {i} must be an object, got {type(topic_data)}'}, status=400)
+                
+                topic_name = topic_data.get('topic_name')
+                is_active = topic_data.get('is_active', True)
+                
+                if not topic_name:
+                    return JsonResponse({'success': False, 'error': 'topic_name is required for each topic'}, status=400)
+                
+                # Check if topic already exists
+                existing_topic = GeneralTopic.objects.filter(topic_name__iexact=topic_name).first()
+                
+                if existing_topic:
+                    # Update existing topic
+                    existing_topic.is_active = is_active
+                    existing_topic.save()
+                    
+                    action = 'updated'
+                    updated_count += 1
+                else:
+                    # Create new topic
+                    existing_topic = GeneralTopic.objects.create(
+                        topic_name=topic_name,
+                        is_active=is_active
+                    )
+                    action = 'created'
+                    created_count += 1
+                
+                results.append({
+                    'id': existing_topic.id,
+                    'topic_name': existing_topic.topic_name,
+                    'is_active': existing_topic.is_active,
+                    'created_at': existing_topic.created_at.isoformat(),
+                    'updated_at': existing_topic.updated_at.isoformat(),
+                    'action': action
+                })
+            
+            return JsonResponse({
+                'success': True,
+                'message': f'Processed {len(results)} topics: {created_count} created, {updated_count} updated',
+                'summary': {
+                    'total_processed': len(results),
+                    'created': created_count,
+                    'updated': updated_count
+                },
+                'data': results
+            })
+            
+        except json.JSONDecodeError as e:
+            return JsonResponse({'success': False, 'error': f'Invalid JSON data: {str(e)}'}, status=400)
+        except Exception as e:
+            import traceback
+            print(f"Error in post method: {str(e)}")
+            print(f"Traceback: {traceback.format_exc()}")
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    
 

@@ -9,7 +9,7 @@ from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
 
-from data_analysis.models import UnrecognizedAudio, AudioSegments as AudioSegmentsModel
+from data_analysis.models import AudioSegments as AudioSegmentsModel
 from data_analysis.services.transcription_service import RevAISpeechToText
 
 class AudioSegments:

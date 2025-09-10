@@ -8,73 +8,8 @@ from acr_admin.models import Channel
 
 # Create your models here.
 
-class UnrecognizedAudio(models.Model):
-    start_time = models.DateTimeField(help_text="Start time as datetime")
-    end_time = models.DateTimeField(help_text="End time as datetime")
-    duration = models.PositiveIntegerField(help_text="Duration in seconds")
-    media_path = models.CharField(max_length=512, unique=True)
-    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="unrecognized_audios")
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"UnrecognizedAudio {self.start_time} - {self.end_time} ({self.duration}s)"
-
-    def clean(self):
-        """Validate the model data"""
-        super().clean()
-        
-        # Validate that end_time is after start_time
-        if self.start_time and self.end_time and self.end_time <= self.start_time:
-            raise ValidationError("End time must be after start time")
-        
-        # Validate duration matches the time difference
-        if self.start_time and self.end_time and self.duration:
-            expected_duration = int((self.end_time - self.start_time).total_seconds())
-            if self.duration != expected_duration:
-                raise ValidationError(f"Duration ({self.duration}s) doesn't match time difference ({expected_duration}s)")
-
-    @staticmethod
-    def validate_duration(duration):
-        """Validate duration is a positive integer"""
-        if not isinstance(duration, (int, float)) or duration <= 0:
-            raise ValidationError(f"Duration must be a positive number, got: {duration}")
-        return int(duration)
-
-    @staticmethod
-    def validate_segment_data(segment):
-        """Validate segment data before processing"""
-        if not isinstance(segment, dict):
-            raise ValidationError("Segment must be a dictionary")
-        
-        required_fields = ['start_time', 'duration_seconds']
-        for field in required_fields:
-            if field not in segment:
-                raise ValidationError(f"Segment missing required field: {field}")
-        
-        # Validate start_time - should be a datetime object
-        start_time = segment['start_time']
-        if not isinstance(start_time, datetime):
-            raise ValidationError(f"start_time must be a datetime object, got: {type(start_time)}")
-        
-        # Validate duration
-        duration = UnrecognizedAudio.validate_duration(segment['duration_seconds'])
-        
-        # Calculate end_time if not provided
-        end_time = segment.get('end_time')
-        if end_time:
-            if not isinstance(end_time, datetime):
-                raise ValidationError(f"end_time must be a datetime object, got: {type(end_time)}")
-        else:
-            end_time = start_time + timedelta(seconds=duration)
-        
-        return {
-            'start_time': start_time,
-            'end_time': end_time,
-            'duration_seconds': duration
-        }
 
 class TranscriptionDetail(models.Model):
-    unrecognized_audio = models.OneToOneField(UnrecognizedAudio, on_delete=models.CASCADE, related_name="transcription_detail", null=True, blank=True)
     audio_segment = models.OneToOneField('AudioSegments', on_delete=models.CASCADE, related_name="transcription_detail", null=True, blank=True)
     rev_job = models.OneToOneField('RevTranscriptionJob', on_delete=models.CASCADE, related_name="transcription_detail")
     transcript = models.TextField()
@@ -187,6 +122,24 @@ class TranscriptionAnalysis(models.Model):
 
     def __str__(self):
         return f"Analysis for {self.transcription_detail}"  
+    
+class GeneralTopic(models.Model):
+    """Model to store all general topics with their active/inactive status"""
+    topic_name = models.CharField(max_length=255, unique=True, help_text="Name of the general topic")
+    is_active = models.BooleanField(default=True, help_text="Whether this topic should be included in results (True) or ignored (False)")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        status = "Active" if self.is_active else "Inactive"
+        return f"{self.topic_name} ({status})"
+    
+    class Meta:
+        ordering = ['topic_name']
+        indexes = [
+            models.Index(fields=['is_active']),
+            models.Index(fields=['topic_name']),
+        ]
     
 class AudioSegments(models.Model):
     """Model to store audio segments with recognition status and title relationships"""

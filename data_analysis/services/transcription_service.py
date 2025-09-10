@@ -10,7 +10,7 @@ from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
 
-from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail, UnrecognizedAudio, AudioSegments
+from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail, AudioSegments
 
 
 class RevAISpeechToText:
