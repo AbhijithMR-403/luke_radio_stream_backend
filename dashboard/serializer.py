@@ -55,8 +55,7 @@ def _get_transcription_stats(date_filter, channel_id):
     if date_filter:
         transcriptions_query = transcriptions_query.filter(date_filter)
     transcriptions_query = transcriptions_query.filter(
-        Q(audio_segment__channel_id=channel_id) | 
-        Q(unrecognized_audio__channel_id=channel_id)
+        Q(audio_segment__channel_id=channel_id)
     )
     return transcriptions_query.count()
 
@@ -82,8 +81,7 @@ def _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id):
     if date_filter:
         analyses_query = analyses_query.filter(transcription_detail__created_at__range=(start_dt, end_dt))
     analyses_query = analyses_query.filter(
-        Q(transcription_detail__audio_segment__channel_id=channel_id) | 
-        Q(transcription_detail__unrecognized_audio__channel_id=channel_id)
+        Q(transcription_detail__audio_segment__channel_id=channel_id)
     )
     
     analyses = analyses_query.all()
@@ -133,12 +131,8 @@ def _get_topics_stats(analyses):
             
             # Get audio segment ID from the analysis
             audio_segment_id = None
-            if analysis.transcription_detail:
-                if analysis.transcription_detail.audio_segment:
-                    audio_segment_id = analysis.transcription_detail.audio_segment.id
-                elif analysis.transcription_detail.unrecognized_audio:
-                    # For unrecognized audio, we'll use a different identifier
-                    audio_segment_id = f"unrecognized_{analysis.transcription_detail.unrecognized_audio.id}"
+            if analysis.transcription_detail and analysis.transcription_detail.audio_segment:
+                audio_segment_id = analysis.transcription_detail.audio_segment.id
             
             for line in topic_lines:
                 line = line.strip()
@@ -246,8 +240,7 @@ def _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id):
             day_analyses = TranscriptionAnalysis.objects.filter(
                 transcription_detail__created_at__range=(day_start, day_end)
             ).filter(
-                Q(transcription_detail__audio_segment__channel_id=channel_id) | 
-                Q(transcription_detail__unrecognized_audio__channel_id=channel_id)
+                Q(transcription_detail__audio_segment__channel_id=channel_id)
             )
             
             day_sentiment_scores = []

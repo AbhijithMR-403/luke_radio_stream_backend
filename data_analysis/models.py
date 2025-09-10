@@ -16,20 +16,16 @@ class TranscriptionDetail(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        if self.unrecognized_audio:
-            return f"Transcription for {self.unrecognized_audio} at {self.created_at}"
-        elif self.audio_segment:
+        if self.audio_segment:
             return f"Transcription for {self.audio_segment} at {self.created_at}"
         else:
             return f"Transcription at {self.created_at}"
 
     def clean(self):
-        """Validate that either unrecognized_audio or audio_segment is set, but not both"""
+        """Validate that audio_segment is set"""
         super().clean()
-        if not self.unrecognized_audio and not self.audio_segment:
-            raise ValidationError("Either unrecognized_audio or audio_segment must be set")
-        if self.unrecognized_audio and self.audio_segment:
-            raise ValidationError("Cannot set both unrecognized_audio and audio_segment")
+        if not self.audio_segment:
+            raise ValidationError("audio_segment must be set")
 
 class RevTranscriptionJob(models.Model):
     """Model to store Rev API callback data for transcription jobs"""
