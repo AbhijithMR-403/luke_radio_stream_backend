@@ -360,9 +360,12 @@ class AudioTranscriptionAndAnalysisView(View):
                     'success': True,
                     'message': 'Transcription and analysis already exist for this segment',
                     'data': {
-                        'transcription_id': existing_transcription.id,
-                        'transcript': existing_transcription.transcript,
-                        'transcription_created_at': existing_transcription.created_at.isoformat(),
+                        'transcription': {
+                            'id': existing_transcription.id,
+                            'transcript': existing_transcription.transcript,
+                            'created_at': existing_transcription.created_at.isoformat(),
+                            'rev_job_id': existing_transcription.rev_job.job_id
+                        },
                         'analysis': analysis_data,
                         'status': 'already_exists'
                     }
