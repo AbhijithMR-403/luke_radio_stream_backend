@@ -21,12 +21,14 @@ class DashboardStatsView(APIView):
             start_date (str): Start date in YYYY-MM-DD format (required)
             end_date (str): End date in YYYY-MM-DD format (required)
             channel_id (int): Channel ID to filter by (required)
+            show_all_topics (bool): If true, show all topics including inactive ones. If false or not provided, filter out inactive topics (optional)
         """
         try:
             # Get required parameters from query parameters
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             channel_id = request.query_params.get('channel_id')
+            show_all_topics = request.query_params.get('show_all_topics', 'false').lower() == 'true'
             
             # Validate that all required parameters are provided
             if not start_date or not end_date or not channel_id:
@@ -52,7 +54,7 @@ class DashboardStatsView(APIView):
                 )
             
             # Get stats with required date filtering and channel filtering
-            stats = get_dashboard_stats(start_date=start_date, end_date=end_date, channel_id=channel_id)
+            stats = get_dashboard_stats(start_date=start_date, end_date=end_date, channel_id=channel_id, show_all_topics=show_all_topics)
             serializer = DashboardStatsSerializer(stats)
             return Response(serializer.data, status=status.HTTP_200_OK)
             
@@ -76,12 +78,14 @@ class ShiftAnalyticsView(APIView):
             start_date (str): Start date in YYYY-MM-DD format (required)
             end_date (str): End date in YYYY-MM-DD format (required)
             channel_id (int): Channel ID to filter by (required)
+            show_all_topics (bool): If true, show all topics including inactive ones. If false or not provided, filter out inactive topics (optional)
         """
         try:
             # Get required parameters from query parameters
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             channel_id = request.query_params.get('channel_id')
+            show_all_topics = request.query_params.get('show_all_topics', 'false').lower() == 'true'
             
             # Validate that all required parameters are provided
             if not start_date or not end_date or not channel_id:
@@ -108,7 +112,7 @@ class ShiftAnalyticsView(APIView):
             
             # Get shift analytics with required date filtering and channel filtering
             from .serializer import get_shift_analytics
-            shift_analytics = get_shift_analytics(start_date=start_date, end_date=end_date, channel_id=channel_id)
+            shift_analytics = get_shift_analytics(start_date=start_date, end_date=end_date, channel_id=channel_id, show_all_topics=show_all_topics)
             return Response(shift_analytics, status=status.HTTP_200_OK)
             
         except Exception as e:

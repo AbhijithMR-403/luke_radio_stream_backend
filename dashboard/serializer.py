@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from data_analysis.models import TranscriptionDetail, TranscriptionAnalysis, AudioSegments
+from data_analysis.models import TranscriptionDetail, TranscriptionAnalysis, AudioSegments, GeneralTopic
 from acr_admin.models import Channel
 from django.db.models import Avg, Count, Q
 from django.utils import timezone
@@ -110,12 +110,13 @@ def _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id):
     return avg_sentiment, sentiment_breakdown, analyses
 
 
-def _get_topics_stats(analyses):
+def _get_topics_stats(analyses, show_all_topics=False):
     """
     Get topics statistics and distribution
     
     Args:
         analyses: QuerySet of TranscriptionAnalysis objects
+        show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
     
     Returns:
         tuple: (unique_topics_count, topics_distribution, top_topics_ranking, unique_topics)
@@ -155,6 +156,30 @@ def _get_topics_stats(analyses):
                         # Add audio segment ID to the topic's set
                         if audio_segment_id:
                             topic_audio_segments[topic].add(audio_segment_id)
+    
+    # Filter out inactive topics if show_all_topics is False
+    if not show_all_topics:
+        # Get all inactive topic names from GeneralTopic model (case-insensitive)
+        inactive_topics = set()
+        for topic_name in GeneralTopic.objects.filter(is_active=False).values_list('topic_name', flat=True):
+            inactive_topics.add(topic_name.lower())
+        
+        # Filter topic_counts and topic_audio_segments to exclude inactive topics
+        filtered_topic_counts = defaultdict(int)
+        filtered_topic_audio_segments = defaultdict(set)
+        filtered_unique_topics = set()
+        
+        for topic, count in topic_counts.items():
+            # Include topic if it's NOT in the inactive topics list (case-insensitive comparison)
+            if topic.lower() not in inactive_topics:
+                filtered_topic_counts[topic] = count
+                filtered_topic_audio_segments[topic] = topic_audio_segments[topic]
+                filtered_unique_topics.add(topic)
+        
+        # Update the variables with filtered data
+        topic_counts = filtered_topic_counts
+        topic_audio_segments = filtered_topic_audio_segments
+        unique_topics = filtered_unique_topics
     
     unique_topics_count = len(unique_topics)
     
@@ -280,7 +305,7 @@ def _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id):
     return sentiment_data
 
 
-def _get_shift_analytics_data(start_dt, end_dt, channel_id):
+def _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics=False):
     """
     Get shift analytics data grouped by time shifts
     
@@ -288,6 +313,7 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id):
         start_dt: Start datetime object
         end_dt: End datetime object
         channel_id (int): Channel ID to filter by
+        show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
     
     Returns:
         dict: Shift analytics data
@@ -367,6 +393,23 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id):
             except:
                 continue
         
+        # Filter out inactive topics if show_all_topics is False
+        if not show_all_topics:
+            # Get all inactive topic names from GeneralTopic model (case-insensitive)
+            inactive_topics = set()
+            for topic_name in GeneralTopic.objects.filter(is_active=False).values_list('topic_name', flat=True):
+                inactive_topics.add(topic_name.lower())
+            
+            # Filter shift_topics to exclude inactive topics
+            filtered_shift_topics = defaultdict(int)
+            for topic, count in shift_topics.items():
+                # Include topic if it's NOT in the inactive topics list (case-insensitive comparison)
+                if topic.lower() not in inactive_topics:
+                    filtered_shift_topics[topic] = count
+            
+            # Update shift_topics with filtered data
+            shift_topics = filtered_shift_topics
+        
         # Calculate shift statistics
         total_transcriptions = len(shift_transcriptions)
         avg_sentiment = round(sum(shift_sentiments) / len(shift_sentiments), 2) if shift_sentiments else 0.0
@@ -418,7 +461,7 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id):
     }
 
 
-def get_dashboard_stats(start_date, end_date, channel_id):
+def get_dashboard_stats(start_date, end_date, channel_id, show_all_topics=False):
     """
     Main function to get all dashboard statistics with required date filtering and channel filtering
     
@@ -426,6 +469,7 @@ def get_dashboard_stats(start_date, end_date, channel_id):
         start_date (str): Start date in YYYY-MM-DD format
         end_date (str): End date in YYYY-MM-DD format
         channel_id (int): Channel ID to filter by
+        show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
     
     Returns:
         dict: Complete dashboard statistics
@@ -436,7 +480,7 @@ def get_dashboard_stats(start_date, end_date, channel_id):
     # Get all statistics using separate functions
     total_transcriptions = _get_transcription_stats(date_filter, channel_id)
     avg_sentiment, sentiment_breakdown, analyses = _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id)
-    unique_topics_count, topics_distribution, top_topics_ranking, unique_topics = _get_topics_stats(analyses)
+    unique_topics_count, topics_distribution, top_topics_ranking, unique_topics = _get_topics_stats(analyses, show_all_topics)
     active_shifts, channel_details = _get_channel_stats(channel_id)
     sentiment_data = _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id)
     
@@ -470,7 +514,7 @@ def get_dashboard_stats(start_date, end_date, channel_id):
     return response
 
 
-def get_shift_analytics(start_date, end_date, channel_id):
+def get_shift_analytics(start_date, end_date, channel_id, show_all_topics=False):
     """
     Main function to get shift analytics data
     
@@ -478,6 +522,7 @@ def get_shift_analytics(start_date, end_date, channel_id):
         start_date (str): Start date in YYYY-MM-DD format
         end_date (str): End date in YYYY-MM-DD format
         channel_id (int): Channel ID to filter by
+        show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
     
     Returns:
         dict: Complete shift analytics data
@@ -486,7 +531,7 @@ def get_shift_analytics(start_date, end_date, channel_id):
     date_filter, start_dt, end_dt = _build_date_filter(start_date, end_date)
     print(start_dt, end_dt)
     # Get shift analytics data
-    shift_analytics = _get_shift_analytics_data(start_dt, end_dt, channel_id)
+    shift_analytics = _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics)
     print(shift_analytics)
     
     # Add metadata
