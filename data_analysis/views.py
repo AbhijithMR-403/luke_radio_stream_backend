@@ -377,20 +377,20 @@ class AudioTranscriptionAndAnalysisView(View):
             try:
                 existing_queue = TranscriptionQueue.objects.get(audio_segment=segment)
                 
-                # Check if it's been more than 40 seconds since queued
+                # Check if it's been more than 120 seconds since queued
                 time_since_queued = timezone.now() - existing_queue.queued_at
-                if time_since_queued.total_seconds() < 40:
+                if time_since_queued.total_seconds() < 120:
                     return JsonResponse({
                         'success': False, 
-                        'error': f'Audio segment was queued recently. Please wait {40 - int(time_since_queued.total_seconds())} more seconds before trying again.',
+                        'error': f'Audio segment was queued recently. Please wait {120 - int(time_since_queued.total_seconds())} more seconds before trying again.',
                         'queue_id': existing_queue.id,
                         'queued_at': existing_queue.queued_at.isoformat(),
-                        'seconds_remaining': 40 - int(time_since_queued.total_seconds()),
+                        'seconds_remaining': 120 - int(time_since_queued.total_seconds()),
                         'status': 'recently_queued'
                     }, status=400)
                 else:
-                    # More than 40 seconds have passed, allow calling transcription again
-                    print(f"More than 40 seconds passed since last queue. Allowing transcription call again for segment {segment_id}")
+                    # More than 120 seconds have passed, allow calling transcription again
+                    print(f"More than 120 seconds passed since last queue. Allowing transcription call again for segment {segment_id}")
                     # Continue with the transcription process below
                     
             except TranscriptionQueue.DoesNotExist:
