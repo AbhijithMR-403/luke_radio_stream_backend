@@ -85,8 +85,8 @@ class ShiftAnalyticsView(APIView):
         Query Parameters:
             start_date (str): Start date in YYYY-MM-DD format (optional, alternative to start_datetime)
             end_date (str): End date in YYYY-MM-DD format (optional, alternative to end_datetime)
-            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS format (optional, alternative to start_date)
-            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS format (optional, alternative to end_date)
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (optional, alternative to start_date)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (optional, alternative to end_date)
             channel_id (int): Channel ID to filter by (required)
             show_all_topics (bool): If true, show all topics including inactive ones. If false or not provided, filter out inactive topics (optional)
         """

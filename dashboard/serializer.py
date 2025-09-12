@@ -31,22 +31,31 @@ def _build_date_filter(start_date_or_datetime, end_date_or_datetime):
     
     if start_date_or_datetime and end_date_or_datetime:
         try:
-            # Try to parse as datetime first (YYYY-MM-DDTHH:MM:SS)
+            # Try to parse as datetime first - handle both T and space separators
             if 'T' in start_date_or_datetime:
                 start_dt = timezone.make_aware(datetime.fromisoformat(start_date_or_datetime))
+            elif ' ' in start_date_or_datetime:
+                # Handle space-separated datetime format (YYYY-MM-DD HH:MM:SS)
+                start_dt = timezone.make_aware(datetime.strptime(start_date_or_datetime, '%Y-%m-%d %H:%M:%S'))
             else:
                 # Parse as date (YYYY-MM-DD) and set to start of day
                 start_dt = timezone.make_aware(datetime.strptime(start_date_or_datetime, '%Y-%m-%d'))
             
             if 'T' in end_date_or_datetime:
                 end_dt = timezone.make_aware(datetime.fromisoformat(end_date_or_datetime))
+            elif ' ' in end_date_or_datetime:
+                # Handle space-separated datetime format (YYYY-MM-DD HH:MM:SS)
+                end_dt = timezone.make_aware(datetime.strptime(end_date_or_datetime, '%Y-%m-%d %H:%M:%S'))
             else:
                 # Parse as date (YYYY-MM-DD) and set to end of day
                 end_dt = timezone.make_aware(datetime.strptime(end_date_or_datetime, '%Y-%m-%d').replace(hour=23, minute=59, second=59))
             
             date_filter = Q(created_at__range=(start_dt, end_dt))
-        except ValueError:
-            pass
+        except ValueError as e:
+            # Reset variables to None to indicate parsing failed
+            start_dt = None
+            end_dt = None
+            date_filter = Q()
     
     return date_filter, start_dt, end_dt
 
@@ -540,10 +549,13 @@ def get_shift_analytics(start_date_or_datetime, end_date_or_datetime, channel_id
     """
     # Build date/datetime filter
     date_filter, start_dt, end_dt = _build_date_filter(start_date_or_datetime, end_date_or_datetime)
-    print(start_dt, end_dt)
+    
+    # Check if datetime parsing was successful
+    if start_dt is None or end_dt is None:
+        raise ValueError(f"Failed to parse datetime parameters. start_datetime: '{start_date_or_datetime}', end_datetime: '{end_date_or_datetime}'. Please use format YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, or YYYY-MM-DD HH:MM:SS")
+    
     # Get shift analytics data
     shift_analytics = _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics)
-    print(shift_analytics)
     
     # Add metadata
     response = {
