@@ -14,13 +14,13 @@ class DashboardStatsSerializer(serializers.Serializer):
     dateRange = serializers.DictField(required=False)
 
 
-def _build_date_filter(start_datetime, end_datetime):
+def _build_date_filter(start_date_or_datetime, end_date_or_datetime):
     """
-    Build datetime filter for database queries
+    Build datetime filter for database queries - accepts both date and datetime formats
     
     Args:
-        start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS format
-        end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS format
+        start_date_or_datetime (str): Start date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
+        end_date_or_datetime (str): End date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
     
     Returns:
         tuple: (date_filter, start_dt, end_dt) or (Q(), None, None)
@@ -29,11 +29,21 @@ def _build_date_filter(start_datetime, end_datetime):
     start_dt = None
     end_dt = None
     
-    if start_datetime and end_datetime:
+    if start_date_or_datetime and end_date_or_datetime:
         try:
-            # Parse datetime strings in ISO format (YYYY-MM-DDTHH:MM:SS)
-            start_dt = timezone.make_aware(datetime.fromisoformat(start_datetime))
-            end_dt = timezone.make_aware(datetime.fromisoformat(end_datetime))
+            # Try to parse as datetime first (YYYY-MM-DDTHH:MM:SS)
+            if 'T' in start_date_or_datetime:
+                start_dt = timezone.make_aware(datetime.fromisoformat(start_date_or_datetime))
+            else:
+                # Parse as date (YYYY-MM-DD) and set to start of day
+                start_dt = timezone.make_aware(datetime.strptime(start_date_or_datetime, '%Y-%m-%d'))
+            
+            if 'T' in end_date_or_datetime:
+                end_dt = timezone.make_aware(datetime.fromisoformat(end_date_or_datetime))
+            else:
+                # Parse as date (YYYY-MM-DD) and set to end of day
+                end_dt = timezone.make_aware(datetime.strptime(end_date_or_datetime, '%Y-%m-%d').replace(hour=23, minute=59, second=59))
+            
             date_filter = Q(created_at__range=(start_dt, end_dt))
         except ValueError:
             pass
@@ -462,21 +472,21 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics=Fals
     }
 
 
-def get_dashboard_stats(start_datetime, end_datetime, channel_id, show_all_topics=False):
+def get_dashboard_stats(start_date_or_datetime, end_date_or_datetime, channel_id, show_all_topics=False):
     """
-    Main function to get all dashboard statistics with required datetime filtering and channel filtering
+    Main function to get all dashboard statistics with required date/datetime filtering and channel filtering
     
     Args:
-        start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS format
-        end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS format
+        start_date_or_datetime (str): Start date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
+        end_date_or_datetime (str): End date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
         channel_id (int): Channel ID to filter by
         show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
     
     Returns:
         dict: Complete dashboard statistics
     """
-    # Build datetime filter
-    date_filter, start_dt, end_dt = _build_date_filter(start_datetime, end_datetime)
+    # Build date/datetime filter
+    date_filter, start_dt, end_dt = _build_date_filter(start_date_or_datetime, end_date_or_datetime)
     
     # Get all statistics using separate functions
     total_transcriptions = _get_transcription_stats(date_filter, channel_id)
@@ -504,8 +514,8 @@ def get_dashboard_stats(start_datetime, end_datetime, channel_id, show_all_topic
         'topTopicsRanking': top_topics_ranking,
         'sentimentData': sentiment_data,
         'dateRange': {
-            'startDateTime': start_datetime,
-            'endDateTime': end_datetime
+            'startDateOrDateTime': start_date_or_datetime,
+            'endDateOrDateTime': end_date_or_datetime
         },
         'channelFilter': {
             'channelId': channel_id
@@ -515,21 +525,21 @@ def get_dashboard_stats(start_datetime, end_datetime, channel_id, show_all_topic
     return response
 
 
-def get_shift_analytics(start_datetime, end_datetime, channel_id, show_all_topics=False):
+def get_shift_analytics(start_date_or_datetime, end_date_or_datetime, channel_id, show_all_topics=False):
     """
     Main function to get shift analytics data
     
     Args:
-        start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS format
-        end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS format
+        start_date_or_datetime (str): Start date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
+        end_date_or_datetime (str): End date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
         channel_id (int): Channel ID to filter by
         show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
     
     Returns:
         dict: Complete shift analytics data
     """
-    # Build datetime filter
-    date_filter, start_dt, end_dt = _build_date_filter(start_datetime, end_datetime)
+    # Build date/datetime filter
+    date_filter, start_dt, end_dt = _build_date_filter(start_date_or_datetime, end_date_or_datetime)
     print(start_dt, end_dt)
     # Get shift analytics data
     shift_analytics = _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics)
@@ -539,8 +549,8 @@ def get_shift_analytics(start_datetime, end_datetime, channel_id, show_all_topic
     response = {
         **shift_analytics,
         'dateRange': {
-            'startDateTime': start_datetime,
-            'endDateTime': end_datetime
+            'startDateOrDateTime': start_date_or_datetime,
+            'endDateOrDateTime': end_date_or_datetime
         },
         'channelFilter': {
             'channelId': channel_id
