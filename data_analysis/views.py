@@ -178,14 +178,52 @@ class AudioSegmentsWithTranscriptionView(View):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class AudioSegments(View):
+    """
+    AudioSegments API with search functionality
+    
+    Query Parameters:
+    - channel_id (required): Channel ID to filter segments
+    - start_datetime (optional): Start datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
+    - end_datetime (optional): End datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
+    
+    Search Parameters:
+    - search_text (optional): Text to search for
+    - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt'
+    
+    Note: If search_text is provided, search_in must also be provided with a valid option.
+    
+    Example URLs:
+    - /api/audio-segments/?channel_id=1&search_text=music&search_in=transcription
+    - /api/audio-segments/?channel_id=1&search_text=sports&search_in=general_topics
+    - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&search_text=news&search_in=iab_topics
+    """
     def get(self, request, *args, **kwargs):
         try:
             channel_pk = request.GET.get('channel_id')
             start_datetime = request.GET.get('start_datetime')
             end_datetime = request.GET.get('end_datetime')
             
+            # Search parameters
+            search_text = request.GET.get('search_text')
+            search_in = request.GET.get('search_in')
+            
             if not channel_pk:
                 return JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
+            
+            # Validate search parameters
+            if search_text and not search_in:
+                return JsonResponse({'success': False, 'error': 'search_in parameter is required when search_text is provided'}, status=400)
+            
+            if search_in and not search_text:
+                return JsonResponse({'success': False, 'error': 'search_text parameter is required when search_in is provided'}, status=400)
+            
+            # Validate search_in options
+            valid_search_options = ['transcription', 'general_topics', 'iab_topics', 'bucket_prompt']
+            if search_in and search_in not in valid_search_options:
+                return JsonResponse({
+                    'success': False, 
+                    'error': f'Invalid search_in option. Must be one of: {", ".join(valid_search_options)}'
+                }, status=400)
             
             try:
                 channel = Channel.objects.get(id=channel_pk, is_deleted=False)
@@ -238,13 +276,39 @@ class AudioSegments(View):
                 filter_conditions['start_time__gte'] = today_start
                 filter_conditions['start_time__lt'] = today_end
             
-            # Fetch segments from database for the specified filters with optimized queries
-            db_segments = AudioSegmentsModel.objects.filter(**filter_conditions).select_related(
+            # Build the base query with optimized joins
+            base_query = AudioSegmentsModel.objects.filter(**filter_conditions).select_related(
                 'channel'
             ).prefetch_related(
                 'transcription_detail__rev_job',
                 'transcription_detail__analysis'
-            ).order_by('start_time')
+            )
+            
+            # Apply search filters if search parameters are provided
+            if search_text and search_in:
+                if search_in == 'transcription':
+                    # Search in transcription text
+                    base_query = base_query.filter(
+                        transcription_detail__transcript__icontains=search_text
+                    )
+                elif search_in == 'general_topics':
+                    # Search in general topics
+                    base_query = base_query.filter(
+                        transcription_detail__analysis__general_topics__icontains=search_text
+                    )
+                elif search_in == 'iab_topics':
+                    # Search in IAB topics
+                    base_query = base_query.filter(
+                        transcription_detail__analysis__iab_topics__icontains=search_text
+                    )
+                elif search_in == 'bucket_prompt':
+                    # Search in bucket prompt
+                    base_query = base_query.filter(
+                        transcription_detail__analysis__bucket_prompt__icontains=search_text
+                    )
+            
+            # Execute the final query with ordering
+            db_segments = base_query.order_by('start_time')
             
             # Use serializer to convert database objects to response format
             all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments)
