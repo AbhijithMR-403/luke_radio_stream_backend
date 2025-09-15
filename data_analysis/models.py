@@ -266,7 +266,23 @@ class AudioSegments(models.Model):
         return self.metadata_json.get('external_ids', {})
 
     class Meta:
-        ordering = ['start_time'] 
+        ordering = ['start_time']
+        indexes = [
+            # Index for channel filtering (most common query)
+            models.Index(fields=['channel']),
+            # Index for start_time range queries (used in API filters)
+            models.Index(fields=['start_time']),
+            # Composite index for channel + start_time (most efficient for API queries)
+            models.Index(fields=['channel', 'start_time']),
+            # Index for active segments filtering
+            models.Index(fields=['is_active']),
+            # Index for recognized segments filtering
+            models.Index(fields=['is_recognized']),
+            # Composite index for channel + is_active (common filter combination)
+            models.Index(fields=['channel', 'is_active']),
+            # Index for file_path uniqueness checks
+            models.Index(fields=['file_path']),
+        ] 
     
     @staticmethod
     def insert_audio_segments(segments_data, channel_id=None):

@@ -83,8 +83,13 @@ class AudioSegmentsWithTranscriptionView(View):
                 except ValueError:
                     return JsonResponse({'success': False, 'error': 'Invalid end_time format. Use HH:MM:SS'}, status=400)
             
-            # Fetch segments from database for the specified filters
-            db_segments = AudioSegmentsModel.objects.filter(**filter_conditions).order_by('start_time')
+            # Fetch segments from database for the specified filters with optimized queries
+            db_segments = AudioSegmentsModel.objects.filter(**filter_conditions).select_related(
+                'channel'
+            ).prefetch_related(
+                'transcription_detail__rev_job',
+                'transcription_detail__analysis'
+            ).order_by('start_time')
             
             # Convert database objects to dictionary format with transcription and analysis data
             all_segments = []
@@ -107,9 +112,9 @@ class AudioSegmentsWithTranscriptionView(View):
                     'is_audio_downloaded': segment.is_audio_downloaded
                 }
                 
-                # Fetch transcription details regardless of is_active flag
+                # Use prefetched transcription detail data (no database query needed)
                 try:
-                    transcription_detail = TranscriptionDetail.objects.get(audio_segment=segment)
+                    transcription_detail = segment.transcription_detail
                     segment_data['transcription'] = {
                         'id': transcription_detail.id,
                         'transcript': transcription_detail.transcript,
@@ -117,9 +122,9 @@ class AudioSegmentsWithTranscriptionView(View):
                         'rev_job_id': transcription_detail.rev_job.job_id if transcription_detail.rev_job else None
                     }
                     
-                    # Fetch analysis data regardless of is_analysis_completed flag
+                    # Use prefetched analysis data (no database query needed)
                     try:
-                        analysis = TranscriptionAnalysis.objects.get(transcription_detail=transcription_detail)
+                        analysis = transcription_detail.analysis
                         segment_data['analysis'] = {
                             'id': analysis.id,
                             'summary': analysis.summary,
@@ -129,12 +134,12 @@ class AudioSegmentsWithTranscriptionView(View):
                             'bucket_prompt': analysis.bucket_prompt,
                             'created_at': analysis.created_at.isoformat() if analysis.created_at else None
                         }
-                    except TranscriptionAnalysis.DoesNotExist:
-                        # No analysis found
+                    except AttributeError:
+                        # No analysis found (prefetched data doesn't have analysis)
                         segment_data['analysis'] = None
                         
-                except TranscriptionDetail.DoesNotExist:
-                    # No transcription detail found
+                except AttributeError:
+                    # No transcription detail found (prefetched data doesn't have transcription_detail)
                     segment_data['transcription'] = None
                     segment_data['analysis'] = None
                 
@@ -233,8 +238,13 @@ class AudioSegments(View):
                 filter_conditions['start_time__gte'] = today_start
                 filter_conditions['start_time__lt'] = today_end
             
-            # Fetch segments from database for the specified filters
-            db_segments = AudioSegmentsModel.objects.filter(**filter_conditions).order_by('start_time')
+            # Fetch segments from database for the specified filters with optimized queries
+            db_segments = AudioSegmentsModel.objects.filter(**filter_conditions).select_related(
+                'channel'
+            ).prefetch_related(
+                'transcription_detail__rev_job',
+                'transcription_detail__analysis'
+            ).order_by('start_time')
             
             # Use serializer to convert database objects to response format
             all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments)
