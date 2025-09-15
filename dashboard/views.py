@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import JSONParser
-from .serializer import get_dashboard_stats, DashboardStatsSerializer
+from .serializer import get_dashboard_stats, DashboardStatsSerializer, get_topic_audio_segments
 
 # Create your views here.
 
@@ -134,5 +134,83 @@ class ShiftAnalyticsView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Failed to fetch shift analytics: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TopicAudioSegmentsView(APIView):
+    """
+    Class-based view to fetch all audio segments for a specific general topic
+    """
+    parser_classes = [JSONParser]
+    
+    def get(self, request):
+        """
+        Get all audio segments for a specific general topic
+        
+        Query Parameters:
+            topic_name (str): Name of the general topic (required)
+            start_date (str): Start date in YYYY-MM-DD format (optional, alternative to start_datetime)
+            end_date (str): End date in YYYY-MM-DD format (optional, alternative to end_datetime)
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS format (optional, alternative to start_date)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS format (optional, alternative to end_date)
+            channel_id (int): Channel ID to filter by (required)
+            show_all_topics (bool): If true, show all topics including inactive ones. If false or not provided, filter out inactive topics (optional)
+        """
+        try:
+            # Get required parameters from query parameters
+            topic_name = request.query_params.get('topic_name')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            start_datetime = request.query_params.get('start_datetime')
+            end_datetime = request.query_params.get('end_datetime')
+            channel_id = request.query_params.get('channel_id')
+            show_all_topics = request.query_params.get('show_all_topics', 'false').lower() == 'true'
+            
+            # Validate required parameters
+            if not topic_name:
+                return Response(
+                    {'error': 'topic_name is a required parameter'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not channel_id:
+                return Response(
+                    {'error': 'channel_id is a required parameter'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            # Determine which format to use (prioritize datetime over date)
+            start_param = start_datetime if start_datetime else start_date
+            end_param = end_datetime if end_datetime else end_date
+            # Validate that both dates/datetimes are provided together if any are provided
+            if (start_param and not end_param) or (end_param and not start_param):
+                return Response(
+                    {'error': 'Both start and end date/datetime must be provided together'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            print(start_date)
+            # Convert channel_id to int
+            try:
+                channel_id = int(channel_id)
+            except ValueError:
+                return Response(
+                    {'error': 'channel_id must be a valid integer'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            # Get audio segments for the topic
+            audio_segments = get_topic_audio_segments(
+                topic_name=topic_name,
+                start_date_or_datetime=start_param,
+                end_date_or_datetime=end_param,
+                channel_id=channel_id,
+                show_all_topics=show_all_topics
+            )
+            print("-------------")
+            
+            return Response(audio_segments, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch audio segments for topic: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

@@ -6,4 +6,5 @@ app_name = 'dashboard'
 urlpatterns = [
     path('dashboard/stats/', views.DashboardStatsView.as_view(), name='dashboard_stats'),
     path('dashboard/shift-analytics/', views.ShiftAnalyticsView.as_view(), name='shift_analytics'),
+    path('dashboard/topic-audio-segments/', views.TopicAudioSegmentsView.as_view(), name='topic_audio_segments'),
 ]

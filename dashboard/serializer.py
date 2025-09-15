@@ -570,3 +570,148 @@ def get_shift_analytics(start_date_or_datetime, end_date_or_datetime, channel_id
     }
     
     return response
+
+
+def get_topic_audio_segments(topic_name, start_date_or_datetime=None, end_date_or_datetime=None, channel_id=None, show_all_topics=False):
+    """
+    Get all audio segments for a specific general topic
+    
+    Args:
+        topic_name (str): Name of the general topic
+        start_date_or_datetime (str): Start date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format (optional)
+        end_date_or_datetime (str): End date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format (optional)
+        channel_id (int): Channel ID to filter by (optional)
+        show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
+    
+    Returns:
+        dict: Audio segments data for the topic
+    """
+    # Build date/datetime filter if provided
+    print("+++++++++++++++++++++++++++++++")
+    date_filter, start_dt, end_dt = _build_date_filter(start_date_or_datetime, end_date_or_datetime)
+    
+    # Get analyses with the same filtering logic as dashboard stats
+    analyses_query = TranscriptionAnalysis.objects.all()
+    print(len(analyses_query))
+    
+    if date_filter:
+        analyses_query = analyses_query.filter(transcription_detail__created_at__range=(start_dt, end_dt))
+    if channel_id:
+        analyses_query = analyses_query.filter(
+            Q(transcription_detail__audio_segment__channel_id=channel_id)
+        )
+    
+    analyses = analyses_query.all()
+    
+    # Find audio segments for the specific topic
+    topic_audio_segments = []
+    topic_audio_segment_ids = set()
+    
+    for analysis in analyses:
+        if analysis.general_topics:
+            topics_text = analysis.general_topics
+            topic_lines = topics_text.split('\n')
+            
+            # Get audio segment from the analysis
+            audio_segment = None
+            if analysis.transcription_detail and analysis.transcription_detail.audio_segment:
+                audio_segment = analysis.transcription_detail.audio_segment
+            
+            # Check if this analysis contains our target topic
+            topic_found = False
+            for line in topic_lines:
+                line = line.strip()
+                if line:
+                    if line[0].isdigit():
+                        # Handle both formats: "1. Topic" and "1 Topic"
+                        if '. ' in line:
+                            topic = line.split('. ', 1)[1]
+                        elif ' ' in line:
+                            topic = line.split(' ', 1)[1]
+                        else:
+                            topic = line
+                    else:
+                        topic = line
+                    topic = topic.strip()
+                    if topic and topic.lower() == topic_name.lower():
+                        topic_found = True
+                        break
+            
+            # If topic found and we have an audio segment, add it to results
+            if topic_found and audio_segment and audio_segment.id not in topic_audio_segment_ids:
+                topic_audio_segment_ids.add(audio_segment.id)
+                
+                # Get transcription details
+                transcription_detail = analysis.transcription_detail
+                
+                # Build audio segment data
+                audio_segment_data = {
+                    'id': audio_segment.id,
+                    'start_time': audio_segment.start_time.isoformat(),
+                    'end_time': audio_segment.end_time.isoformat(),
+                    'duration_seconds': audio_segment.duration_seconds,
+                    'is_recognized': audio_segment.is_recognized,
+                    'is_active': audio_segment.is_active,
+                    'is_analysis_completed': audio_segment.is_analysis_completed,
+                    'is_audio_downloaded': audio_segment.is_audio_downloaded,
+                    'file_name': audio_segment.file_name,
+                    'file_path': audio_segment.file_path,
+                    'title': audio_segment.title,
+                    'title_before': audio_segment.title_before,
+                    'title_after': audio_segment.title_after,
+                    'metadata_json': audio_segment.metadata_json,
+                    'channel_id': audio_segment.channel.id if audio_segment.channel else None,
+                    'channel_name': audio_segment.channel.name if audio_segment.channel else None,
+                    'notes': audio_segment.notes,
+                    'created_at': audio_segment.created_at.isoformat(),
+                    'transcription': {
+                        'id': transcription_detail.id,
+                        'transcript': transcription_detail.transcript,
+                        'created_at': transcription_detail.created_at.isoformat()
+                    } if transcription_detail else None,
+                    'analysis': {
+                        'id': analysis.id,
+                        'summary': analysis.summary,
+                        'sentiment': analysis.sentiment,
+                        'general_topics': analysis.general_topics,
+                        'iab_topics': analysis.iab_topics,
+                        'bucket_prompt': analysis.bucket_prompt,
+                        'created_at': analysis.created_at.isoformat()
+                    } if analysis else None
+                }
+                
+                topic_audio_segments.append(audio_segment_data)
+    
+    # Filter out inactive topics if show_all_topics is False
+    if not show_all_topics:
+        # Check if the topic is inactive
+        try:
+            general_topic = GeneralTopic.objects.get(topic_name__iexact=topic_name)
+            if not general_topic.is_active:
+                # If topic is inactive and show_all_topics is False, return empty results
+                return {
+                    'topic_name': topic_name,
+                    'total_segments': 0,
+                    'audio_segments': [],
+                    'message': f'Topic "{topic_name}" is inactive and show_all_topics is False'
+                }
+        except GeneralTopic.DoesNotExist:
+            # Topic not found in GeneralTopic model, but we still return results from analysis
+            pass
+    
+    # Sort by start_time (most recent first)
+    topic_audio_segments.sort(key=lambda x: x['start_time'], reverse=True)
+    
+    return {
+        'topic_name': topic_name,
+        'total_segments': len(topic_audio_segments),
+        'audio_segments': topic_audio_segments,
+        'date_range': {
+            'start_date_or_datetime': start_date_or_datetime,
+            'end_date_or_datetime': end_date_or_datetime
+        },
+        'channel_filter': {
+            'channel_id': channel_id
+        },
+        'show_all_topics': show_all_topics
+    }
