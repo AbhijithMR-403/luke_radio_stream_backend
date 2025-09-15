@@ -15,6 +15,7 @@ from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegm
 from data_analysis.services.audio_segments import AudioSegments
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.tasks import analyze_transcription_task
+from data_analysis.serializers import AudioSegmentsSerializer
 
 # Create your views here.
 
@@ -235,87 +236,13 @@ class AudioSegments(View):
             # Fetch segments from database for the specified filters
             db_segments = AudioSegmentsModel.objects.filter(**filter_conditions).order_by('start_time')
             
-            # Convert database objects to dictionary format with transcription and analysis data
-            all_segments = []
-            for segment in db_segments:
-                segment_data = {
-                    'id': segment.id,
-                    'start_time': segment.start_time,
-                    'end_time': segment.end_time,
-                    'duration_seconds': segment.duration_seconds,
-                    'is_recognized': segment.is_recognized,
-                    'is_active': segment.is_active,
-                    'file_name': segment.file_name,
-                    'file_path': segment.file_path,
-                    'title': segment.title,
-                    'title_before': segment.title_before,
-                    'title_after': segment.title_after,
-                    'notes': segment.notes,
-                    'created_at': segment.created_at.isoformat() if segment.created_at else None,
-                    'is_analysis_completed': segment.is_analysis_completed,
-                    'is_audio_downloaded': segment.is_audio_downloaded,
-                    'metadata_json': segment.metadata_json
-                }
-                
-                # Fetch transcription details regardless of is_active flag
-                try:
-                    transcription_detail = TranscriptionDetail.objects.get(audio_segment=segment)
-                    segment_data['transcription'] = {
-                        'id': transcription_detail.id,
-                        'transcript': transcription_detail.transcript,
-                        'created_at': transcription_detail.created_at.isoformat() if transcription_detail.created_at else None,
-                        'rev_job_id': transcription_detail.rev_job.job_id if transcription_detail.rev_job else None
-                    }
-                    
-                    # Fetch analysis data regardless of is_analysis_completed flag
-                    try:
-                        analysis = TranscriptionAnalysis.objects.get(transcription_detail=transcription_detail)
-                        segment_data['analysis'] = {
-                            'id': analysis.id,
-                            'summary': analysis.summary,
-                            'sentiment': analysis.sentiment,
-                            'general_topics': analysis.general_topics,
-                            'iab_topics': analysis.iab_topics,
-                            'bucket_prompt': analysis.bucket_prompt,
-                            'created_at': analysis.created_at.isoformat() if analysis.created_at else None
-                        }
-                    except TranscriptionAnalysis.DoesNotExist:
-                        # No analysis found
-                        segment_data['analysis'] = None
-                        
-                except TranscriptionDetail.DoesNotExist:
-                    # No transcription detail found
-                    segment_data['transcription'] = None
-                    segment_data['analysis'] = None
-                
-                all_segments.append(segment_data)
+            # Use serializer to convert database objects to response format
+            all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments)
             
-            # Count recognized and unrecognized segments
-            total_recognized = sum(1 for segment in all_segments if segment["is_recognized"])
-            total_unrecognized = sum(1 for segment in all_segments if not segment["is_recognized"])
+            # Build the complete response using serializer
+            response_data = AudioSegmentsSerializer.build_response(all_segments, channel)
             
-            # Count segments with transcription and analysis
-            total_with_transcription = sum(1 for segment in all_segments if segment.get("transcription") is not None)
-            total_with_analysis = sum(1 for segment in all_segments if segment.get("analysis") is not None)
-            
-            result = {
-                "segments": all_segments,
-                "total_segments": len(all_segments),
-                "total_recognized": total_recognized,
-                "total_unrecognized": total_unrecognized,
-                "total_with_transcription": total_with_transcription,
-                "total_with_analysis": total_with_analysis
-            }
-            
-            return JsonResponse({
-                'success': True,
-                'data': result,
-                'channel_info': {
-                    'channel_id': channel.channel_id,
-                    'project_id': channel.project_id,
-                    'channel_name': channel.name
-                }
-            })
+            return JsonResponse(response_data)
             
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
