@@ -413,3 +413,64 @@ class AudioSegments(models.Model):
             AudioSegments: Created AudioSegments instance
         """
         return AudioSegments.insert_audio_segments([segment_data], channel_id)[0]
+
+
+class ReportFolder(models.Model):
+    """Model to store report folders for organizing saved audio segments"""
+    name = models.CharField(max_length=255, help_text="Name of the report folder")
+    description = models.TextField(null=True, blank=True, help_text="Optional description of the folder")
+    color = models.CharField(max_length=7, default="#3B82F6", help_text="Hex color code for the folder (default: blue)")
+    is_public = models.BooleanField(default=False, help_text="Whether the folder is public or private")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.name} ({'Public' if self.is_public else 'Private'})"
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['is_public']),
+            models.Index(fields=['created_at']),
+        ]
+
+
+class SavedAudioSegment(models.Model):
+    """Model to store saved audio segments in report folders"""
+    folder = models.ForeignKey(ReportFolder, on_delete=models.CASCADE, related_name='saved_segments')
+    audio_segment = models.ForeignKey(AudioSegments, on_delete=models.CASCADE, related_name='saved_in_folders')
+    is_favorite = models.BooleanField(default=False, help_text="Whether this is marked as favorite")
+    saved_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.audio_segment.title or 'Untitled'} in {self.folder.name}"
+    
+    class Meta:
+        ordering = ['-saved_at']
+        unique_together = ['folder', 'audio_segment']
+        indexes = [
+            models.Index(fields=['folder']),
+            models.Index(fields=['saved_at']),
+            models.Index(fields=['is_favorite']),
+            models.Index(fields=['folder', 'saved_at']),
+        ]
+
+
+class AudioSegmentInsight(models.Model):
+    """Model to store multiple insights for saved audio segments"""
+    saved_audio_segment = models.ForeignKey(SavedAudioSegment, on_delete=models.CASCADE, related_name='insights')
+    title = models.CharField(max_length=255, help_text="Title of the insight")
+    description = models.TextField(help_text="Detailed description of the insight")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.title} - {self.saved_audio_segment.audio_segment.title or 'Untitled'}"
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['saved_audio_segment']),
+            models.Index(fields=['created_at']),
+        ]
