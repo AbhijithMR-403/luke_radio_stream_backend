@@ -32,7 +32,13 @@ class SettingsAndBucketsView(View):
         try:
             data = json.loads(request.body)
             settings_data = data.get('settings', {})
+            buckets = data.get('buckets', [])
+
             settings_obj, _ = GeneralSetting.objects.get_or_create(id=settings_data.get('id', 1))
+
+            if buckets and len(buckets) > 20:
+                return JsonResponse({'success': False, 'error': 'You can only have 20 buckets'}, status=400)
+
             # List of all fields in GeneralSetting
             general_setting_fields = [
                 'openai_api_key', 'openai_org_id', 'acr_cloud_api_key', 'revai_access_token',
@@ -46,7 +52,6 @@ class SettingsAndBucketsView(View):
                     setattr(settings_obj, field, settings_data[field])
             settings_obj.save()
 
-            buckets = data.get('buckets', [])
             bucket_ids_in_payload = set()
             for bucket in buckets:
                 bucket_id = bucket.get('id')  # Use 'id' instead of 'bucket_id'

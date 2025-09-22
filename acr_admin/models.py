@@ -102,13 +102,3 @@ class WellnessBucket(models.Model):
     def __str__(self):
         return f"Bucket {self.id} - {self.title}"
 
-    def clean(self):
-        if not self.pk and WellnessBucket.objects.count() >= 20:
-            raise ValidationError("You cannot have more than 20 wellness buckets.")
-
-    def save(self, *args, **kwargs):
-        # Check if we're at the limit before saving
-        if not self.pk and WellnessBucket.objects.count() >= 20:
-            raise ValidationError("You cannot have more than 20 wellness buckets.")
-        super().save(*args, **kwargs)
-
