@@ -4,12 +4,14 @@ from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.contrib.auth import authenticate
 from django.utils import timezone
 from .models import RadioUser, UserChannelAssignment, MagicLink
 from .serializer import (
     UserSerializer, UserChannelAssignmentSerializer, AssignChannelSerializer,
-    AdminCreateUserSerializer, MagicLinkVerificationSerializer, PasswordSetupSerializer, LoginSerializer
+    AdminCreateUserSerializer, MagicLinkVerificationSerializer, PasswordSetupSerializer, LoginSerializer,
+    CustomTokenObtainPairSerializer
 )
 from .utils import generate_and_send_magic_link
 from acr_admin.models import Channel
@@ -135,11 +137,12 @@ class VerifyMagicLinkView(APIView):
             ).first()
             
             if not magic_link or not magic_link.is_valid():
-                return Response({'error': 'Invalid or expired magic link.'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': 'Invalid or expired magic link.', 'verify': False}, status=status.HTTP_400_BAD_REQUEST)
             
             return Response({
                 'message': 'Magic link verified successfully. You can now set your password.',
-                'user': UserSerializer(magic_link.user).data
+                'user': UserSerializer(magic_link.user).data,
+                'verify': True
             }, status=status.HTTP_200_OK)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -218,3 +221,25 @@ class ResendMagicLinkView(APIView):
             return Response({'message': 'New magic link sent to your email.'}, status=status.HTTP_200_OK)
         else:
             return Response({'error': 'Failed to send magic link email.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# Custom JWT Token Views
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
+
+class CustomTokenRefreshView(TokenRefreshView):
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            # Get user from the token
+            from rest_framework_simplejwt.tokens import RefreshToken
+            try:
+                refresh_token = request.data.get('refresh')
+                if refresh_token:
+                    token = RefreshToken(refresh_token)
+                    user_id = token.payload.get('user_id')
+                    if user_id:
+                        user = User.objects.get(id=user_id)
+                        response.data['user'] = UserSerializer(user).data
+            except Exception:
+                pass  # If we can't get user info, just return the token
+        return response

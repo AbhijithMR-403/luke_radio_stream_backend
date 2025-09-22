@@ -2,11 +2,8 @@
 from django.urls import path
 from .views import (
     AdminCreateUserView, AdminUpdateUserView, AdminListUsersView, AdminAssignChannelView, UserChannelsView,
-    VerifyMagicLinkView, SetPasswordView, LoginView, ResendMagicLinkView
-)
-from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
-    TokenRefreshView,
+    VerifyMagicLinkView, SetPasswordView, LoginView, ResendMagicLinkView,
+    CustomTokenObtainPairView, CustomTokenRefreshView
 )
 
 
@@ -26,8 +23,8 @@ urlpatterns = [
 	path('auth/login/', LoginView.as_view(), name='login'),
     
 	# JWT Token
-    path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('token/refresh/', CustomTokenRefreshView.as_view(), name='token_refresh'),
 
 	# User endpoints
 	path('user/channels/', UserChannelsView.as_view(), name='user-channels'),

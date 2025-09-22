@@ -1,5 +1,6 @@
 from django.core.mail import send_mail
 from django.conf import settings
+from django.utils import timezone
 from .models import MagicLink
 import logging
 
@@ -46,6 +47,17 @@ def generate_and_send_magic_link(user):
     """
     Generate a new magic link for user and send it via email
     """
+    # Check for existing active magic links and deactivate them
+    existing_links = MagicLink.objects.filter(
+        user=user,
+        is_used=False,
+        expires_at__gt=timezone.now()
+    )
+    
+    if existing_links.exists():
+        # Deactivate all existing active magic links
+        existing_links.update(is_used=True)
+    
     # Create new magic link
     magic_link = MagicLink.objects.create(user=user)
     
