@@ -73,7 +73,7 @@ class SettingsAndBucketsView(View):
             if buckets_to_delete:
                 WellnessBucket.objects.filter(id__in=buckets_to_delete).delete()
 
-            return JsonResponse({'success': True, 'settings_id': settings_obj.id, 'bucket_ids': list(bucket_ids_in_payload)})
+            return JsonResponse({'success': True, 'settings': general_setting_to_dict(settings_obj), 'bucket_ids': list(WellnessBucket.objects.all().values())})
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
