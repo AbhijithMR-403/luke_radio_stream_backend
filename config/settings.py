@@ -32,14 +32,16 @@ ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1").split(","
 # Application definition
 
 INSTALLED_APPS = [
-    "django.contrib.admin",
+    # "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    'rest_framework_simplejwt',
     "acr_admin",
+    "accounts",
     "corsheaders",
     'encrypted_model_fields',
     "data_analysis",
@@ -81,23 +83,23 @@ WSGI_APPLICATION = "config.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# DATABASES = {
-#     "default": {
-#         "ENGINE": "django.db.backends.sqlite3",
-#         "NAME": BASE_DIR / "db.sqlite3",
-#     }
-# }
-
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": config("POSTGRES_DB", default="postgres"),
-        "USER": config("POSTGRES_USER", default="postgres"),
-        "PASSWORD": config("POSTGRES_PASSWORD", default="postgres"),
-        "HOST": config("POSTGRES_HOST", default="localhost"),
-        "PORT": config("POSTGRES_PORT", default="5432"),
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
     }
 }
+
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.postgresql",
+#         "NAME": config("POSTGRES_DB", default="postgres"),
+#         "USER": config("POSTGRES_USER", default="postgres"),
+#         "PASSWORD": config("POSTGRES_PASSWORD", default="postgres"),
+#         "HOST": config("POSTGRES_HOST", default="localhost"),
+#         "PORT": config("POSTGRES_PORT", default="5432"),
+#     }
+# }
 
 
 # Password validation
@@ -141,6 +143,8 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+AUTH_USER_MODEL = 'accounts.RadioUser'
+
 MEDIA_URL = "/api/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
@@ -165,3 +169,21 @@ CELERY_TASK_IGNORE_RESULT = False
 
 # CORS configuration
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="").split(",") if config("CORS_ALLOWED_ORIGINS", default="") else []
+
+# Email configuration
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
+EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+
+# Frontend URL for magic links
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
+
+# REST Framework configuration
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ]
+}

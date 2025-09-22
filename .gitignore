@@ -90,3 +90,7 @@ db.sqlite3
 
 venv
 media/
+
+
+.github/
+.vscode/
