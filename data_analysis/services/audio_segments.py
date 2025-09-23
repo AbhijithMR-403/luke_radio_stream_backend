@@ -150,6 +150,19 @@ class AudioSegments:
                         "result_from": music_data.get("result_from"),
                         "created_at": music_data.get("created_at"),
                     }
+                elif custom_files:
+                    # Use first custom file's title as main title
+                    custom_file_data = custom_files[0] if custom_files else {}
+                    title = custom_file_data.get("title", "")
+                    
+                    # Extract all titles from custom files for metadata
+                    all_titles = [cf.get("title", "") for cf in custom_files if cf.get("title")]
+                    
+                    # Extract metadata from custom file data
+                    metadata_json = {
+                        "source": "custom_file",
+                        "titles": all_titles,  # List of all titles
+                    }
                 
                 # Skip segments with zero duration (same start and end time)
                 if start_time == end_time:
