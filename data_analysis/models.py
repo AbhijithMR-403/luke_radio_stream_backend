@@ -146,6 +146,7 @@ class AudioSegments(models.Model):
     is_active = models.BooleanField(default=True, help_text="Whether the segment is active (not superseded by newer data)")
     is_analysis_completed = models.BooleanField(default=False, help_text="Whether data analysis has been completed for this audio segment")
     is_audio_downloaded = models.BooleanField(default=False, help_text="Whether the audio file has been downloaded")
+    is_manually_processed = models.BooleanField(default=False, help_text="Whether the segment was manually transcribed or analyzed")
     file_name = models.CharField(max_length=255)  # e.g., "def_channel_20250804_101500"
     file_path = models.CharField(max_length=512)  # e.g., "/mnt/audio_storage/def_channel_20250804_101500.wav"
     title = models.CharField(

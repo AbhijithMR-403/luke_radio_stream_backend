@@ -423,6 +423,7 @@ class AudioTranscriptionAndAnalysisView(View):
                     
                     # Update the segment's is_audio_downloaded flag
                     segment.is_audio_downloaded = True
+                    segment.is_manually_processed = True
                     segment.save()
                     
                     print(f"Successfully downloaded audio for segment {segment_id} to {segment.file_path}")
@@ -553,7 +554,7 @@ class TranscriptionQueueStatusView(View):
             # Check if queued for transcription
             try:
                 queue_entry = TranscriptionQueue.objects.get(audio_segment=segment)
-                
+
                 # Check if transcription is completed
                 transcription_detail = None
                 analysis = None
