@@ -10,4 +10,4 @@ def modify_audio_segment_manually_processed():
     transcription_queue = TranscriptionQueue.objects.all()
     for queue in transcription_queue:
         queue.audio_segment.is_manually_processed = True
-        queue.save()
+        queue.audio_segment.save()
