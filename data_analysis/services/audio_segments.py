@@ -130,6 +130,23 @@ class AudioSegments:
                 start_time = timezone.make_aware(naive_start_time, timezone=dt_timezone.utc)
                 end_time = start_time + timedelta(seconds=played_duration)
                 
+                # Skip segments with zero duration (same start and end time)
+                if start_time == end_time:
+                    print(f"Warning: Skipping zero-duration segment at {start_time}")
+                    continue
+                
+                # Create segment dictionary for overlap checking
+                new_segment = {
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "duration_seconds": int(played_duration)
+                }
+                
+                # Check for overlaps with existing segments
+                if not AudioSegments._check_segment_overlap(new_segment, results):
+                    print(f"Skipping overlapping segment: {start_time} - {end_time}")
+                    continue
+                
                 # Get title and metadata from either custom_files or music
                 title = "Unknown Title"
                 metadata_json = None
@@ -163,11 +180,6 @@ class AudioSegments:
                         "source": "custom_file",
                         "titles": all_titles,  # List of all titles
                     }
-                
-                # Skip segments with zero duration (same start and end time)
-                if start_time == end_time:
-                    print(f"Warning: Skipping zero-duration segment at {start_time}")
-                    continue
                 
                 # Set is_active to False if duration is less than 10 seconds
                 is_active = played_duration >= 10
@@ -244,6 +256,49 @@ class AudioSegments:
         all_segments.sort(key=lambda x: x["start_time"])
         
         return all_segments
+
+    @staticmethod
+    def _check_segment_overlap(new_segment, existing_segments, gap_threshold_seconds=2):
+        """
+        Check if a new segment should be included based on overlap rules.
+        
+        Args:
+            new_segment: Dictionary with start_time and end_time
+            existing_segments: List of existing segment dictionaries
+            gap_threshold_seconds: Minimum gap required after main segment end (default: 2)
+            
+        Returns:
+            bool: True if segment should be included, False if it should be ignored
+        """
+        new_start = new_segment["start_time"]
+        new_end = new_segment["end_time"]
+        
+        for existing in existing_segments:
+            existing_start = existing["start_time"]
+            existing_end = existing["end_time"]
+            
+            # Check for complete overlap (new segment is completely within existing)
+            if (new_start >= existing_start and new_end <= existing_end):
+                print(f"Complete overlap detected: New segment {new_start}-{new_end} is within existing {existing_start}-{existing_end}")
+                return False
+            
+            # Check for partial overlap with extension
+            if (new_start < existing_end and new_end > existing_start):
+                # There's an overlap, check if new segment extends beyond existing with gap
+                if new_end > existing_end:
+                    gap_after_existing = (new_end - existing_end).total_seconds()
+                    if gap_after_existing >= gap_threshold_seconds:
+                        print(f"Partial overlap with sufficient gap: New segment extends {gap_after_existing}s beyond existing segment")
+                        return True
+                    else:
+                        print(f"Partial overlap with insufficient gap: Only {gap_after_existing}s gap (need {gap_threshold_seconds}s)")
+                        return False
+                else:
+                    print(f"Partial overlap without extension: New segment ends before existing segment")
+                    return False
+        
+        # No overlap detected
+        return True
 
     @staticmethod
     def _deactivate_overlapping_segments(start_time, end_time, duration_seconds, channel, tolerance_seconds=1):
