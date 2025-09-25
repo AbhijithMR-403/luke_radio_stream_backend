@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from django.db import models
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 import json
@@ -174,6 +175,12 @@ class AudioSegments(models.Model):
     )
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="audios_segments")
     notes = models.TextField(null=True, blank=True, help_text="Optional reason/log/debug info")
+    SOURCE_CHOICES = (
+        ('system', 'System'),
+        ('user', 'User'), 
+    )
+    source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='system', help_text="Who added the segment: system or user")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_audio_segments', help_text="User who created the segment if manual")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

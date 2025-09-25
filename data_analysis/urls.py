@@ -3,6 +3,7 @@ from . import views
 
 
 urlpatterns = [
+    path('segments/create', views.CreateSegmentFromRangeView.as_view(), name='create_segment_manually'),
     path('audio_segments_with_transcription', views.AudioSegmentsWithTranscriptionView.as_view(), name='audio_segments_with_transcription'),
     path('audio_segments', views.AudioSegments.as_view(), name='audio_segments'),
     path('rev-callback', views.RevCallbackView.as_view(), name='rev-callback'),
