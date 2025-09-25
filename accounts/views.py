@@ -11,7 +11,7 @@ from .models import RadioUser, UserChannelAssignment, MagicLink
 from .serializer import (
     UserSerializer, UserChannelAssignmentSerializer, AssignChannelSerializer,
     AdminCreateUserSerializer, MagicLinkVerificationSerializer, PasswordSetupSerializer, LoginSerializer,
-    CustomTokenObtainPairSerializer
+    CustomTokenObtainPairSerializer, ChannelSerializer
 )
 from .utils import generate_and_send_magic_link
 from acr_admin.models import Channel
@@ -110,8 +110,17 @@ class AdminAssignChannelView(APIView):
                 channel = Channel.objects.get(id=channel_id)
             except (User.DoesNotExist, Channel.DoesNotExist):
                 return Response({'error': 'User or Channel not found.'}, status=status.HTTP_404_NOT_FOUND)
-            assignment, created = UserChannelAssignment.objects.get_or_create(user=user, channel=channel, defaults={'assigned_by': request.user})
-            return Response({'assigned': created}, status=status.HTTP_200_OK)
+            assignment, created = UserChannelAssignment.objects.get_or_create(
+                user=user,
+                channel=channel,
+                defaults={'assigned_by': request.user}
+            )
+            return Response({
+                'assigned': created,
+                'already_exists': not created,
+                'message': 'Channel assigned to user.' if created else 'Assignment already exists.',
+                'user': UserSerializer(user).data
+            }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # User: View assigned channels
@@ -119,9 +128,24 @@ class UserChannelsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        assignments = UserChannelAssignment.objects.filter(user=request.user)
-        serializer = UserChannelAssignmentSerializer(assignments, many=True)
-        return Response(serializer.data)
+        user_data = UserSerializer(request.user).data
+        if request.user.is_admin:
+            channels = Channel.objects.filter(is_deleted=False)
+            channels_data = ChannelSerializer(channels, many=True).data
+            return Response({
+                'user': user_data,
+                'channels': channels_data,
+                'is_admin': True
+            })
+        else:
+            assignments = UserChannelAssignment.objects.filter(user=request.user).select_related('channel')
+            channels = [assignment.channel for assignment in assignments]
+            channels_data = ChannelSerializer(channels, many=True).data
+            return Response({
+                'user': user_data,
+                'channels': channels_data,
+                'is_admin': False
+            })
 
 # User: Verify magic link token
 class VerifyMagicLinkView(APIView):
