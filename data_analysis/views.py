@@ -285,7 +285,7 @@ class AudioSegments(View):
     
     Search Parameters:
     - search_text (optional): Text to search for
-    - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt'
+    - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary'
     
     Note: If search_text is provided, search_in must also be provided with a valid option.
     
@@ -293,6 +293,7 @@ class AudioSegments(View):
     - /api/audio-segments/?channel_id=1&search_text=music&search_in=transcription
     - /api/audio-segments/?channel_id=1&search_text=sports&search_in=general_topics
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&search_text=news&search_in=iab_topics
+    - /api/audio-segments/?channel_id=1&search_text=entertainment&search_in=summary
     """
     def get(self, request, *args, **kwargs):
         try:
@@ -315,7 +316,7 @@ class AudioSegments(View):
                 return JsonResponse({'success': False, 'error': 'search_text parameter is required when search_in is provided'}, status=400)
             
             # Validate search_in options
-            valid_search_options = ['transcription', 'general_topics', 'iab_topics', 'bucket_prompt']
+            valid_search_options = ['transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary']
             if search_in and search_in not in valid_search_options:
                 return JsonResponse({
                     'success': False, 
@@ -402,6 +403,11 @@ class AudioSegments(View):
                     # Search in bucket prompt
                     base_query = base_query.filter(
                         transcription_detail__analysis__bucket_prompt__icontains=search_text
+                    )
+                elif search_in == 'summary':
+                    # Search in summary
+                    base_query = base_query.filter(
+                        transcription_detail__analysis__summary__icontains=search_text
                     )
             
             # Execute the final query with ordering
