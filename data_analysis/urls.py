@@ -11,7 +11,7 @@ urlpatterns = [
 
     # Not sure is this api is been used or not
     path('transcription_queue_status', views.TranscriptionQueueStatusView.as_view(), name='transcription_queue_status'),
-    path('general_topics', views.GeneralTopicsManagementView.as_view(), name='general_topics_management'),
+
     
     # Report folder management endpoints
     path('report_folders', views.ReportFolderManagementView.as_view(), name='report_folders'),

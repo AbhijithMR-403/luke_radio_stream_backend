@@ -3,6 +3,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import JSONParser
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+from django.views import View
+from django.http import JsonResponse
+from data_analysis.models import GeneralTopic
 from .serializer import get_dashboard_stats, DashboardStatsSerializer, get_topic_audio_segments
 
 # Create your views here.
@@ -214,3 +219,127 @@ class TopicAudioSegmentsView(APIView):
                 {'error': f'Failed to fetch audio segments for topic: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class GeneralTopicsManagementView(View):
+    """API to manage general topics (add, update status, list)"""
+    
+    def get(self, request, *args, **kwargs):
+        """Get all general topics with their status"""
+        try:
+            # Get query parameters
+            status_filter = request.GET.get('status')  # 'active', 'inactive', or None for all
+            
+            # Build query with optimized filtering
+            topics_query = GeneralTopic.objects.all()
+            if status_filter == 'active':
+                topics_query = topics_query.filter(is_active=True)
+            elif status_filter == 'inactive':
+                topics_query = topics_query.filter(is_active=False)
+            
+            topics = topics_query.order_by('topic_name')
+            
+            topics_data = []
+            for topic in topics:
+                topics_data.append({
+                    'id': topic.id,
+                    'topic_name': topic.topic_name,
+                    'is_active': topic.is_active,
+                    'created_at': topic.created_at.isoformat(),
+                    'updated_at': topic.updated_at.isoformat()
+                })
+            
+            return JsonResponse({
+                'success': True,
+                'data': {
+                    'topics': topics_data,
+                    'total_count': len(topics_data),
+                    'active_count': GeneralTopic.objects.filter(is_active=True).count(),
+                    'inactive_count': GeneralTopic.objects.filter(is_active=False).count()
+                }
+            })
+            
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    
+    def post(self, request, *args, **kwargs):
+        """Add or update topics (upsert functionality) - accepts list of topics"""
+        try:
+            data = json.loads(request.body)
+            
+            # Debug: Print the data type and content
+            print(f"Data type: {type(data)}")
+            print(f"Data content: {data}")
+            
+            # Check if data is a list
+            if not isinstance(data, list):
+                return JsonResponse({'success': False, 'error': 'Request body must be a list of topics'}, status=400)
+            
+            if not data:
+                return JsonResponse({'success': False, 'error': 'Topics list cannot be empty'}, status=400)
+            
+            results = []
+            created_count = 0
+            updated_count = 0
+            
+            for i, topic_data in enumerate(data):
+                print(f"Processing topic {i}: {topic_data}, type: {type(topic_data)}")
+                
+                if not isinstance(topic_data, dict):
+                    return JsonResponse({'success': False, 'error': f'Topic at index {i} must be an object, got {type(topic_data)}'}, status=400)
+                
+                topic_name = topic_data.get('topic_name')
+                is_active = topic_data.get('is_active', True)
+                
+                if not topic_name:
+                    return JsonResponse({'success': False, 'error': 'topic_name is required for each topic'}, status=400)
+                
+                # Check if topic already exists
+                existing_topic = GeneralTopic.objects.filter(topic_name__iexact=topic_name).first()
+                
+                if existing_topic:
+                    # Update existing topic
+                    existing_topic.is_active = is_active
+                    existing_topic.save()
+                    
+                    action = 'updated'
+                    updated_count += 1
+                else:
+                    # Create new topic
+                    existing_topic = GeneralTopic.objects.create(
+                        topic_name=topic_name,
+                        is_active=is_active
+                    )
+                    action = 'created'
+                    created_count += 1
+                
+                results.append({
+                    'id': existing_topic.id,
+                    'topic_name': existing_topic.topic_name,
+                    'is_active': existing_topic.is_active,
+                    'created_at': existing_topic.created_at.isoformat(),
+                    'updated_at': existing_topic.updated_at.isoformat(),
+                    'action': action
+                })
+            
+            return JsonResponse({
+                'success': True,
+                'message': f'Processed {len(results)} topics: {created_count} created, {updated_count} updated',
+                'summary': {
+                    'total_processed': len(results),
+                    'created': created_count,
+                    'updated': updated_count
+                },
+                'data': results
+            })
+            
+        except json.JSONDecodeError as e:
+            return JsonResponse({'success': False, 'error': f'Invalid JSON data: {str(e)}'}, status=400)
+        except Exception as e:
+            import traceback
+            print(f"Error in post method: {str(e)}")
+            print(f"Traceback: {traceback.format_exc()}")
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
