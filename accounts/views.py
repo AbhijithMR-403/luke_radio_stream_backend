@@ -123,6 +123,37 @@ class AdminAssignChannelView(APIView):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# Admin: Unassign channel from user
+class AdminUnassignChannelView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        serializer = AssignChannelSerializer(data=request.data)
+        if serializer.is_valid():
+            user_id = serializer.validated_data['user_id']
+            channel_id = serializer.validated_data['channel_id']
+            try:
+                user = User.objects.get(id=user_id)
+                channel = Channel.objects.get(id=channel_id)
+            except (User.DoesNotExist, Channel.DoesNotExist):
+                return Response({'error': 'User or Channel not found.'}, status=status.HTTP_404_NOT_FOUND)
+            
+            try:
+                assignment = UserChannelAssignment.objects.get(user=user, channel=channel)
+                assignment.delete()
+                return Response({
+                    'unassigned': True,
+                    'message': 'Channel unassigned from user.',
+                    'user': UserSerializer(user).data
+                }, status=status.HTTP_200_OK)
+            except UserChannelAssignment.DoesNotExist:
+                return Response({
+                    'unassigned': False,
+                    'message': 'Assignment does not exist.',
+                    'user': UserSerializer(user).data
+                }, status=status.HTTP_404_NOT_FOUND)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 # User: View assigned channels
 class UserChannelsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
