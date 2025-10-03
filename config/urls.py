@@ -24,7 +24,8 @@ urlpatterns = [
     path('api/', include('acr_admin.urls')),
     path('api/', include('data_analysis.urls')),
     path('api/', include('dashboard.urls')),
-    path('api/accounts/', include('accounts.urls')),
+    path('api/accounts/', include('accounts.urls')), 
+    path('api/segmentor/', include('segmentor.urls')),
 ]
 
 if settings.DEBUG:
