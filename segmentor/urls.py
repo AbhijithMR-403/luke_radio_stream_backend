@@ -5,6 +5,7 @@ from .views import (
     AudioUnrecognizedCategoryListCreateView,
     TitleMappingRuleDetailView,
     TitleMappingRuleListCreateView,
+    get_category_titles,
 )
 
 urlpatterns = [
@@ -27,5 +28,10 @@ urlpatterns = [
         "title-mapping-rules/<int:pk>/",
         TitleMappingRuleDetailView.as_view(),
         name="title-mapping-rule-detail",
+    ),
+    path(
+        "categories/<int:category_id>/titles/",
+        get_category_titles,
+        name="category-titles",
     ),
 ]

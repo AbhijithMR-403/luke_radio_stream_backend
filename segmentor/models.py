@@ -1,4 +1,5 @@
 from django.db import models
+from acr_admin.models import Channel
 
 # Create your models here.
 
@@ -8,6 +9,7 @@ class AudioUnrecognizedCategory(models.Model):
 
     name = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True)
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="unrecognized_categories")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -57,3 +59,19 @@ class TitleMappingRule(models.Model):
 
     def __str__(self):
         return f"{self.category.name}: {self.before_title}"
+
+    def clean(self):
+        """Ensure before_title is unique per channel (via related category.channel)."""
+        super().clean()
+        if self.before_title and self.category and self.category.channel:
+            qs = TitleMappingRule.objects.filter(
+                before_title=self.before_title,
+                category__channel=self.category.channel,
+            )
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                from django.core.exceptions import ValidationError
+                raise ValidationError({
+                    'before_title': 'A rule with this before_title already exists for this channel.'
+                })

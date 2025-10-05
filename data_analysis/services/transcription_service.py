@@ -11,6 +11,7 @@ from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
 
 from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail, AudioSegments
+from segmentor.models import TitleMappingRule
 
 
 class RevAISpeechToText:
@@ -46,6 +47,41 @@ class RevAISpeechToText:
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()
         return response.json()
+
+    @staticmethod
+    def apply_title_mapping_or_skip(audio_segment: AudioSegments) -> bool:
+        """
+        If a TitleMappingRule exists for the segment's title_before and channel,
+        update the segment's title to the mapped AudioUnrecognizedCategory name
+        and return True to indicate transcription should be skipped.
+
+        Returns:
+            bool: True if mapping applied (skip transcription), False otherwise
+        """
+        try:
+            before_title_value = (audio_segment.title_before or "").strip()
+            if not before_title_value:
+                return False
+
+            rule = TitleMappingRule.objects.filter(
+                is_active=True,
+                before_title=before_title_value,
+                category__channel=audio_segment.channel,
+            ).first()
+            if not rule:
+                return False
+
+            # Update title with mapped category name
+            mapped_title = rule.category.name
+            if audio_segment.title != mapped_title:
+                audio_segment.title = mapped_title
+                audio_segment.save(update_fields=["title"])
+
+            # Respect rule.skip_transcription flag; default True in model
+            return bool(rule.skip_transcription)
+        except Exception as e:
+            print(f"Error applying title mapping for segment {audio_segment.id}: {str(e)}")
+            return False
 
     @staticmethod
     def create_and_save_transcription_job(segments_data: dict[str, list]) -> list[RevTranscriptionJob]:
@@ -117,6 +153,15 @@ class RevAISpeechToText:
                 print(f"Skipping segment - AudioSegments with id {segment_id} not found")
                 continue  # Skip if AudioSegments not found
             
+            # Skip transcription if a TitleMappingRule exists and update title accordingly
+            try:
+                should_skip = RevAISpeechToText.apply_title_mapping_or_skip(audio_segment)
+                if should_skip:
+                    print(f"Skipping transcription for segment {segment_id} due to TitleMappingRule match")
+                    continue
+            except Exception as e:
+                print(f"Error checking title mapping for segment {segment_id}: {str(e)}")
+
             # Always get file_path and media_url from audio_segment
             file_path = audio_segment.file_path
             media_url = f"/api/{audio_segment.file_path}"
