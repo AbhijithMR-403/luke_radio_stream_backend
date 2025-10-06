@@ -39,6 +39,86 @@ def parse_dt(value):
 
 
 
+@method_decorator(csrf_exempt, name='dispatch')
+class PieChartDataView(View):
+    """
+    Returns pie chart data for audio segments within a datetime range.
+
+    Query Parameters:
+    - start_datetime (required): ISO or 'YYYY-MM-DD HH:MM:SS'
+    - channel_id (optional): Filter by channel
+
+    Response:
+    {
+        "success": true,
+        "data": [
+            { "title": "Some Title" | "undefined", "value": 123 }
+        ],
+        "count": 10
+    }
+    """
+    def get(self, request, *args, **kwargs):
+        try:
+            start_param = request.GET.get('start_datetime')
+            channel_pk = request.GET.get('channel_id')
+
+            if not start_param:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'start_datetime is required'
+                }, status=400)
+
+            start_dt = parse_dt(start_param)
+            # Define a strict 60-minute window starting from start_dt
+            window_end = start_dt + timezone.timedelta(minutes=60)
+            # If end_param is provided and extends before window_end, still enforce 60 minutes window
+            # If end_param extends beyond, ignore the extra (clip to 60 minutes)
+
+            if not start_dt:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Invalid datetime format. Use ISO or YYYY-MM-DD HH:MM:SS'
+                }, status=400)
+
+            filter_conditions = {
+                'start_time__lte': window_end,
+                'end_time__gte': start_dt,
+            }
+
+            if channel_pk:
+                try:
+                    channel = Channel.objects.get(id=channel_pk, is_deleted=False)
+                    filter_conditions['channel'] = channel
+                except Channel.DoesNotExist:
+                    return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
+
+            segments = (
+                AudioSegmentsModel.objects
+                .filter(**filter_conditions)
+                .only('id', 'duration_seconds', 'title', 'start_time', 'end_time')
+                .order_by('start_time')
+            )
+
+            data = []
+            for seg in segments:
+                # compute overlap within the 60-minute window
+                overlap_start = max(seg.start_time, start_dt)
+                overlap_end = min(seg.end_time, window_end)
+                overlap_seconds = int(max(0, (overlap_end - overlap_start).total_seconds()))
+                if overlap_seconds > 0:
+                    data.append({
+                        'title': seg.title if seg.title else 'undefined',
+                        'value': overlap_seconds,
+                    })
+
+            return JsonResponse({'success': True, 'data': data, 'count': len(data), 'window': {
+                'start': start_dt.isoformat(),
+                'end': window_end.isoformat()
+            }})
+
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
 class CreateSegmentFromRangeView(APIView):
     permission_classes = [IsAdminUser]
     def post(self, request, *args, **kwargs):
