@@ -39,6 +39,50 @@ def parse_dt(value):
 
 
 
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AudioSegmentIsActiveUpdateView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, segment_id, *args, **kwargs):
+        return self._update_is_active(request, segment_id)
+
+    def _update_is_active(self, request, segment_id):
+        try:
+            payload = request.data if hasattr(request, 'data') else json.loads(request.body)
+            if not isinstance(payload, dict):
+                return Response({'success': False, 'error': 'Expected JSON object body'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if 'is_active' not in payload:
+                return Response({'success': False, 'error': 'is_active is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            is_active_value = bool(payload.get('is_active'))
+
+            try:
+                segment = AudioSegmentsModel.objects.get(id=segment_id)
+            except AudioSegmentsModel.DoesNotExist:
+                return Response({'success': False, 'error': 'Audio segment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            segment.is_active = is_active_value
+            segment.is_manually_processed = True
+            segment.save(update_fields=['is_active', 'is_manually_processed'])
+
+            return Response({
+                'success': True,
+                'message': 'Audio segment updated',
+                'data': {
+                    'segment_id': segment.id,
+                    'is_active': segment.is_active,
+                    'start_time': segment.start_time.isoformat(),
+                    'end_time': segment.end_time.isoformat()
+                }
+            })
+        except json.JSONDecodeError:
+            return Response({'success': False, 'error': 'Invalid JSON body'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class PieChartDataView(View):
     """
@@ -817,82 +861,6 @@ class AudioTranscriptionAndAnalysisView(View):
                 
         except json.JSONDecodeError:
             return JsonResponse({'success': False, 'error': 'Invalid JSON data'}, status=400)
-        except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-@method_decorator(csrf_exempt, name='dispatch')
-class TranscriptionQueueStatusView(View):
-    def get(self, request, *args, **kwargs):
-        try:
-            segment_id = request.GET.get('segment_id')
-            
-            if not segment_id:
-                return JsonResponse({'success': False, 'error': 'segment_id is required'}, status=400)
-            
-            # Check if segment exists
-            try:
-                segment = AudioSegmentsModel.objects.get(id=segment_id)
-            except AudioSegmentsModel.DoesNotExist:
-                return JsonResponse({'success': False, 'error': 'Audio segment not found'}, status=404)
-            
-            # Check if queued for transcription
-            try:
-                queue_entry = TranscriptionQueue.objects.get(audio_segment=segment)
-
-                # Check if transcription is completed
-                transcription_detail = None
-                analysis = None
-                
-                try:
-                    transcription_detail = TranscriptionDetail.objects.get(audio_segment=segment)
-                    queue_entry.is_transcribed = True
-                    
-                    # Check if analysis is completed
-                    try:
-                        analysis = TranscriptionAnalysis.objects.get(transcription_detail=transcription_detail)
-                        queue_entry.is_analyzed = True
-                        queue_entry.completed_at = timezone.now()
-                    except TranscriptionAnalysis.DoesNotExist:
-                        pass
-                    
-                    queue_entry.save()
-                    
-                except TranscriptionDetail.DoesNotExist:
-                    pass
-                
-                return JsonResponse({
-                    'success': True,
-                    'data': {
-                        'queue_id': queue_entry.id,
-                        'segment_id': segment_id,
-                        'is_transcribed': queue_entry.is_transcribed,
-                        'is_analyzed': queue_entry.is_analyzed,
-                        'queued_at': queue_entry.queued_at.isoformat(),
-                        'completed_at': queue_entry.completed_at.isoformat() if queue_entry.completed_at else None,
-                        'transcription': {
-                            'id': transcription_detail.id,
-                            'transcript': transcription_detail.transcript,
-                            'created_at': transcription_detail.created_at.isoformat()
-                        } if transcription_detail else None,
-                        'analysis': {
-                            'id': analysis.id,
-                            'summary': analysis.summary,
-                            'sentiment': analysis.sentiment,
-                            'general_topics': analysis.general_topics,
-                            'iab_topics': analysis.iab_topics,
-                            'bucket_prompt': analysis.bucket_prompt,
-                            'created_at': analysis.created_at.isoformat()
-                        } if analysis else None
-                    }
-                })
-                
-            except TranscriptionQueue.DoesNotExist:
-                return JsonResponse({
-                    'success': False, 
-                    'error': 'Audio segment is not queued for transcription',
-                    'status': 'not_queued'
-                }, status=404)
-                
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
