@@ -144,16 +144,28 @@ class PieChartDataView(View):
             )
 
             data = []
+            total_accumulated = 0
             for seg in segments:
                 # compute overlap within the 60-minute window
                 overlap_start = max(seg.start_time, start_dt)
                 overlap_end = min(seg.end_time, window_end)
                 overlap_seconds = int(max(0, (overlap_end - overlap_start).total_seconds()))
-                if overlap_seconds > 0:
-                    data.append({
-                        'title': seg.title if seg.title else 'undefined',
-                        'value': overlap_seconds,
-                    })
+                if overlap_seconds > 0 and total_accumulated < 3600:
+                    remaining = 3600 - total_accumulated
+                    to_add = min(overlap_seconds, remaining)
+                    if to_add > 0:
+                        data.append({
+                            'title': seg.title if seg.title else 'undefined',
+                            'value': to_add,
+                            'start_time': seg.start_time.isoformat() if seg.start_time else None,
+                            'end_time': seg.end_time.isoformat() if seg.end_time else None,
+                            'created_by': seg.source,
+                            'overlap_start': overlap_start.isoformat(),
+                            'overlap_end': overlap_end.isoformat(),
+                        })
+                        total_accumulated += to_add
+                    if total_accumulated >= 3600:
+                        break
 
             return JsonResponse({'success': True, 'data': data, 'count': len(data), 'window': {
                 'start': start_dt.isoformat(),
@@ -510,7 +522,7 @@ class AudioSegments(View):
     
     Search Parameters:
     - search_text (optional): Text to search for
-    - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary'
+    - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'title'
     
     Note: If search_text is provided, search_in must also be provided with a valid option.
     
@@ -519,6 +531,7 @@ class AudioSegments(View):
     - /api/audio-segments/?channel_id=1&search_text=sports&search_in=general_topics
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&search_text=news&search_in=iab_topics
     - /api/audio-segments/?channel_id=1&search_text=entertainment&search_in=summary
+    - /api/audio-segments/?channel_id=1&search_text=morning show&search_in=title
     """
     def get(self, request, *args, **kwargs):
         try:
@@ -541,7 +554,7 @@ class AudioSegments(View):
                 return JsonResponse({'success': False, 'error': 'search_text parameter is required when search_in is provided'}, status=400)
             
             # Validate search_in options
-            valid_search_options = ['transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary']
+            valid_search_options = ['transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'title']
             if search_in and search_in not in valid_search_options:
                 return JsonResponse({
                     'success': False, 
@@ -633,6 +646,11 @@ class AudioSegments(View):
                     # Search in summary
                     base_query = base_query.filter(
                         transcription_detail__analysis__summary__icontains=search_text
+                    )
+                elif search_in == 'title':
+                    # Search in title
+                    base_query = base_query.filter(
+                        title__icontains=search_text
                     )
             
             # Execute the final query with ordering
