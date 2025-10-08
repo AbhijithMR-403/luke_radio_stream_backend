@@ -944,7 +944,7 @@ class ReportFolderManagementView(View):
     def get(self, request, *args, **kwargs):
         """Get all report folders with their saved segments count"""
         try:
-            folders = ReportFolder.objects.prefetch_related('saved_segments').all()
+            folders = ReportFolder.objects.select_related('channel').prefetch_related('saved_segments').all()
             
             folders_data = []
             for folder in folders:
@@ -954,6 +954,12 @@ class ReportFolderManagementView(View):
                     'description': folder.description,
                     'color': folder.color,
                     'is_public': folder.is_public,
+                    'channel': {
+                        'id': folder.channel.id,
+                        'name': folder.channel.name,
+                        'channel_id': folder.channel.channel_id,
+                        'project_id': folder.channel.project_id,
+                    },
                     'saved_segments_count': folder.saved_segments.count(),
                     'created_at': folder.created_at.isoformat(),
                     'updated_at': folder.updated_at.isoformat()
@@ -979,15 +985,23 @@ class ReportFolderManagementView(View):
             description = data.get('description', '')
             color = data.get('color', '#3B82F6')
             is_public = data.get('is_public', True)
+            channel_id = data.get('channel_id')
             
             if not name:
                 return JsonResponse({'success': False, 'error': 'name is required'}, status=400)
+            if not channel_id:
+                return JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
+            try:
+                channel = Channel.objects.get(id=channel_id, is_deleted=False)
+            except Channel.DoesNotExist:
+                return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
             
             # Validate color format
             if not color.startswith('#') or len(color) != 7:
                 return JsonResponse({'success': False, 'error': 'color must be a valid hex color (e.g., #3B82F6)'}, status=400)
             
             folder = ReportFolder.objects.create(
+                channel=channel,
                 name=name,
                 description=description,
                 color=color,
@@ -1003,6 +1017,12 @@ class ReportFolderManagementView(View):
                     'description': folder.description,
                     'color': folder.color,
                     'is_public': folder.is_public,
+                    'channel': {
+                        'id': folder.channel.id,
+                        'name': folder.channel.name,
+                        'channel_id': folder.channel.channel_id,
+                        'project_id': folder.channel.project_id,
+                    },
                     'saved_segments_count': 0,
                     'created_at': folder.created_at.isoformat(),
                     'updated_at': folder.updated_at.isoformat()
@@ -1036,6 +1056,12 @@ class ReportFolderManagementView(View):
                 folder.color = color
             if 'is_public' in data:
                 folder.is_public = data['is_public']
+            if 'channel_id' in data:
+                try:
+                    channel = Channel.objects.get(id=data['channel_id'], is_deleted=False)
+                except Channel.DoesNotExist:
+                    return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
+                folder.channel = channel
             
             folder.save()
             
@@ -1048,6 +1074,12 @@ class ReportFolderManagementView(View):
                     'description': folder.description,
                     'color': folder.color,
                     'is_public': folder.is_public,
+                    'channel': {
+                        'id': folder.channel.id,
+                        'name': folder.channel.name,
+                        'channel_id': folder.channel.channel_id,
+                        'project_id': folder.channel.project_id,
+                    },
                     'saved_segments_count': folder.saved_segments.count(),
                     'created_at': folder.created_at.isoformat(),
                     'updated_at': folder.updated_at.isoformat()
@@ -1259,7 +1291,7 @@ class FolderContentsView(View):
                 
                 segments_data.append(segment_data)
             
-            return JsonResponse({
+                return JsonResponse({
                 'success': True,
                 'data': {
                     'folder': {
@@ -1268,7 +1300,13 @@ class FolderContentsView(View):
                         'description': folder.description,
                         'color': folder.color,
                         'is_public': folder.is_public,
-                        'created_at': folder.created_at.isoformat()
+                        'created_at': folder.created_at.isoformat(),
+                        'channel': {
+                            'id': folder.channel.id,
+                            'name': folder.channel.name,
+                            'channel_id': folder.channel.channel_id,
+                            'project_id': folder.channel.project_id,
+                        }
                     },
                     'saved_segments': segments_data,
                     'total_count': len(segments_data)

@@ -425,6 +425,7 @@ class AudioSegments(models.Model):
 
 class ReportFolder(models.Model):
     """Model to store report folders for organizing saved audio segments"""
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='report_folders')
     name = models.CharField(max_length=255, help_text="Name of the report folder")
     description = models.TextField(null=True, blank=True, help_text="Optional description of the folder")
     color = models.CharField(max_length=7, default="#3B82F6", help_text="Hex color code for the folder (default: blue)")
@@ -438,6 +439,7 @@ class ReportFolder(models.Model):
     class Meta:
         ordering = ['-created_at']
         indexes = [
+            models.Index(fields=['channel']),
             models.Index(fields=['is_public']),
             models.Index(fields=['created_at']),
         ]
