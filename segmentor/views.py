@@ -51,7 +51,6 @@ def get_category_titles(request, category_id):
         # Get all active title mapping rules for this category with related data
         title_rules = TitleMappingRule.objects.filter(
             category=category,
-            is_active=True
         ).select_related('category', 'category__channel').order_by('-updated_at')
         
         # Serialize the rules using the existing serializer
