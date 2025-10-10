@@ -186,6 +186,11 @@ class RevAISpeechToText:
                 print(f"Skipping segment {segment_id} - Audio is not downloaded")
                 continue  # Skip undownloaded audio segments
             
+            # Skip transcription if duration is less than 10 seconds
+            if audio_segment.duration_seconds < 10:
+                print(f"Skipping transcription for segment {segment_id} - Duration is {audio_segment.duration_seconds}s (less than 10 seconds)")
+                continue  # Skip short audio segments
+            
             # Create the transcription job via Rev.ai API
             try:
                 print(f"Creating transcription job for segment {segment_id} with file: {file_path}")

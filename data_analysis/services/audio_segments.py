@@ -181,8 +181,8 @@ class AudioSegments:
                         "titles": all_titles,  # List of all titles
                     }
                 
-                # Set is_active to False if duration is less than 10 seconds
-                is_active = played_duration >= 10
+                # Keep all segments active regardless of duration
+                is_active = True
                 
                 # Generate file name and path if channel is provided
                 file_name = None
@@ -223,8 +223,8 @@ class AudioSegments:
             # Only create gap if there's actually a gap (not touching segments)
             if next_segment["start_time"] > current_segment["end_time"]:
                 gap_duration = (next_segment["start_time"] - current_segment["end_time"]).total_seconds()
-                # Set is_active to False if duration is less than 10 seconds
-                is_active = gap_duration >= 10
+                # Keep all segments active regardless of duration
+                is_active = True
                 
                 # Generate file name and path if channel is provided
                 file_name = None
