@@ -139,7 +139,7 @@ class PieChartDataView(View):
             segments = (
                 AudioSegmentsModel.objects
                 .filter(**filter_conditions)
-                .only('id', 'duration_seconds', 'title', 'start_time', 'end_time')
+                .only('id', 'duration_seconds', 'title', 'start_time', 'end_time', 'is_recognized', 'is_active', 'metadata_json')
                 .order_by('start_time')
             )
 
@@ -150,13 +150,22 @@ class PieChartDataView(View):
                 overlap_start = max(seg.start_time, start_dt)
                 overlap_end = min(seg.end_time, window_end)
                 overlap_seconds = int(max(0, (overlap_end - overlap_start).total_seconds()))
+                
                 if overlap_seconds > 0 and total_accumulated < 3600:
                     remaining = 3600 - total_accumulated
                     to_add = min(overlap_seconds, remaining)
                     if to_add > 0:
+                        # Calculate position within the 60-minute window (0-3600 seconds)
+                        segment_start_position = int((overlap_start - start_dt).total_seconds())
+                        segment_end_position = int((overlap_end - start_dt).total_seconds())
+                        
+                        # Determine category based on the 4 types
+                        category = self._get_segment_category(seg)
+                        
                         data.append({
                             'title': seg.title if seg.title else 'undefined',
-                            'value': to_add,
+                            'value': [segment_start_position, segment_end_position],  # [start_pos, end_pos] in seconds from window start
+                            'category': category,
                             'start_time': seg.start_time.isoformat() if seg.start_time else None,
                             'end_time': seg.end_time.isoformat() if seg.end_time else None,
                             'created_by': seg.source,
@@ -174,6 +183,30 @@ class PieChartDataView(View):
 
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    
+    def _get_segment_category(self, segment):
+        """
+        Categorize audio segment into 4 types:
+        1. music: metadata_json contains {"source": "music", ...}
+        2. unrecognised_with_content: is_recognized=False AND is_active=True
+        3. unrecognised_not_active: is_recognized=False AND is_active=False
+        4. recognised_not_music: is_recognized=True AND (metadata_json is null OR doesn't have source="music")
+        """
+        # Check if it's music
+        if segment.metadata_json and segment.metadata_json.get('source') == 'music':
+            return 'music'
+        
+        # Check if it's recognized
+        if segment.is_recognized:
+            return 'recognised_not_music'
+        
+        # Unrecognized segments
+        if segment.is_active and segment.is_analysis_completed:
+            return 'unrecognised_with_content'
+        elif not segment.is_analysis_completed and segment.is_active:
+            return 'unrecognised_active_without_content'
+        else:
+            return 'unrecognised_not_active'
 
 class CreateSegmentFromRangeView(APIView):
     permission_classes = [IsAdminUser]
