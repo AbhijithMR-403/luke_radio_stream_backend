@@ -624,12 +624,12 @@ class AudioSegments(View):
                 base_end_dt = base_start_dt + timezone.timedelta(days=7)
             
             # Validate 7 days limit
-            time_diff = base_end_dt - base_start_dt
-            if time_diff > timezone.timedelta(days=7):
-                return JsonResponse({
-                    'success': False, 
-                    'error': 'Time range cannot exceed 7 days. Please adjust start_datetime and end_datetime parameters.'
-                }, status=400)
+            # time_diff = base_end_dt - base_start_dt
+            # if time_diff > timezone.timedelta(days=7):
+            #     return JsonResponse({
+            #         'success': False, 
+            #         'error': 'Time range cannot exceed 7 days. Please adjust start_datetime and end_datetime parameters.'
+            #     }, status=400)
             
             # Ensure we don't exceed 7 days limit
             max_end_dt = base_start_dt + timezone.timedelta(days=7)
