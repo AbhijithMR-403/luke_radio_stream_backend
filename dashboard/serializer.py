@@ -12,6 +12,7 @@ class DashboardStatsSerializer(serializers.Serializer):
     topTopicsRanking = serializers.ListField()
     sentimentData = serializers.ListField()
     dateRange = serializers.DictField(required=False)
+    bucketRankings = serializers.DictField(required=False)
 
 
 def _build_date_filter(start_date_or_datetime, end_date_or_datetime):
@@ -128,6 +129,130 @@ def _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id):
     
     avg_sentiment = int(sum(sentiment_scores) / len(sentiment_scores)) if sentiment_scores else None
     return avg_sentiment, sentiment_breakdown, analyses
+
+
+def _parse_bucket_prompt_line(line):
+    """
+    Parse a single bucket prompt line and return (primary, secondary) topic names.
+    Handles formats like:
+      - "FUN, 85, RELATIONSHIPS, 75"
+      - "MENTAL, 100, FAITH JOURNEY, 0"
+      - "RELATIONSHIPS, 90%, FUN, 85%"
+    
+    Requirements:
+      - Must have at least 4 comma-separated values to determine primary/secondary
+      - Ignores AI output prefixes like "Empty Result", "Output:", etc.
+      - Ignores undefined/invalid tokens such as "Undefined", "undefined", "0%" when paired with undefined topic
+    
+    Returns tuple of (primary_or_None, secondary_or_None)
+    """
+    if not line:
+        return None, None
+    text = line.strip()
+    if not text:
+        return None, None
+    
+    # Skip AI output prefixes
+    ai_prefixes = ["empty result", "output:", "result:", "analysis:", "response:"]
+    text_lower = text.lower()
+    for prefix in ai_prefixes:
+        if text_lower.startswith(prefix):
+            # Remove the prefix and any following newlines/whitespace
+            text = text[len(prefix):].strip()
+            if text.startswith('\n'):
+                text = text[1:].strip()
+            break
+    
+    # Normalize separators to comma
+    parts = [p.strip() for p in text.replace("\t", ",").replace("|", ",").split(",")]
+    
+    # Must have at least 4 comma-separated values to determine primary/secondary
+    if len(parts) < 4:
+        return None, None
+    
+    def is_undefined(token):
+        if token is None:
+            return True
+        t = str(token).strip().lower()
+        return t in {"undefined", "undef", "none", "null", "na", "n/a", "", "empty result", "output"}
+    
+    def is_score(token):
+        if token is None:
+            return False
+        t = str(token).strip().replace("%", "")
+        if not t:
+            return False
+        try:
+            float(t)
+            return True
+        except ValueError:
+            return False
+    
+    # Extract first two valid topics (skip scores)
+    topics = []
+    i = 0
+    while i < len(parts) and len(topics) < 2:
+        token = parts[i]
+        # Skip empty tokens
+        if token == "":
+            i += 1
+            continue
+        # If looks like a score, skip and move on
+        if is_score(token):
+            i += 1
+            continue
+        # This token is a candidate topic; ensure it's not undefined
+        if not is_undefined(token):
+            topics.append(token)
+        # Advance; also skip next token if it's a score paired with this topic
+        if i + 1 < len(parts) and is_score(parts[i+1]):
+            i += 2
+        else:
+            i += 1
+    
+    # Return primary and secondary only if we found both
+    primary = topics[0] if len(topics) > 0 else None
+    secondary = topics[1] if len(topics) > 1 else None
+    return primary, secondary
+
+
+def _compute_bucket_rankings(analyses):
+    """
+    Compute primary and secondary bucket topic rankings from TranscriptionAnalysis.bucket_prompt
+    Ignores undefined entries and rows without valid topics.
+    Returns two sorted lists of dicts: [{ 'topic': TOPIC, 'count': N }, ...]
+    """
+    from collections import defaultdict
+    primary_counts = defaultdict(int)
+    secondary_counts = defaultdict(int)
+    for analysis in analyses:
+        bucket_text = getattr(analysis, 'bucket_prompt', None)
+        if not bucket_text:
+            continue
+        # Bucket text may contain multiple lines; process each line
+        lines = [l for l in str(bucket_text).split('\n') if l is not None]
+        if not lines:
+            lines = [str(bucket_text)]
+        found_primary = None
+        found_secondary = None
+        for line in lines:
+            p, s = _parse_bucket_prompt_line(line)
+            # First valid pair wins for this analysis
+            if found_primary is None and p:
+                found_primary = p
+            if found_secondary is None and s:
+                found_secondary = s
+            if found_primary is not None and found_secondary is not None:
+                break
+        if found_primary:
+            primary_counts[found_primary.upper()] += 1
+        if found_secondary:
+            secondary_counts[found_secondary.upper()] += 1
+    def to_sorted_list(counter):
+        items = [{ 'topic': k, 'count': v } for k, v in counter.items()]
+        items.sort(key=lambda x: x['count'], reverse=True)
+        return items
+    return to_sorted_list(primary_counts), to_sorted_list(secondary_counts)
 
 
 def _get_topics_stats(analyses, show_all_topics=False):
@@ -501,6 +626,7 @@ def get_dashboard_stats(start_date_or_datetime, end_date_or_datetime, channel_id
     total_transcriptions = _get_transcription_stats(date_filter, channel_id)
     avg_sentiment, sentiment_breakdown, analyses = _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id)
     unique_topics_count, topics_distribution, top_topics_ranking, unique_topics = _get_topics_stats(analyses, show_all_topics)
+    bucket_primary_ranking, bucket_secondary_ranking = _compute_bucket_rankings(analyses)
     active_shifts, channel_details = _get_channel_stats(channel_id)
     sentiment_data = _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id)
     
@@ -521,6 +647,10 @@ def get_dashboard_stats(start_date_or_datetime, end_date_or_datetime, channel_id
         },
         'topicsDistribution': topics_distribution,
         'topTopicsRanking': top_topics_ranking,
+        'bucketRankings': {
+            'primary': bucket_primary_ranking,
+            'secondary': bucket_secondary_ranking
+        },
         'sentimentData': sentiment_data,
         'dateRange': {
             'startDateOrDateTime': start_date_or_datetime,
