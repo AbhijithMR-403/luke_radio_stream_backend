@@ -15,46 +15,40 @@ from .serializer import get_dashboard_stats, DashboardStatsSerializer, get_topic
 
 class DashboardStatsView(APIView):
     """
-    Class-based view for dashboard statistics with date range filtering
+    Class-based view for dashboard statistics with datetime range filtering
     """
     parser_classes = [JSONParser]
     
     def get(self, request):
         """
-        Get dashboard statistics with required date/datetime range filtering and channel filtering
+        Get dashboard statistics with required datetime range filtering and channel filtering
         
         Query Parameters:
-            start_date (str): Start date in YYYY-MM-DD format (optional, alternative to start_datetime)
-            end_date (str): End date in YYYY-MM-DD format (optional, alternative to end_datetime)
-            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS format (optional, alternative to start_date)
-            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS format (optional, alternative to end_date)
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             channel_id (int): Channel ID to filter by (required)
+            predefined_filter_id (int): Optional PredefinedFilter primary key to apply schedule filter (optional)
             show_all_topics (bool): If true, show all topics including inactive ones. If false or not provided, filter out inactive topics (optional)
         """
         try:
-            # Get required parameters from query parameters - support both date and datetime formats
-            start_date = request.query_params.get('start_date')
-            end_date = request.query_params.get('end_date')
+            # Get required parameters from query parameters - datetime only
             start_datetime = request.query_params.get('start_datetime')
             end_datetime = request.query_params.get('end_datetime')
             channel_id = request.query_params.get('channel_id')
+            predefined_filter_id = request.query_params.get('predefined_filter_id')
             show_all_topics = request.query_params.get('show_all_topics', 'false').lower() == 'true'
             
-            # Determine which format to use (prioritize datetime over date)
-            start_param = start_datetime if start_datetime else start_date
-            end_param = end_datetime if end_datetime else end_date
-            
             # Validate that all required parameters are provided
-            if not start_param or not end_param or not channel_id:
+            if not start_datetime or not end_datetime or not channel_id:
                 return Response(
-                    {'error': 'Either (start_date, end_date) or (start_datetime, end_datetime) and channel_id are all required parameters'}, 
+                    {'error': 'Parameters start_datetime, end_datetime, and channel_id are required'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
             # Validate that both dates/datetimes are provided together
-            if (start_param and not end_param) or (end_param and not start_param):
+            if (start_datetime and not end_datetime) or (end_datetime and not start_datetime):
                 return Response(
-                    {'error': 'Both start and end date/datetime must be provided together'}, 
+                    {'error': 'Both start_datetime and end_datetime must be provided together'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -67,8 +61,19 @@ class DashboardStatsView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            # Convert predefined_filter_id to int if provided
+            pf_id_int = None
+            if predefined_filter_id is not None:
+                try:
+                    pf_id_int = int(predefined_filter_id)
+                except ValueError:
+                    return Response(
+                        {'error': 'predefined_filter_id must be a valid integer'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
             # Get stats with required date/datetime filtering and channel filtering
-            stats = get_dashboard_stats(start_date_or_datetime=start_param, end_date_or_datetime=end_param, channel_id=channel_id, show_all_topics=show_all_topics)
+            stats = get_dashboard_stats(start_date_or_datetime=start_datetime, end_date_or_datetime=end_datetime, channel_id=channel_id, show_all_topics=show_all_topics, predefined_filter_id=pf_id_int)
             serializer = DashboardStatsSerializer(stats)
             return Response(serializer.data, status=status.HTTP_200_OK)
             
@@ -80,46 +85,38 @@ class DashboardStatsView(APIView):
 
 class ShiftAnalyticsView(APIView):
     """
-    Class-based view for shift analytics data with date range filtering
+    Class-based view for shift analytics data with datetime range filtering
     """
     parser_classes = [JSONParser]
     
     def get(self, request):
         """
-        Get shift analytics data with required date/datetime range filtering and channel filtering
+        Get shift analytics data with required datetime range filtering and channel filtering
         
         Query Parameters:
-            start_date (str): Start date in YYYY-MM-DD format (optional, alternative to start_datetime)
-            end_date (str): End date in YYYY-MM-DD format (optional, alternative to end_datetime)
-            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (optional, alternative to start_date)
-            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (optional, alternative to end_date)
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             channel_id (int): Channel ID to filter by (required)
             show_all_topics (bool): If true, show all topics including inactive ones. If false or not provided, filter out inactive topics (optional)
         """
         try:
-            # Get required parameters from query parameters - support both date and datetime formats
-            start_date = request.query_params.get('start_date')
-            end_date = request.query_params.get('end_date')
+            # Get required parameters from query parameters - datetime only
             start_datetime = request.query_params.get('start_datetime')
             end_datetime = request.query_params.get('end_datetime')
             channel_id = request.query_params.get('channel_id')
             show_all_topics = request.query_params.get('show_all_topics', 'false').lower() == 'true'
             
-            # Determine which format to use (prioritize datetime over date)
-            start_param = start_datetime if start_datetime else start_date
-            end_param = end_datetime if end_datetime else end_date
-            
             # Validate that all required parameters are provided
-            if not start_param or not end_param or not channel_id:
+            if not start_datetime or not end_datetime or not channel_id:
                 return Response(
-                    {'error': 'Either (start_date, end_date) or (start_datetime, end_datetime) and channel_id are all required parameters'}, 
+                    {'error': 'Parameters start_datetime, end_datetime, and channel_id are required'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
             # Validate that both dates/datetimes are provided together
-            if (start_param and not end_param) or (end_param and not start_param):
+            if (start_datetime and not end_datetime) or (end_datetime and not start_datetime):
                 return Response(
-                    {'error': 'Both start and end date/datetime must be provided together'}, 
+                    {'error': 'Both start_datetime and end_datetime must be provided together'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -134,7 +131,7 @@ class ShiftAnalyticsView(APIView):
             
             # Get shift analytics with required date/datetime filtering and channel filtering
             from .serializer import get_shift_analytics
-            shift_analytics = get_shift_analytics(start_date_or_datetime=start_param, end_date_or_datetime=end_param, channel_id=channel_id, show_all_topics=show_all_topics)
+            shift_analytics = get_shift_analytics(start_date_or_datetime=start_datetime, end_date_or_datetime=end_datetime, channel_id=channel_id, show_all_topics=show_all_topics)
             return Response(shift_analytics, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -156,18 +153,14 @@ class TopicAudioSegmentsView(APIView):
         
         Query Parameters:
             topic_name (str): Name of the general topic (required)
-            start_date (str): Start date in YYYY-MM-DD format (optional, alternative to start_datetime)
-            end_date (str): End date in YYYY-MM-DD format (optional, alternative to end_datetime)
-            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS format (optional, alternative to start_date)
-            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS format (optional, alternative to end_date)
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (optional)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (optional)
             channel_id (int): Channel ID to filter by (required)
             show_all_topics (bool): If true, show all topics including inactive ones. If false or not provided, filter out inactive topics (optional)
         """
         try:
             # Get required parameters from query parameters
             topic_name = request.query_params.get('topic_name')
-            start_date = request.query_params.get('start_date')
-            end_date = request.query_params.get('end_date')
             start_datetime = request.query_params.get('start_datetime')
             end_datetime = request.query_params.get('end_datetime')
             channel_id = request.query_params.get('channel_id')
@@ -185,16 +178,13 @@ class TopicAudioSegmentsView(APIView):
                     {'error': 'channel_id is a required parameter'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            # Determine which format to use (prioritize datetime over date)
-            start_param = start_datetime if start_datetime else start_date
-            end_param = end_datetime if end_datetime else end_date
             # Validate that both dates/datetimes are provided together if any are provided
-            if (start_param and not end_param) or (end_param and not start_param):
+            if (start_datetime and not end_datetime) or (end_datetime and not start_datetime):
                 return Response(
-                    {'error': 'Both start and end date/datetime must be provided together'}, 
+                    {'error': 'Both start_datetime and end_datetime must be provided together'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            print(start_date)
+            print(start_datetime)
             # Convert channel_id to int
             try:
                 channel_id = int(channel_id)
@@ -206,8 +196,8 @@ class TopicAudioSegmentsView(APIView):
             # Get audio segments for the topic
             audio_segments = get_topic_audio_segments(
                 topic_name=topic_name,
-                start_date_or_datetime=start_param,
-                end_date_or_datetime=end_param,
+                start_date_or_datetime=start_datetime,
+                end_date_or_datetime=end_datetime,
                 channel_id=channel_id,
                 show_all_topics=show_all_topics
             )

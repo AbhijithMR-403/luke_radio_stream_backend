@@ -4,6 +4,8 @@ from acr_admin.models import Channel
 from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from datetime import timedelta, datetime
+from zoneinfo import ZoneInfo
+from shift_analysis.utils import filter_segments_by_predefined_filter
 from collections import defaultdict
 
 class DashboardStatsSerializer(serializers.Serializer):
@@ -17,11 +19,11 @@ class DashboardStatsSerializer(serializers.Serializer):
 
 def _build_date_filter(start_date_or_datetime, end_date_or_datetime):
     """
-    Build datetime filter for database queries - accepts both date and datetime formats
+    Build datetime filter for database queries - accepts datetime formats only
     
     Args:
-        start_date_or_datetime (str): Start date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
-        end_date_or_datetime (str): End date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
+        start_date_or_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format
+        end_date_or_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format
     
     Returns:
         tuple: (date_filter, start_dt, end_dt) or (Q(), None, None)
@@ -32,24 +34,20 @@ def _build_date_filter(start_date_or_datetime, end_date_or_datetime):
     
     if start_date_or_datetime and end_date_or_datetime:
         try:
-            # Try to parse as datetime first - handle both T and space separators
+            # Parse datetime - handle both T and space separators; reject date-only
             if 'T' in start_date_or_datetime:
                 start_dt = timezone.make_aware(datetime.fromisoformat(start_date_or_datetime))
             elif ' ' in start_date_or_datetime:
-                # Handle space-separated datetime format (YYYY-MM-DD HH:MM:SS)
                 start_dt = timezone.make_aware(datetime.strptime(start_date_or_datetime, '%Y-%m-%d %H:%M:%S'))
             else:
-                # Parse as date (YYYY-MM-DD) and set to start of day
-                start_dt = timezone.make_aware(datetime.strptime(start_date_or_datetime, '%Y-%m-%d'))
+                raise ValueError('start_datetime must include time')
             
             if 'T' in end_date_or_datetime:
                 end_dt = timezone.make_aware(datetime.fromisoformat(end_date_or_datetime))
             elif ' ' in end_date_or_datetime:
-                # Handle space-separated datetime format (YYYY-MM-DD HH:MM:SS)
                 end_dt = timezone.make_aware(datetime.strptime(end_date_or_datetime, '%Y-%m-%d %H:%M:%S'))
             else:
-                # Parse as date (YYYY-MM-DD) and set to end of day
-                end_dt = timezone.make_aware(datetime.strptime(end_date_or_datetime, '%Y-%m-%d').replace(hour=23, minute=59, second=59))
+                raise ValueError('end_datetime must include time')
             
             date_filter = Q(created_at__range=(start_dt, end_dt))
         except ValueError as e:
@@ -61,7 +59,7 @@ def _build_date_filter(start_date_or_datetime, end_date_or_datetime):
     return date_filter, start_dt, end_dt
 
 
-def _get_transcription_stats(date_filter, channel_id):
+def _get_transcription_stats(date_filter, channel_id, filtered_ids_qs=None):
     """
     Get transcription statistics
     
@@ -78,10 +76,12 @@ def _get_transcription_stats(date_filter, channel_id):
     transcriptions_query = transcriptions_query.filter(
         Q(audio_segment__channel_id=channel_id)
     )
+    if filtered_ids_qs is not None:
+        transcriptions_query = transcriptions_query.filter(audio_segment__id__in=filtered_ids_qs)
     return transcriptions_query.count()
 
 
-def _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id):
+def _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id, filtered_ids_qs=None):
     """
     Get sentiment statistics and breakdown
     
@@ -104,6 +104,8 @@ def _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id):
     analyses_query = analyses_query.filter(
         Q(transcription_detail__audio_segment__channel_id=channel_id)
     )
+    if filtered_ids_qs is not None:
+        analyses_query = analyses_query.filter(transcription_detail__audio_segment__id__in=filtered_ids_qs)
     
     analyses = analyses_query.all()
     
@@ -384,7 +386,7 @@ def _get_channel_stats(channel_id):
     return active_shifts, channel_details
 
 
-def _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id):
+def _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id, filtered_ids_qs=None):
     """
     Get sentiment data over time
     
@@ -412,6 +414,8 @@ def _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id):
             ).filter(
                 Q(transcription_detail__audio_segment__channel_id=channel_id)
             )
+            if filtered_ids_qs is not None:
+                day_analyses = day_analyses.filter(transcription_detail__audio_segment__id__in=filtered_ids_qs)
             
             day_sentiment_scores = []
             for analysis in day_analyses:
@@ -478,6 +482,7 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics=Fals
     transcription_count_by_shift = []
     top_topics_by_shift = {}
     
+
     for shift_key, shift_info in shifts.items():
         # Get transcriptions for this shift
         shift_transcriptions = []
@@ -606,29 +611,39 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics=Fals
     }
 
 
-def get_dashboard_stats(start_date_or_datetime, end_date_or_datetime, channel_id, show_all_topics=False):
+def get_dashboard_stats(start_date_or_datetime, end_date_or_datetime, channel_id, show_all_topics=False, predefined_filter_id=None):
     """
-    Main function to get all dashboard statistics with required date/datetime filtering and channel filtering
+    Main function to get all dashboard statistics with required datetime filtering and channel filtering
     
     Args:
-        start_date_or_datetime (str): Start date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
-        end_date_or_datetime (str): End date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
+        start_date_or_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format
+        end_date_or_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format
         channel_id (int): Channel ID to filter by
         show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
+        predefined_filter_id (int): Optional PredefinedFilter primary key to apply schedule filter
     
     Returns:
         dict: Complete dashboard statistics
     """
     # Build date/datetime filter
     date_filter, start_dt, end_dt = _build_date_filter(start_date_or_datetime, end_date_or_datetime)
+    if start_dt is None or end_dt is None:
+        raise ValueError("Failed to parse datetime parameters. Use YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS")
+    
+    # Apply predefined filter if provided
+    filtered_ids_qs = None
+    if predefined_filter_id is not None:
+        utc_start = start_dt.astimezone(ZoneInfo("UTC"))
+        utc_end = end_dt.astimezone(ZoneInfo("UTC"))
+        filtered_ids_qs = filter_segments_by_predefined_filter(predefined_filter_id, utc_start, utc_end).values('id')
     
     # Get all statistics using separate functions
-    total_transcriptions = _get_transcription_stats(date_filter, channel_id)
-    avg_sentiment, sentiment_breakdown, analyses = _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id)
+    total_transcriptions = _get_transcription_stats(date_filter, channel_id, filtered_ids_qs)
+    avg_sentiment, sentiment_breakdown, analyses = _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id, filtered_ids_qs)
     unique_topics_count, topics_distribution, top_topics_ranking, unique_topics = _get_topics_stats(analyses, show_all_topics)
     bucket_primary_ranking, bucket_secondary_ranking = _compute_bucket_rankings(analyses)
     active_shifts, channel_details = _get_channel_stats(channel_id)
-    sentiment_data = _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id)
+    sentiment_data = _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id, filtered_ids_qs)
     
     # Prepare response
     response = {
@@ -669,8 +684,8 @@ def get_shift_analytics(start_date_or_datetime, end_date_or_datetime, channel_id
     Main function to get shift analytics data
     
     Args:
-        start_date_or_datetime (str): Start date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
-        end_date_or_datetime (str): End date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format
+        start_date_or_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format
+        end_date_or_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format
         channel_id (int): Channel ID to filter by
         show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
     
@@ -708,8 +723,8 @@ def get_topic_audio_segments(topic_name, start_date_or_datetime=None, end_date_o
     
     Args:
         topic_name (str): Name of the general topic
-        start_date_or_datetime (str): Start date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format (optional)
-        end_date_or_datetime (str): End date/datetime in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format (optional)
+        start_date_or_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (optional)
+        end_date_or_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (optional)
         channel_id (int): Channel ID to filter by (optional)
         show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
     
