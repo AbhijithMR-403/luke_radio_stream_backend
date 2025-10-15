@@ -331,14 +331,36 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                 page_end = base_end_dt
             
             # Count segments for this page
-            page_filter = {
-                'channel': channel,
-                'start_time__gte': page_start,
-                'start_time__lt': page_end
-            }
+            if valid_windows:
+                # Use shift-based filtering
+                from django.db import models
+                time_conditions = models.Q()
+                for window_start, window_end in valid_windows:
+                    # Check if this window intersects with the current page
+                    intersection_start = max(page_start, window_start)
+                    intersection_end = min(page_end, window_end)
+                    
+                    if intersection_start < intersection_end:
+                        time_conditions |= models.Q(
+                            start_time__gte=intersection_start,
+                            start_time__lt=intersection_end
+                        )
+                
+                page_filter = {
+                    'channel': channel,
+                }
+                page_query = AudioSegmentsModel.objects.filter(**page_filter)
+                if time_conditions:
+                    page_query = page_query.filter(time_conditions)
+            else:
+                page_filter = {
+                    'channel': channel,
+                    'start_time__gte': page_start,
+                    'start_time__lt': page_end
+                }
+                page_query = AudioSegmentsModel.objects.filter(**page_filter)
             
             # Apply search filters if they exist
-            page_query = AudioSegmentsModel.objects.filter(**page_filter)
             if search_text and search_in:
                 page_query = apply_search_filters(page_query, search_text, search_in)
             
