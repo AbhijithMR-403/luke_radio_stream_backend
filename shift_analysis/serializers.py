@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from zoneinfo import ZoneInfo
 from django.db import IntegrityError, transaction
 from .models import Shift, PredefinedFilter, FilterSchedule
 from acr_admin.models import Channel
@@ -12,12 +13,24 @@ class ShiftSerializer(serializers.ModelSerializer):
         model = Shift
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
+        extra_kwargs = {
+            'timezone': {'required': True}
+        }
 
     def validate(self, data):
-        """Validate that start_time is before end_time"""
+        """Allow overnight ranges; disallow identical start/end (zero-length)."""
         if data.get('start_time') and data.get('end_time'):
-            if data['start_time'] >= data['end_time']:
-                raise serializers.ValidationError("Start time must be before end time")
+            if data['start_time'] == data['end_time']:
+                raise serializers.ValidationError("Start and end time cannot be the same")
+        # Validate timezone if present
+        tz = data.get('timezone')
+        if tz is not None:
+            try:
+                ZoneInfo(tz)
+            except Exception:
+                raise serializers.ValidationError({
+                    'timezone': "Invalid timezone. Provide a valid IANA timezone like 'America/New_York'"
+                })
         return data
 
 
@@ -36,10 +49,10 @@ class FilterScheduleSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, data):
-        """Validate that start_time is before end_time"""
+        """Allow overnight ranges; disallow identical start/end (zero-length)."""
         if data.get('start_time') and data.get('end_time'):
-            if data['start_time'] >= data['end_time']:
-                raise serializers.ValidationError("Start time must be before end time")
+            if data['start_time'] == data['end_time']:
+                raise serializers.ValidationError("Start and end time cannot be the same")
         return data
     
     def validate_day_of_week(self, value):
@@ -62,10 +75,24 @@ class PredefinedFilterSerializer(serializers.ModelSerializer):
         model = PredefinedFilter
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
+        extra_kwargs = {
+            'timezone': {'required': True}
+        }
     
     def get_schedule_count(self, obj):
         """Get the number of schedules for this filter"""
         return obj.schedules.count()
+
+    def validate(self, data):
+        tz = data.get('timezone')
+        if tz is not None:
+            try:
+                ZoneInfo(tz)
+            except Exception:
+                raise serializers.ValidationError({
+                    'timezone': "Invalid timezone. Provide a valid IANA timezone like 'Europe/London'"
+                })
+        return data
 
 
 class PredefinedFilterWithSchedulesSerializer(serializers.ModelSerializer):
@@ -79,6 +106,9 @@ class PredefinedFilterWithSchedulesSerializer(serializers.ModelSerializer):
         model = PredefinedFilter
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
+        extra_kwargs = {
+            'timezone': {'required': True}
+        }
     
     def create(self, validated_data):
         """Create PredefinedFilter with schedules"""
@@ -117,6 +147,16 @@ class PredefinedFilterWithSchedulesSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """Update PredefinedFilter with schedules"""
         schedules_data = validated_data.pop('schedules', [])
+
+        # Validate timezone if present
+        tz = validated_data.get('timezone')
+        if tz is not None:
+            try:
+                ZoneInfo(tz)
+            except Exception:
+                raise serializers.ValidationError({
+                    'timezone': "Invalid timezone. Provide a valid IANA timezone like 'Asia/Kolkata'"
+                })
 
         # Validate duplicate schedule entries within incoming payload
         seen_combinations = set()

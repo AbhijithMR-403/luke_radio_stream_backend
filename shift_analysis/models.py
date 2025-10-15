@@ -14,6 +14,7 @@ class Shift(models.Model):
     start_time = models.TimeField(help_text="Start time of the shift")
     end_time = models.TimeField(help_text="End time of the shift")
     description = models.TextField(blank=True, null=True, help_text="Optional description of the shift")
+    timezone = models.CharField(max_length=64, help_text="IANA timezone for interpreting start/end times")
     is_active = models.BooleanField(default=True, help_text="Whether this shift is currently active")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -27,9 +28,9 @@ class Shift(models.Model):
         return f"{self.name} ({self.start_time} - {self.end_time})"
 
     def clean(self):
-        """Validate that start_time is before end_time"""
-        if self.start_time and self.end_time and self.start_time >= self.end_time:
-            raise ValidationError("Start time must be before end time")
+        """Allow overnight windows; only forbid 24h zero-length if undesired"""
+        if self.start_time and self.end_time and self.start_time == self.end_time:
+            raise ValidationError("Start and end time cannot be the same")
 
 
 class PredefinedFilter(models.Model):
@@ -55,6 +56,7 @@ class PredefinedFilter(models.Model):
         related_name='predefined_filters',
         help_text="Channel this filter belongs to"
     )
+    timezone = models.CharField(max_length=64, help_text="IANA timezone for interpreting schedules")
     is_active = models.BooleanField(default=True, help_text="Whether this filter is currently active")
     created_by = models.ForeignKey(
         RadioUser,
@@ -118,6 +120,6 @@ class FilterSchedule(models.Model):
         return f"{self.predefined_filter.name} - {self.get_day_of_week_display()} ({self.start_time} - {self.end_time})"
 
     def clean(self):
-        """Validate that start_time is before end_time"""
-        if self.start_time and self.end_time and self.start_time >= self.end_time:
-            raise ValidationError("Start time must be before end time")
+        """Allow overnight windows; only forbid 24h zero-length if undesired"""
+        if self.start_time and self.end_time and self.start_time == self.end_time:
+            raise ValidationError("Start and end time cannot be the same")
