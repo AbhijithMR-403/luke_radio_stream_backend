@@ -49,7 +49,8 @@ INSTALLED_APPS = [
     "django_celery_beat",
     "dashboard",
     "segmentor",
-    "shift_analysis"
+    "shift_analysis",
+    "support",
 ]
 
 MIDDLEWARE = [
