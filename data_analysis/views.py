@@ -543,15 +543,29 @@ class AudioSegmentsWithTranscriptionView(View):
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
 
+# Import helper functions from the separate module
+from .audio_segments_helpers import (
+    validate_audio_segments_parameters,
+    get_channel_and_shift,
+    parse_datetime_parameters,
+    apply_shift_filtering,
+    calculate_pagination_window,
+    build_base_query,
+    apply_search_filters,
+    build_pagination_info
+)
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class AudioSegments(View):
     """
-    AudioSegments API with search functionality and pagination
+    AudioSegments API with search functionality, pagination, and shift filtering
     
     Query Parameters:
     - channel_id (required): Channel ID to filter segments
     - start_datetime (optional): Start datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
     - end_datetime (optional): End datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
+    - shift_id (optional): Shift ID to filter segments by shift time windows
     
     Pagination Parameters:
     - page (optional): Page number (default: 1)
@@ -563,251 +577,83 @@ class AudioSegments(View):
     
     Note: If search_text is provided, search_in must also be provided with a valid option.
     Maximum time range is 7 days from start_datetime.
+    When shift_id is provided, segments are filtered to only include those within the shift's time windows.
     
     Example URLs:
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&page=1&page_size=1
     - /api/audio-segments/?channel_id=1&search_text=music&search_in=transcription&page=2
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
+    - /api/audio-segments/?channel_id=1&shift_id=1&start_datetime=2025-01-01&page=1
     """
     def get(self, request, *args, **kwargs):
         try:
-            channel_pk = request.GET.get('channel_id')
-            start_datetime = request.GET.get('start_datetime')
-            end_datetime = request.GET.get('end_datetime')
+            # Step 1: Validate and extract parameters
+            params, error_response = validate_audio_segments_parameters(request)
+            if error_response:
+                return error_response
             
-            # Pagination parameters
-            page = int(request.GET.get('page', 1))
-            page_size = int(request.GET.get('page_size', 1))  # hours per page
+            # Step 2: Get channel and shift objects
+            channel, shift, error_response = get_channel_and_shift(params)
+            if error_response:
+                return error_response
             
-            # Search parameters
-            search_text = request.GET.get('search_text')
-            search_in = request.GET.get('search_in')
+            # Step 3: Parse datetime parameters
+            base_start_dt, base_end_dt, error_response = parse_datetime_parameters(params)
+            if error_response:
+                return error_response
             
-            if not channel_pk:
-                return JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
-            
-            # Validate search parameters
-            if search_text and not search_in:
-                return JsonResponse({'success': False, 'error': 'search_in parameter is required when search_text is provided'}, status=400)
-            
-            if search_in and not search_text:
-                return JsonResponse({'success': False, 'error': 'search_text parameter is required when search_in is provided'}, status=400)
-            
-            # Validate search_in options
-            valid_search_options = ['transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'title']
-            if search_in and search_in not in valid_search_options:
-                return JsonResponse({
-                    'success': False, 
-                    'error': f'Invalid search_in option. Must be one of: {", ".join(valid_search_options)}'
-                }, status=400)
-            
-            try:
-                channel = Channel.objects.get(id=channel_pk, is_deleted=False)
-            except Channel.DoesNotExist:
-                return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
-            
-            # Parse datetime parameters
-            if start_datetime:
-                base_start_dt = parse_dt(start_datetime)
-                if not base_start_dt:
-                    return JsonResponse({'success': False, 'error': 'Invalid start_datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS) or YYYY-MM-DD HH:MM:SS'}, status=400)
-            else:
-                # Default to today if no start_datetime provided
-                base_start_dt = timezone.make_aware(datetime.combine(timezone.now().date(), datetime.min.time()))
-            
-            if end_datetime:
-                base_end_dt = parse_dt(end_datetime)
-                if not base_end_dt:
-                    return JsonResponse({'success': False, 'error': 'Invalid end_datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS) or YYYY-MM-DD HH:MM:SS'}, status=400)
-            else:
-                # Default to 7 days from base_start_dt if no end_datetime provided
-                base_end_dt = base_start_dt + timezone.timedelta(days=7)
-            
-            # Validate 7 days limit
-            # time_diff = base_end_dt - base_start_dt
-            # if time_diff > timezone.timedelta(days=7):
-            #     return JsonResponse({
-            #         'success': False, 
-            #         'error': 'Time range cannot exceed 7 days. Please adjust start_datetime and end_datetime parameters.'
-            #     }, status=400)
-            
-            # Ensure we don't exceed 7 days limit
-            max_end_dt = base_start_dt + timezone.timedelta(days=7)
-            if base_end_dt > max_end_dt:
-                base_end_dt = max_end_dt
-            
-            # Calculate pagination time window
-            # If searching, collapse to a single page that spans the entire base range
-            if search_text and search_in:
-                current_page_start = base_start_dt
-                current_page_end = base_end_dt
-                page = 1  # force single page
-            else:
-                page_start_offset = (page - 1) * page_size
-                current_page_start = base_start_dt + timezone.timedelta(hours=page_start_offset)
-                current_page_end = current_page_start + timezone.timedelta(hours=page_size)
-                
-                # Ensure current page doesn't exceed the base_end_dt
-                if current_page_start >= base_end_dt:
+            # Step 4: Apply shift filtering if shift_id is provided
+            valid_windows = None
+            if shift:
+                valid_windows = apply_shift_filtering(base_start_dt, base_end_dt, shift)
+                if not valid_windows:
+                    # No valid time windows for this shift in the given range
                     return JsonResponse({
-                        'success': False, 
-                        'error': f'Page {page} is beyond the available time range'
-                    }, status=400)
-                
-                if current_page_end > base_end_dt:
-                    current_page_end = base_end_dt
+                        'success': True,
+                        'data': [],
+                        'has_data': False,
+                        'pagination': {
+                            'current_page': params['page'],
+                            'page_size': params['page_size'],
+                            'available_pages': [],
+                            'total_pages': 0,
+                            'time_range': {
+                                'start': base_start_dt.isoformat(),
+                                'end': base_end_dt.isoformat()
+                            }
+                        }
+                    })
             
-            # Build filter conditions for current page
-            filter_conditions = {
-                'channel': channel,
-                'start_time__gte': current_page_start,
-                'start_time__lt': current_page_end
-            }
-            
-            # Build the base query with optimized joins
-            base_query = AudioSegmentsModel.objects.filter(**filter_conditions).select_related(
-                'channel'
-            ).prefetch_related(
-                'transcription_detail__rev_job',
-                'transcription_detail__analysis'
+            # Step 5: Calculate pagination window
+            current_page_start, current_page_end, error_response = calculate_pagination_window(
+                base_start_dt, base_end_dt, params['page'], params['page_size'], 
+                params['search_text'], params['search_in'], valid_windows
             )
+            if error_response:
+                return error_response
             
-            # Apply search filters if search parameters are provided
-            if search_text and search_in:
-                if search_in == 'transcription':
-                    # Search in transcription text
-                    base_query = base_query.filter(
-                        transcription_detail__transcript__icontains=search_text
-                    )
-                elif search_in == 'general_topics':
-                    # Search in general topics
-                    base_query = base_query.filter(
-                        transcription_detail__analysis__general_topics__icontains=search_text
-                    )
-                elif search_in == 'iab_topics':
-                    # Search in IAB topics
-                    base_query = base_query.filter(
-                        transcription_detail__analysis__iab_topics__icontains=search_text
-                    )
-                elif search_in == 'bucket_prompt':
-                    # Search in bucket prompt
-                    base_query = base_query.filter(
-                        transcription_detail__analysis__bucket_prompt__icontains=search_text
-                    )
-                elif search_in == 'summary':
-                    # Search in summary
-                    base_query = base_query.filter(
-                        transcription_detail__analysis__summary__icontains=search_text
-                    )
-                elif search_in == 'title':
-                    # Search in title
-                    base_query = base_query.filter(
-                        title__icontains=search_text
-                    )
+            # Step 6: Build base query
+            base_query = build_base_query(channel, current_page_start, current_page_end, valid_windows)
             
-            # Execute the final query with ordering
+            # Step 7: Apply search filters
+            base_query = apply_search_filters(base_query, params['search_text'], params['search_in'])
+            
+            # Step 8: Execute the final query with ordering
             db_segments = base_query.order_by('start_time')
             
-            # Use serializer to convert database objects to response format
+            # Step 9: Use serializer to convert database objects to response format
             all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments)
             
-            # Build the complete response using serializer
+            # Step 10: Build the complete response using serializer
             response_data = AudioSegmentsSerializer.build_response(all_segments, channel)
             
-            # Generate pagination information
-            available_pages = []
-            total_hours = int((base_end_dt - base_start_dt).total_seconds() / 3600)
+            # Step 11: Build pagination information
+            response_data['pagination'] = build_pagination_info(
+                base_start_dt, base_end_dt, params['page'], params['page_size'],
+                params['search_text'], params['search_in'], channel, valid_windows
+            )
             
-            if search_text and search_in:
-                # Single page covering the entire range when searching
-                available_pages.append({
-                    'page': 1,
-                    'start_time': base_start_dt.isoformat(),
-                    'end_time': base_end_dt.isoformat(),
-                    'has_data': len(all_segments) > 0,
-                    'segment_count': len(all_segments)
-                })
-                computed_page_size = total_hours or 1
-            
-                response_data['pagination'] = {
-                    'current_page': 1,
-                    'page_size': computed_page_size,
-                    'available_pages': available_pages,
-                    'total_pages': 1,
-                    'time_range': {
-                        'start': base_start_dt.isoformat(),
-                        'end': base_end_dt.isoformat()
-                    }
-                }
-            else:
-                for hour_offset in range(0, total_hours, page_size):
-                    page_num = (hour_offset // page_size) + 1
-                    page_start = base_start_dt + timezone.timedelta(hours=hour_offset)
-                    page_end = page_start + timezone.timedelta(hours=page_size)
-                    
-                    # Ensure page_end doesn't exceed base_end_dt
-                    if page_end > base_end_dt:
-                        page_end = base_end_dt
-                    
-                    # Count segments for this page
-                    page_filter = {
-                        'channel': channel,
-                        'start_time__gte': page_start,
-                        'start_time__lt': page_end
-                    }
-                    
-                    # Apply search filters if they exist
-                    page_query = AudioSegmentsModel.objects.filter(**page_filter)
-                    if search_text and search_in:
-                        if search_in == 'transcription':
-                            page_query = page_query.filter(
-                                transcription_detail__transcript__icontains=search_text
-                            )
-                        elif search_in == 'general_topics':
-                            page_query = page_query.filter(
-                                transcription_detail__analysis__general_topics__icontains=search_text
-                            )
-                        elif search_in == 'iab_topics':
-                            page_query = page_query.filter(
-                                transcription_detail__analysis__iab_topics__icontains=search_text
-                            )
-                        elif search_in == 'bucket_prompt':
-                            page_query = page_query.filter(
-                                transcription_detail__analysis__bucket_prompt__icontains=search_text
-                            )
-                        elif search_in == 'summary':
-                            page_query = page_query.filter(
-                                transcription_detail__analysis__summary__icontains=search_text
-                            )
-                        elif search_in == 'title':
-                            page_query = page_query.filter(
-                                title__icontains=search_text
-                            )
-                    
-                    segment_count = page_query.count()
-                    has_data = segment_count > 0
-                    
-                    available_pages.append({
-                        'page': page_num,
-                        'start_time': page_start.isoformat(),
-                        'end_time': page_end.isoformat(),
-                        'has_data': has_data,
-                        'segment_count': segment_count
-                    })
-                
-                # Add pagination information to response (multi-page mode)
-                response_data['pagination'] = {
-                    'current_page': page,
-                    'page_size': page_size,
-                    'available_pages': available_pages,
-                    'total_pages': len(available_pages),
-                    'time_range': {
-                        'start': base_start_dt.isoformat(),
-                        'end': base_end_dt.isoformat()
-                    }
-                }
-            
-            # Add has_data flag for current page
+            # Step 12: Add has_data flag for current page
             current_page_has_data = len(all_segments) > 0
             response_data['has_data'] = current_page_has_data
             
