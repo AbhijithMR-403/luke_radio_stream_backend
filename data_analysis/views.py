@@ -637,19 +637,25 @@ class AudioSegments(View):
                 base_end_dt = max_end_dt
             
             # Calculate pagination time window
-            page_start_offset = (page - 1) * page_size
-            current_page_start = base_start_dt + timezone.timedelta(hours=page_start_offset)
-            current_page_end = current_page_start + timezone.timedelta(hours=page_size)
-            
-            # Ensure current page doesn't exceed the base_end_dt
-            if current_page_start >= base_end_dt:
-                return JsonResponse({
-                    'success': False, 
-                    'error': f'Page {page} is beyond the available time range'
-                }, status=400)
-            
-            if current_page_end > base_end_dt:
+            # If searching, collapse to a single page that spans the entire base range
+            if search_text and search_in:
+                current_page_start = base_start_dt
                 current_page_end = base_end_dt
+                page = 1  # force single page
+            else:
+                page_start_offset = (page - 1) * page_size
+                current_page_start = base_start_dt + timezone.timedelta(hours=page_start_offset)
+                current_page_end = current_page_start + timezone.timedelta(hours=page_size)
+                
+                # Ensure current page doesn't exceed the base_end_dt
+                if current_page_start >= base_end_dt:
+                    return JsonResponse({
+                        'success': False, 
+                        'error': f'Page {page} is beyond the available time range'
+                    }, status=400)
+                
+                if current_page_end > base_end_dt:
+                    current_page_end = base_end_dt
             
             # Build filter conditions for current page
             filter_conditions = {
@@ -712,72 +718,94 @@ class AudioSegments(View):
             available_pages = []
             total_hours = int((base_end_dt - base_start_dt).total_seconds() / 3600)
             
-            for hour_offset in range(0, total_hours, page_size):
-                page_num = (hour_offset // page_size) + 1
-                page_start = base_start_dt + timezone.timedelta(hours=hour_offset)
-                page_end = page_start + timezone.timedelta(hours=page_size)
-                
-                # Ensure page_end doesn't exceed base_end_dt
-                if page_end > base_end_dt:
-                    page_end = base_end_dt
-                
-                # Count segments for this page (without search filters for simplicity)
-                page_filter = {
-                    'channel': channel,
-                    'start_time__gte': page_start,
-                    'start_time__lt': page_end
-                }
-                
-                # Apply search filters if they exist
-                page_query = AudioSegmentsModel.objects.filter(**page_filter)
-                if search_text and search_in:
-                    if search_in == 'transcription':
-                        page_query = page_query.filter(
-                            transcription_detail__transcript__icontains=search_text
-                        )
-                    elif search_in == 'general_topics':
-                        page_query = page_query.filter(
-                            transcription_detail__analysis__general_topics__icontains=search_text
-                        )
-                    elif search_in == 'iab_topics':
-                        page_query = page_query.filter(
-                            transcription_detail__analysis__iab_topics__icontains=search_text
-                        )
-                    elif search_in == 'bucket_prompt':
-                        page_query = page_query.filter(
-                            transcription_detail__analysis__bucket_prompt__icontains=search_text
-                        )
-                    elif search_in == 'summary':
-                        page_query = page_query.filter(
-                            transcription_detail__analysis__summary__icontains=search_text
-                        )
-                    elif search_in == 'title':
-                        page_query = page_query.filter(
-                            title__icontains=search_text
-                        )
-                
-                segment_count = page_query.count()
-                has_data = segment_count > 0
-                
+            if search_text and search_in:
+                # Single page covering the entire range when searching
                 available_pages.append({
-                    'page': page_num,
-                    'start_time': page_start.isoformat(),
-                    'end_time': page_end.isoformat(),
-                    'has_data': has_data,
-                    'segment_count': segment_count
+                    'page': 1,
+                    'start_time': base_start_dt.isoformat(),
+                    'end_time': base_end_dt.isoformat(),
+                    'has_data': len(all_segments) > 0,
+                    'segment_count': len(all_segments)
                 })
+                computed_page_size = total_hours or 1
             
-            # Add pagination information to response
-            response_data['pagination'] = {
-                'current_page': page,
-                'page_size': page_size,
-                'available_pages': available_pages,
-                'total_pages': len(available_pages),
-                'time_range': {
-                    'start': base_start_dt.isoformat(),
-                    'end': base_end_dt.isoformat()
+                response_data['pagination'] = {
+                    'current_page': 1,
+                    'page_size': computed_page_size,
+                    'available_pages': available_pages,
+                    'total_pages': 1,
+                    'time_range': {
+                        'start': base_start_dt.isoformat(),
+                        'end': base_end_dt.isoformat()
+                    }
                 }
-            }
+            else:
+                for hour_offset in range(0, total_hours, page_size):
+                    page_num = (hour_offset // page_size) + 1
+                    page_start = base_start_dt + timezone.timedelta(hours=hour_offset)
+                    page_end = page_start + timezone.timedelta(hours=page_size)
+                    
+                    # Ensure page_end doesn't exceed base_end_dt
+                    if page_end > base_end_dt:
+                        page_end = base_end_dt
+                    
+                    # Count segments for this page
+                    page_filter = {
+                        'channel': channel,
+                        'start_time__gte': page_start,
+                        'start_time__lt': page_end
+                    }
+                    
+                    # Apply search filters if they exist
+                    page_query = AudioSegmentsModel.objects.filter(**page_filter)
+                    if search_text and search_in:
+                        if search_in == 'transcription':
+                            page_query = page_query.filter(
+                                transcription_detail__transcript__icontains=search_text
+                            )
+                        elif search_in == 'general_topics':
+                            page_query = page_query.filter(
+                                transcription_detail__analysis__general_topics__icontains=search_text
+                            )
+                        elif search_in == 'iab_topics':
+                            page_query = page_query.filter(
+                                transcription_detail__analysis__iab_topics__icontains=search_text
+                            )
+                        elif search_in == 'bucket_prompt':
+                            page_query = page_query.filter(
+                                transcription_detail__analysis__bucket_prompt__icontains=search_text
+                            )
+                        elif search_in == 'summary':
+                            page_query = page_query.filter(
+                                transcription_detail__analysis__summary__icontains=search_text
+                            )
+                        elif search_in == 'title':
+                            page_query = page_query.filter(
+                                title__icontains=search_text
+                            )
+                    
+                    segment_count = page_query.count()
+                    has_data = segment_count > 0
+                    
+                    available_pages.append({
+                        'page': page_num,
+                        'start_time': page_start.isoformat(),
+                        'end_time': page_end.isoformat(),
+                        'has_data': has_data,
+                        'segment_count': segment_count
+                    })
+                
+                # Add pagination information to response (multi-page mode)
+                response_data['pagination'] = {
+                    'current_page': page,
+                    'page_size': page_size,
+                    'available_pages': available_pages,
+                    'total_pages': len(available_pages),
+                    'time_range': {
+                        'start': base_start_dt.isoformat(),
+                        'end': base_end_dt.isoformat()
+                    }
+                }
             
             # Add has_data flag for current page
             current_page_has_data = len(all_segments) > 0
