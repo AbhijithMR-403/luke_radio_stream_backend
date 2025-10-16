@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError
 from acr_admin.models import GeneralSetting, Channel
+from zoneinfo import ZoneInfo
 
 class ValidationUtils:
     """Utility class for validating function calls and parameters"""
@@ -91,4 +92,16 @@ class ValidationUtils:
             raise ValidationError("URL must be a non-empty string")
         if not url.startswith(('http://', 'https://')):
             raise ValidationError("URL must start with http:// or https://")
-        return url 
+        return url
+    
+    @staticmethod
+    def validate_timezone(timezone_str: str):
+        """Validate that a timezone string is valid"""
+        if not timezone_str or not isinstance(timezone_str, str):
+            raise ValidationError("Timezone must be a non-empty string")
+        
+        try:
+            ZoneInfo(timezone_str)
+            return timezone_str
+        except Exception:
+            raise ValidationError(f"Invalid timezone: {timezone_str}") 

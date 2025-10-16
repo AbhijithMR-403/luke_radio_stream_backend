@@ -1,15 +1,31 @@
 from datetime import datetime, timedelta
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
 from encrypted_model_fields.fields import EncryptedTextField
+from zoneinfo import ZoneInfo
 
 # Create your models here.
 class Channel(models.Model):
     name = models.CharField(max_length=255, blank=True)  # Optional label
     channel_id = models.PositiveIntegerField()
     project_id = models.PositiveIntegerField()
+    timezone = models.CharField(
+        max_length=50,
+        default='UTC',
+        help_text='Timezone for the channel (e.g., America/New_York, Europe/London, UTC)'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)  # To soft delete
+
+    def clean(self):
+        """Validate the timezone field"""
+        super().clean()
+        if self.timezone:
+            try:
+                ZoneInfo(self.timezone)
+            except Exception:
+                raise ValidationError({'timezone': f'Invalid timezone: {self.timezone}'})
 
     def __str__(self):
         return f"Channel {self.channel_id} in Project {self.project_id}"

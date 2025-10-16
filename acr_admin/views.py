@@ -3,15 +3,15 @@ from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
+from django.core.exceptions import ValidationError
 
 from .models import Channel, GeneralSetting, WellnessBucket
+from .utils import ACRCloudUtils
+from .serializer import channel_to_dict, general_setting_to_dict, wellness_bucket_to_dict
+from config.validation import ValidationUtils
 import json
 from django.views import View
 from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
-from .serializer import channel_to_dict
-from .serializer import general_setting_to_dict, wellness_bucket_to_dict
-from .utils import ACRCloudUtils
 from django.conf import settings
 from urllib.parse import unquote
 
@@ -103,12 +103,21 @@ class ChannelCRUDView(View):
                 return JsonResponse({'success': False, **result}, status=status)
             # Use provided name if present, else use fetched name
             name = data.get('name', '') or result
+            
+            # Validate timezone if provided
+            timezone = data.get('timezone', 'UTC')
+            if timezone:
+                ValidationUtils.validate_timezone(timezone)
+            
             channel = Channel.objects.create(
                 name=name,
                 channel_id=data['channel_id'],
-                project_id=data['project_id']
+                project_id=data['project_id'],
+                timezone=timezone
             )
             return JsonResponse({'success': True, 'channel': channel_to_dict(channel)})
+        except ValidationError as ve:
+            return JsonResponse({'success': False, 'error': str(ve)}, status=400)
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
@@ -120,13 +129,32 @@ class ChannelCRUDView(View):
             if not channel_id:
                 return JsonResponse({'success': False, 'error': 'channel id required'}, status=400)
             channel = Channel.objects.get(id=channel_id, is_deleted=False)
-            for field in ['channel_id', 'name', 'project_id']:
-                if field in data:
-                    setattr(channel, field, data[field])
+            
+            # Validate timezone if provided
+            if 'timezone' in data:
+                ValidationUtils.validate_timezone(data['timezone'])
+            
+            # Handle name update - if empty, fetch from ACR Cloud API
+            if 'name' in data:
+                name = data['name']
+                if not name or name.strip() == '':
+                    # Fetch name from ACR Cloud API using existing channel's project_id and channel_id
+                    result, status = ACRCloudUtils.get_channel_name_by_id(channel.project_id, channel.channel_id)
+                    if status is not None:
+                        return JsonResponse({'success': False, **result}, status=status)
+                    name = result or channel.name  # Use fetched name or keep existing if API fails
+                setattr(channel, 'name', name)
+            
+            # Only allow updating name and timezone (not channel_id or project_id)
+            if 'timezone' in data:
+                setattr(channel, 'timezone', data['timezone'])
+            
             channel.save()
             return JsonResponse({'success': True, 'channel': channel_to_dict(channel)})
         except Channel.DoesNotExist:
             return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
+        except ValidationError as ve:
+            return JsonResponse({'success': False, 'error': str(ve)}, status=400)
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
 

@@ -7,6 +7,7 @@ def channel_to_dict(channel):
         'name': channel.name,
         'channel_id': channel.channel_id,
         'project_id': channel.project_id,
+        'timezone': channel.timezone,
         'created_at': channel.created_at.isoformat() if channel.created_at else None,
         'is_deleted': channel.is_deleted,
     }
