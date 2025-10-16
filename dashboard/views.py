@@ -141,6 +141,69 @@ class ShiftAnalyticsView(APIView):
             )
 
 
+class ShiftAnalyticsV2View(APIView):
+    """
+    Version 2 of shift analytics API using dynamic shifts from ShiftAnalytics and PredefinedFilter models
+    """
+    parser_classes = [JSONParser]
+    
+    def get(self, request):
+        """
+        Get shift analytics data using dynamic shifts and predefined filters
+        
+        Query Parameters:
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            channel_id (int): Channel ID to filter by (required)
+            show_all_topics (bool): If true, show all topics including inactive ones. If false or not provided, filter out inactive topics (optional)
+        """
+        try:
+            # Get required parameters from query parameters
+            start_datetime = request.query_params.get('start_datetime')
+            end_datetime = request.query_params.get('end_datetime')
+            channel_id = request.query_params.get('channel_id')
+            show_all_topics = request.query_params.get('show_all_topics', 'false').lower() == 'true'
+            
+            # Validate that all required parameters are provided
+            if not start_datetime or not end_datetime or not channel_id:
+                return Response(
+                    {'error': 'Parameters start_datetime, end_datetime, and channel_id are required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate that both dates/datetimes are provided together
+            if (start_datetime and not end_datetime) or (end_datetime and not start_datetime):
+                return Response(
+                    {'error': 'Both start_datetime and end_datetime must be provided together'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Convert channel_id to int
+            try:
+                channel_id = int(channel_id)
+            except ValueError:
+                return Response(
+                    {'error': 'channel_id must be a valid integer'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get shift analytics using dynamic shifts and predefined filters
+            from .serializer import get_shift_analytics_v2
+            shift_analytics = get_shift_analytics_v2(
+                start_date_or_datetime=start_datetime, 
+                end_date_or_datetime=end_datetime, 
+                channel_id=channel_id, 
+                show_all_topics=show_all_topics
+            )
+            return Response(shift_analytics, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch shift analytics v2: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class TopicAudioSegmentsView(APIView):
     """
     Class-based view to fetch all audio segments for a specific general topic

@@ -611,6 +611,183 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics=Fals
     }
 
 
+def _get_shift_analytics_data_v2(start_dt, end_dt, channel_id, show_all_topics=False):
+    """
+    Version 2: Get shift analytics data using dynamic shifts from ShiftAnalytics model only
+    
+    Args:
+        start_dt: Start datetime object
+        end_dt: End datetime object
+        channel_id (int): Channel ID to filter by
+        show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
+    
+    Returns:
+        dict: Shift analytics data using dynamic shifts only
+    """
+    if not start_dt or not end_dt:
+        return {}
+    
+    # Import required models
+    from shift_analysis.models import Shift
+    from shift_analysis.utils import filter_segments_by_shift
+    
+    # Get all active shifts
+    active_shifts = Shift.objects.filter(is_active=True).order_by('start_time')
+    
+    shift_data = {}
+    sentiment_by_shift = []
+    transcription_count_by_shift = []
+    top_topics_by_shift = {}
+    
+    # Process each active shift
+    for shift in active_shifts:
+        shift_key = shift.name.lower().replace(' ', '_')
+        
+        # Get audio segments for this shift using the shift filtering utility
+        try:
+            # Convert to UTC for the filtering function
+            utc_start = start_dt.astimezone(ZoneInfo("UTC"))
+            utc_end = end_dt.astimezone(ZoneInfo("UTC"))
+            
+            # Get segments filtered by this shift
+            filtered_segments = filter_segments_by_shift(shift.id, utc_start, utc_end)
+            
+            # Further filter by channel
+            shift_segments = filtered_segments.filter(channel_id=channel_id, is_active=True)
+            
+        except Exception as e:
+            # If shift filtering fails, fall back to time-based filtering
+            shift_segments = AudioSegments.objects.filter(
+                channel_id=channel_id,
+                start_time__range=(start_dt, end_dt),
+                is_active=True
+            )
+            
+            # Apply time-based filtering as fallback
+            filtered_segments = []
+            for segment in shift_segments:
+                segment_hour = segment.start_time.hour
+                shift_start_hour = shift.start_time.hour
+                shift_end_hour = shift.end_time.hour
+                
+                # Check if segment falls within this shift
+                if shift_start_hour <= shift_end_hour:
+                    # Regular shift within same day
+                    if shift_start_hour <= segment_hour < shift_end_hour:
+                        filtered_segments.append(segment)
+                else:
+                    # Overnight shift
+                    if segment_hour >= shift_start_hour or segment_hour < shift_end_hour:
+                        filtered_segments.append(segment)
+            
+            shift_segments = filtered_segments
+        
+        # Get transcription details and analysis for this shift
+        shift_sentiments = []
+        shift_topics = defaultdict(int)
+        
+        for segment in shift_segments:
+            try:
+                transcription_detail = segment.transcription_detail
+                if transcription_detail and hasattr(transcription_detail, 'analysis'):
+                    analysis = transcription_detail.analysis
+                    if analysis:
+                        # Get sentiment
+                        if analysis.sentiment:
+                            try:
+                                sentiment_value = int(analysis.sentiment.strip())
+                                shift_sentiments.append(sentiment_value)
+                            except (ValueError, TypeError):
+                                continue
+                        
+                        # Get topics
+                        if analysis.general_topics:
+                            topics_text = analysis.general_topics
+                            topic_lines = topics_text.split('\n')
+                            
+                            for line in topic_lines:
+                                line = line.strip()
+                                if line:
+                                    if line[0].isdigit() and '. ' in line:
+                                        topic = line.split('. ', 1)[1] if '. ' in line else line
+                                    else:
+                                        topic = line
+                                    
+                                    topic = topic.strip()
+                                    if topic:
+                                        shift_topics[topic] += 1
+            except:
+                continue
+        
+        # Filter out inactive topics if show_all_topics is False
+        if not show_all_topics:
+            # Get all inactive topic names from GeneralTopic model (case-insensitive)
+            inactive_topics = set()
+            for topic_name in GeneralTopic.objects.filter(is_active=False).values_list('topic_name', flat=True):
+                inactive_topics.add(topic_name.lower())
+            
+            # Filter shift_topics to exclude inactive topics
+            filtered_shift_topics = defaultdict(int)
+            for topic, count in shift_topics.items():
+                # Include topic if it's NOT in the inactive topics list (case-insensitive comparison)
+                if topic.lower() not in inactive_topics:
+                    filtered_shift_topics[topic] = count
+            
+            # Update shift_topics with filtered data
+            shift_topics = filtered_shift_topics
+        
+        # Calculate shift statistics
+        total_transcriptions = len(shift_segments)
+        avg_sentiment = round(sum(shift_sentiments) / len(shift_sentiments), 2) if shift_sentiments else 0.0
+        
+        # Get top topic for this shift
+        top_topic = 'N/A'
+        if shift_topics:
+            top_topic = max(shift_topics.items(), key=lambda x: x[1])[0]
+        
+        # Build shift data
+        shift_data[shift_key] = {
+            'title': f"{shift.name} ({shift.start_time} - {shift.end_time})",
+            'total': total_transcriptions,
+            'avgSentiment': avg_sentiment,
+            'topTopic': top_topic
+        }
+        
+        # Build sentiment by shift data
+        sentiment_by_shift.append({
+            'shift': f"{shift.name} ({shift.start_time} - {shift.end_time})",
+            'value': int(avg_sentiment) if avg_sentiment > 0 else 0
+        })
+        
+        # Build transcription count by shift data
+        colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
+        color_index = list(active_shifts).index(shift) % len(colors)
+        transcription_count_by_shift.append({
+            'shift': shift.name,
+            'count': total_transcriptions,
+            'color': colors[color_index]
+        })
+        
+        # Build top topics by shift data
+        top_topics_list = []
+        sorted_topics = sorted(shift_topics.items(), key=lambda x: x[1], reverse=True)[:3]
+        for rank, (topic, count) in enumerate(sorted_topics, 1):
+            top_topics_list.append({
+                'rank': rank,
+                'topic': topic,
+                'count': count
+            })
+        
+        top_topics_by_shift[shift_key] = top_topics_list
+    
+    return {
+        'shiftData': shift_data,
+        'sentimentByShift': sentiment_by_shift,
+        'transcriptionCountByShift': transcription_count_by_shift,
+        'topTopicsByShift': top_topics_by_shift
+    }
+
+
 def get_dashboard_stats(start_date_or_datetime, end_date_or_datetime, channel_id, show_all_topics=False, predefined_filter_id=None):
     """
     Main function to get all dashboard statistics with required datetime filtering and channel filtering
@@ -701,6 +878,44 @@ def get_shift_analytics(start_date_or_datetime, end_date_or_datetime, channel_id
     
     # Get shift analytics data
     shift_analytics = _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics)
+    
+    # Add metadata
+    response = {
+        **shift_analytics,
+        'dateRange': {
+            'startDateOrDateTime': start_date_or_datetime,
+            'endDateOrDateTime': end_date_or_datetime
+        },
+        'channelFilter': {
+            'channelId': channel_id
+        }
+    }
+    
+    return response
+
+
+def get_shift_analytics_v2(start_date_or_datetime, end_date_or_datetime, channel_id, show_all_topics=False):
+    """
+    Version 2: Get shift analytics data using dynamic shifts from ShiftAnalytics and PredefinedFilter models
+    
+    Args:
+        start_date_or_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format
+        end_date_or_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format
+        channel_id (int): Channel ID to filter by
+        show_all_topics (bool): If True, show all topics including inactive ones. If False, filter out inactive topics
+    
+    Returns:
+        dict: Complete shift analytics data using dynamic shifts
+    """
+    # Build date/datetime filter
+    date_filter, start_dt, end_dt = _build_date_filter(start_date_or_datetime, end_date_or_datetime)
+    
+    # Check if datetime parsing was successful
+    if start_dt is None or end_dt is None:
+        raise ValueError(f"Failed to parse datetime parameters. start_datetime: '{start_date_or_datetime}', end_datetime: '{end_date_or_datetime}'. Please use format YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, or YYYY-MM-DD HH:MM:SS")
+    
+    # Get shift analytics data using dynamic shifts
+    shift_analytics = _get_shift_analytics_data_v2(start_dt, end_dt, channel_id, show_all_topics)
     
     # Add metadata
     response = {
