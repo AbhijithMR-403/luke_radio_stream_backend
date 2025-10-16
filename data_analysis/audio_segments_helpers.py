@@ -194,14 +194,20 @@ def build_base_query(channel, current_page_start, current_page_end, valid_window
     """Build the base query with filter conditions"""
     # Build filter conditions for current page
     if valid_windows:
-        # Use shift-based filtering
+        # Use shift-based filtering, constrained to current page window
         from django.db import models
         time_conditions = models.Q()
+        had_intersection = False
         for window_start, window_end in valid_windows:
-            time_conditions |= models.Q(
-                start_time__gte=window_start,
-                start_time__lt=window_end
-            )
+            # Intersect each shift window with the current page window
+            intersection_start = max(current_page_start, window_start)
+            intersection_end = min(current_page_end, window_end)
+            if intersection_start < intersection_end:
+                had_intersection = True
+                time_conditions |= models.Q(
+                    start_time__gte=intersection_start,
+                    start_time__lt=intersection_end
+                )
         filter_conditions = {
             'channel': channel,
         }
@@ -221,7 +227,13 @@ def build_base_query(channel, current_page_start, current_page_end, valid_window
         'transcription_detail__analysis'
     )
     
-    if time_conditions:
+    if valid_windows:
+        if had_intersection:
+            base_query = base_query.filter(time_conditions)
+        else:
+            # No overlap between page window and any valid shift window → empty queryset
+            return base_query.none()
+    elif time_conditions:
         base_query = base_query.filter(time_conditions)
     
     return base_query
@@ -231,38 +243,48 @@ def apply_search_filters(base_query, search_text, search_in):
     """Apply search filters to the query"""
     if not search_text or not search_in:
         return base_query
+    filter_applied = False
     
     if search_in == 'transcription':
         # Search in transcription text
         base_query = base_query.filter(
             transcription_detail__transcript__icontains=search_text
         )
+        filter_applied = True
     elif search_in == 'general_topics':
         # Search in general topics
         base_query = base_query.filter(
             transcription_detail__analysis__general_topics__icontains=search_text
         )
+        filter_applied = True
     elif search_in == 'iab_topics':
         # Search in IAB topics
         base_query = base_query.filter(
             transcription_detail__analysis__iab_topics__icontains=search_text
         )
+        filter_applied = True
     elif search_in == 'bucket_prompt':
         # Search in bucket prompt
         base_query = base_query.filter(
             transcription_detail__analysis__bucket_prompt__icontains=search_text
         )
+        filter_applied = True
     elif search_in == 'summary':
         # Search in summary
         base_query = base_query.filter(
             transcription_detail__analysis__summary__icontains=search_text
         )
+        filter_applied = True
     elif search_in == 'title':
         # Search in title
         base_query = base_query.filter(
             title__icontains=search_text
         )
+        filter_applied = True
     
+    # Ensure no duplicate rows from JOINs when counting or listing
+    if filter_applied:
+        base_query = base_query.distinct()
     return base_query
 
 
@@ -299,7 +321,8 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
         
         # Apply search filters
         search_query = apply_search_filters(search_query, search_text, search_in)
-        segment_count = search_query.count()
+        # Count distinct segments to avoid duplicates due to JOINs
+        segment_count = search_query.distinct().count()
         
         available_pages.append({
             'page': 1,
@@ -335,12 +358,14 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                 # Use shift-based filtering
                 from django.db import models
                 time_conditions = models.Q()
+                had_intersection = False
                 for window_start, window_end in valid_windows:
                     # Check if this window intersects with the current page
                     intersection_start = max(page_start, window_start)
                     intersection_end = min(page_end, window_end)
                     
                     if intersection_start < intersection_end:
+                        had_intersection = True
                         time_conditions |= models.Q(
                             start_time__gte=intersection_start,
                             start_time__lt=intersection_end
@@ -350,8 +375,20 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                     'channel': channel,
                 }
                 page_query = AudioSegmentsModel.objects.filter(**page_filter)
-                if time_conditions:
+                if had_intersection:
                     page_query = page_query.filter(time_conditions)
+                else:
+                    # No overlap between this page window and any valid shift window
+                    segment_count = 0
+                    has_data = False
+                    available_pages.append({
+                        'page': page_num,
+                        'start_time': page_start.isoformat(),
+                        'end_time': page_end.isoformat(),
+                        'has_data': has_data,
+                        'segment_count': segment_count
+                    })
+                    continue
             else:
                 page_filter = {
                     'channel': channel,
@@ -364,7 +401,8 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
             if search_text and search_in:
                 page_query = apply_search_filters(page_query, search_text, search_in)
             
-            segment_count = page_query.count()
+            # Count distinct segments to avoid duplicates due to JOINs
+            segment_count = page_query.distinct().count()
             has_data = segment_count > 0
             
             available_pages.append({
