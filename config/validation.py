@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from acr_admin.models import GeneralSetting, Channel
 from zoneinfo import ZoneInfo
+from datetime import datetime
 
 class ValidationUtils:
     """Utility class for validating function calls and parameters"""
@@ -104,4 +105,52 @@ class ValidationUtils:
             ZoneInfo(timezone_str)
             return timezone_str
         except Exception:
-            raise ValidationError(f"Invalid timezone: {timezone_str}") 
+            raise ValidationError(f"Invalid timezone: {timezone_str}")
+
+
+class TimezoneUtils:
+    """Utility class for timezone conversion operations"""
+    
+    @staticmethod
+    def convert_to_channel_tz(dt, channel_tz=None):
+        """
+        Convert a datetime object to the specified channel timezone.
+        
+        Args:
+            dt: datetime object to convert (can be None)
+            channel_tz: timezone string (e.g., 'America/New_York') or None for UTC
+            
+        Returns:
+            str: ISO formatted datetime string in the specified timezone, or None if dt is None
+        """
+        if not dt:
+            return None
+            
+        if channel_tz:
+            try:
+                channel_zone = ZoneInfo(channel_tz)
+                return dt.astimezone(channel_zone).isoformat()
+            except Exception:
+                # If timezone is invalid, fall back to UTC
+                return dt.isoformat()
+        else:
+            return dt.isoformat()
+    
+    @staticmethod
+    def get_channel_timezone_zone(channel_tz):
+        """
+        Get a ZoneInfo object for the channel timezone.
+        
+        Args:
+            channel_tz: timezone string (e.g., 'America/New_York')
+            
+        Returns:
+            ZoneInfo: timezone object, or None if invalid
+        """
+        if not channel_tz:
+            return None
+            
+        try:
+            return ZoneInfo(channel_tz)
+        except Exception:
+            return None 

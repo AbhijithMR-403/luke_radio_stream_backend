@@ -290,6 +290,8 @@ def apply_search_filters(base_query, search_text, search_in):
 
 def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_text, search_in, channel, valid_windows=None):
     """Build pagination information for the response"""
+    from config.validation import TimezoneUtils
+    
     available_pages = []
     total_hours = int((base_end_dt - base_start_dt).total_seconds() / 3600)
     
@@ -326,8 +328,8 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
         
         available_pages.append({
             'page': 1,
-            'start_time': start_time.isoformat(),
-            'end_time': end_time.isoformat(),
+            'start_time': TimezoneUtils.convert_to_channel_tz(start_time, channel.timezone),
+            'end_time': TimezoneUtils.convert_to_channel_tz(end_time, channel.timezone),
             'has_data': segment_count > 0,
             'segment_count': segment_count
         })
@@ -339,8 +341,8 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
             'available_pages': available_pages,
             'total_pages': 1,
             'time_range': {
-                'start': start_time.isoformat(),
-                'end': end_time.isoformat()
+                'start': TimezoneUtils.convert_to_channel_tz(start_time, channel.timezone),
+                'end': TimezoneUtils.convert_to_channel_tz(end_time, channel.timezone)
             }
         }
     else:
@@ -383,8 +385,8 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                     has_data = False
                     available_pages.append({
                         'page': page_num,
-                        'start_time': page_start.isoformat(),
-                        'end_time': page_end.isoformat(),
+                        'start_time': TimezoneUtils.convert_to_channel_tz(page_start, channel.timezone),
+                        'end_time': TimezoneUtils.convert_to_channel_tz(page_end, channel.timezone),
                         'has_data': has_data,
                         'segment_count': segment_count
                     })
@@ -407,8 +409,8 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
             
             available_pages.append({
                 'page': page_num,
-                'start_time': page_start.isoformat(),
-                'end_time': page_end.isoformat(),
+                'start_time': TimezoneUtils.convert_to_channel_tz(page_start, channel.timezone),
+                'end_time': TimezoneUtils.convert_to_channel_tz(page_end, channel.timezone),
                 'has_data': has_data,
                 'segment_count': segment_count
             })
@@ -419,7 +421,7 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
             'available_pages': available_pages,
             'total_pages': len(available_pages),
             'time_range': {
-                'start': base_start_dt.isoformat(),
-                'end': base_end_dt.isoformat()
+                'start': TimezoneUtils.convert_to_channel_tz(base_start_dt, channel.timezone),
+                'end': TimezoneUtils.convert_to_channel_tz(base_end_dt, channel.timezone)
             }
         }

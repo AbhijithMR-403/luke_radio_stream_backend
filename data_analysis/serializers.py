@@ -69,18 +69,22 @@ class AudioSegmentsSerializer:
     """
     
     @staticmethod
-    def serialize_segments_data(db_segments):
+    def serialize_segments_data(db_segments, channel_tz=None):
         """
         Convert database segments to the expected response format.
         Uses prefetched data to avoid N+1 queries.
+        Converts datetime fields to channel timezone if provided.
         """
+        from config.validation import TimezoneUtils
+        
         all_segments = []
         
         for segment in db_segments:
+            
             segment_data = {
                 'id': segment.id,
-                'start_time': segment.start_time,
-                'end_time': segment.end_time,
+                'start_time': TimezoneUtils.convert_to_channel_tz(segment.start_time, channel_tz),
+                'end_time': TimezoneUtils.convert_to_channel_tz(segment.end_time, channel_tz),
                 'duration_seconds': segment.duration_seconds,
                 'is_recognized': segment.is_recognized,
                 'is_active': segment.is_active,
@@ -90,7 +94,7 @@ class AudioSegmentsSerializer:
                 'title_before': segment.title_before,
                 'title_after': segment.title_after,
                 'notes': segment.notes,
-                'created_at': segment.created_at.isoformat() if segment.created_at else None,
+                'created_at': TimezoneUtils.convert_to_channel_tz(segment.created_at, channel_tz),
                 'is_analysis_completed': segment.is_analysis_completed,
                 'is_audio_downloaded': segment.is_audio_downloaded,
                 'metadata_json': segment.metadata_json
@@ -102,7 +106,7 @@ class AudioSegmentsSerializer:
                 segment_data['transcription'] = {
                     'id': transcription_detail.id,
                     'transcript': transcription_detail.transcript,
-                    'created_at': transcription_detail.created_at.isoformat() if transcription_detail.created_at else None,
+                    'created_at': TimezoneUtils.convert_to_channel_tz(transcription_detail.created_at, channel_tz),
                     'rev_job_id': transcription_detail.rev_job.job_id if transcription_detail.rev_job else None
                 }
                 
@@ -116,7 +120,7 @@ class AudioSegmentsSerializer:
                         'general_topics': analysis.general_topics,
                         'iab_topics': analysis.iab_topics,
                         'bucket_prompt': analysis.bucket_prompt,
-                        'created_at': analysis.created_at.isoformat() if analysis.created_at else None
+                        'created_at': TimezoneUtils.convert_to_channel_tz(analysis.created_at, channel_tz)
                     }
                 except AttributeError:
                     # No analysis found (prefetched data doesn't have analysis)

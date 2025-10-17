@@ -608,6 +608,8 @@ class AudioSegments(View):
                 valid_windows = apply_shift_filtering(base_start_dt, base_end_dt, shift)
                 if not valid_windows:
                     # No valid time windows for this shift in the given range
+                    from config.validation import TimezoneUtils
+                    
                     return JsonResponse({
                         'success': True,
                         'data': [],
@@ -618,8 +620,8 @@ class AudioSegments(View):
                             'available_pages': [],
                             'total_pages': 0,
                             'time_range': {
-                                'start': base_start_dt.isoformat(),
-                                'end': base_end_dt.isoformat()
+                                'start': TimezoneUtils.convert_to_channel_tz(base_start_dt, channel.timezone),
+                                'end': TimezoneUtils.convert_to_channel_tz(base_end_dt, channel.timezone)
                             }
                         }
                     })
@@ -642,7 +644,7 @@ class AudioSegments(View):
             db_segments = base_query.order_by('start_time')
             
             # Step 9: Use serializer to convert database objects to response format
-            all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments)
+            all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments, channel.timezone)
             
             # Step 10: Build the complete response using serializer
             response_data = AudioSegmentsSerializer.build_response(all_segments, channel)
