@@ -8,29 +8,76 @@ from accounts.models import RadioUser
 
 class ShiftSerializer(serializers.ModelSerializer):
     """Serializer for Shift model"""
+    days_display = serializers.CharField(source='get_days_display', read_only=True)
+    channel_name = serializers.CharField(source='channel.name', read_only=True)
     
     class Meta:
         model = Shift
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
         extra_kwargs = {
-            'timezone': {'required': True}
+            'days': {'required': True},
+            'channel': {'required': True}
         }
+    
+    def is_valid(self, raise_exception=False):
+        """Override to convert non_field_errors to errors"""
+        is_valid = super().is_valid(raise_exception=False)
+        
+        # Convert non_field_errors to errors
+        if not is_valid and hasattr(self, '_errors') and 'non_field_errors' in self._errors:
+            non_field_errors = self._errors.pop('non_field_errors')
+            self._errors['errors'] = non_field_errors
+        
+        if not is_valid and raise_exception:
+            raise serializers.ValidationError(self._errors)
+        
+        return is_valid
 
     def validate(self, data):
-        """Allow overnight ranges; disallow identical start/end (zero-length)."""
+        """Validate shift data including days and times"""
+        # Validate start and end times
         if data.get('start_time') and data.get('end_time'):
             if data['start_time'] == data['end_time']:
                 raise serializers.ValidationError("Start and end time cannot be the same")
-        # Validate timezone if present
-        tz = data.get('timezone')
-        if tz is not None:
-            try:
-                ZoneInfo(tz)
-            except Exception:
-                raise serializers.ValidationError({
-                    'timezone': "Invalid timezone. Provide a valid IANA timezone like 'America/New_York'"
-                })
+        
+        # Validate days field
+        days = data.get('days')
+        if not days:
+            raise serializers.ValidationError("At least one day must be specified")
+        
+        # Check if all specified days are valid
+        valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        day_list = [day.strip().lower() for day in days.split(',')]
+        
+        for day in day_list:
+            if day not in valid_days:
+                raise serializers.ValidationError(f"Invalid day: {day}. Valid days are: {', '.join(valid_days)}")
+        
+        # Check for duplicate days
+        if len(day_list) != len(set(day_list)):
+            raise serializers.ValidationError("Duplicate days are not allowed")
+        
+         # Validate flag_seconds field
+        flag_seconds = data.get('flag_seconds')
+        if flag_seconds is not None and flag_seconds < 0:
+            raise serializers.ValidationError("flag_seconds must be a non-negative integer")
+        
+        # Validate unique name per channel
+        name = data.get('name')
+        channel = data.get('channel')
+        if name and channel:
+            # Check if a shift with the same name and channel already exists
+            existing_shift = Shift.objects.filter(name=name, channel=channel)
+            # If updating, exclude current instance
+            if self.instance:
+                existing_shift = existing_shift.exclude(pk=self.instance.pk)
+            
+            if existing_shift.exists():
+                raise serializers.ValidationError(
+                    f"A shift with the name '{name}' already exists for this channel."
+                )
+        
         return data
 
 

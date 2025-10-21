@@ -10,11 +10,36 @@ class Shift(models.Model):
     """
     Model to store shift information with start and end times.
     """
+    DAYS_OF_WEEK = [
+        ('monday', 'Monday'),
+        ('tuesday', 'Tuesday'),
+        ('wednesday', 'Wednesday'),
+        ('thursday', 'Thursday'),
+        ('friday', 'Friday'),
+        ('saturday', 'Saturday'),
+        ('sunday', 'Sunday'),
+    ]
+    
     name = models.CharField(max_length=100, help_text="Name of the shift (e.g., 'Morning Shift', 'Night Shift')")
+    channel = models.ForeignKey(
+        Channel,
+        on_delete=models.CASCADE,
+        related_name='shifts',
+        help_text="Channel this shift belongs to"
+    )
     start_time = models.TimeField(help_text="Start time of the shift")
     end_time = models.TimeField(help_text="End time of the shift")
+    days = models.CharField(
+        max_length=200, 
+        help_text="Comma-separated days of the week (e.g., 'monday,tuesday,wednesday')"
+    )
+    flag_seconds = models.PositiveIntegerField(
+        help_text="Duration of the shift in seconds, used to flag audio segment time data based on duration",
+        validators=[MinValueValidator(0)],
+        null=True,
+        blank=True
+    )
     description = models.TextField(blank=True, null=True, help_text="Optional description of the shift")
-    timezone = models.CharField(max_length=64, help_text="IANA timezone for interpreting start/end times")
     is_active = models.BooleanField(default=True, help_text="Whether this shift is currently active")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -23,14 +48,45 @@ class Shift(models.Model):
         ordering = ['start_time']
         verbose_name = "Shift"
         verbose_name_plural = "Shifts"
+        unique_together = ['name', 'channel']
 
     def __str__(self):
-        return f"{self.name} ({self.start_time} - {self.end_time})"
+        return f"{self.name} ({self.start_time} - {self.end_time}) on {self.get_days_display()}"
+
+    def get_days_display(self):
+        """Return a formatted string of the days"""
+        if not self.days:
+            return "No days specified"
+        day_list = [day.strip() for day in self.days.split(',')]
+        day_names = []
+        for day in day_list:
+            for day_code, day_name in self.DAYS_OF_WEEK:
+                if day.lower() == day_code:
+                    day_names.append(day_name)
+                    break
+        return ', '.join(day_names) if day_names else self.days
 
     def clean(self):
-        """Allow overnight windows; only forbid 24h zero-length if undesired"""
+        """Validate shift data including days and times"""
+        # Validate start and end times
         if self.start_time and self.end_time and self.start_time == self.end_time:
             raise ValidationError("Start and end time cannot be the same")
+        
+        # Validate days field
+        if not self.days:
+            raise ValidationError("At least one day must be specified")
+        
+        # Check if all specified days are valid
+        valid_days = [day_code for day_code, _ in self.DAYS_OF_WEEK]
+        day_list = [day.strip().lower() for day in self.days.split(',')]
+        
+        for day in day_list:
+            if day not in valid_days:
+                raise ValidationError(f"Invalid day: {day}. Valid days are: {', '.join(valid_days)}")
+        
+        # Check for duplicate days
+        if len(day_list) != len(set(day_list)):
+            raise ValidationError("Duplicate days are not allowed")
 
 
 class PredefinedFilter(models.Model):

@@ -23,6 +23,62 @@ class ShiftListCreateView(APIView):
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == 'true')
         
+        # Filter by channel if provided
+        channel_id = request.query_params.get('channel')
+        if channel_id:
+            try:
+                queryset = queryset.filter(channel_id=int(channel_id))
+            except ValueError:
+                return Response(
+                    {'error': 'channel must be a valid integer'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Filter by days if provided
+        days = request.query_params.get('days')
+        if days:
+            # Split comma-separated days and filter
+            day_list = [day.strip().lower() for day in days.split(',')]
+            # Use __icontains to match any of the specified days
+            from django.db.models import Q
+            day_filters = Q()
+            for day in day_list:
+                day_filters |= Q(days__icontains=day)
+            queryset = queryset.filter(day_filters)
+        
+        # Filter by single day if provided (alternative to days parameter)
+        day = request.query_params.get('day')
+        if day:
+            # Validate day parameter
+            valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+            if day.lower() not in valid_days:
+                return Response(
+                    {'error': f"Invalid day. Valid days are: {', '.join(valid_days)}"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            queryset = queryset.filter(days__icontains=day.lower())
+        
+        # Filter by flag_seconds range if provided
+        min_flag_seconds = request.query_params.get('min_flag_seconds')
+        if min_flag_seconds:
+            try:
+                queryset = queryset.filter(flag_seconds__gte=int(min_flag_seconds))
+            except ValueError:
+                return Response(
+                    {'error': 'min_flag_seconds must be a valid integer'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        max_flag_seconds = request.query_params.get('max_flag_seconds')
+        if max_flag_seconds:
+            try:
+                queryset = queryset.filter(flag_seconds__lte=int(max_flag_seconds))
+            except ValueError:
+                return Response(
+                    {'error': 'max_flag_seconds must be a valid integer'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
         # Search by name or description
         search = request.query_params.get('search')
         if search:
