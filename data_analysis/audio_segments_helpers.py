@@ -123,8 +123,8 @@ def apply_shift_filtering(base_start_dt, base_end_dt, shift):
     from shift_analysis.utils import _build_utc_windows_for_local_day
     from zoneinfo import ZoneInfo
     
-    # Get shift timezone
-    shift_tz = ZoneInfo(shift.timezone)
+    # Get channel timezone (shift no longer has its own timezone)
+    shift_tz = ZoneInfo(shift.channel.timezone)
     
     # Convert base times to shift timezone for comparison
     base_start_local = base_start_dt.astimezone(shift_tz)

@@ -43,7 +43,7 @@ def _build_q_for_windows(windows_utc):
 def filter_segments_by_shift(shift_id: int, utc_start: datetime, utc_end: datetime) -> QuerySet:
     """
     Return queryset of AudioSegments overlapping the shift windows between utc_start and utc_end.
-    shift.times are treated as wall-clock in shift.timezone for every day in the range.
+    shift.times are treated as wall-clock in shift.channel.timezone for every day in the range.
     """
     if utc_start.tzinfo is None or utc_end.tzinfo is None:
         raise ValueError("utc_start and utc_end must be timezone-aware in UTC")
@@ -51,7 +51,7 @@ def filter_segments_by_shift(shift_id: int, utc_start: datetime, utc_end: dateti
         return AudioSegments.objects.none()
 
     shift = Shift.objects.get(pk=shift_id)
-    tz = ZoneInfo(shift.timezone or "UTC")
+    tz = ZoneInfo(shift.channel.timezone or "UTC")
 
     # Iterate days in local tz covering the UTC range
     start_local = utc_start.astimezone(tz)
