@@ -43,6 +43,7 @@ class TitleMappingRuleSerializer(serializers.ModelSerializer):
             "category",
             "category_detail",
             "before_title",
+            "after_title",
             "skip_transcription",
             "is_active",
             "notes",

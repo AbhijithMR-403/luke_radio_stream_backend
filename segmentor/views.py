@@ -27,8 +27,8 @@ class TitleMappingRuleListCreateView(generics.ListCreateAPIView):
     queryset = TitleMappingRule.objects.select_related("category", "category__channel").all()
     serializer_class = TitleMappingRuleSerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["before_title", "notes", "category__name", "category__channel__name"]
-    ordering_fields = ["updated_at", "created_at", "before_title"]
+    search_fields = ["before_title", "after_title", "notes", "category__name", "category__channel__name"]
+    ordering_fields = ["updated_at", "created_at", "before_title", "after_title"]
     ordering = ["-updated_at"]
 
 

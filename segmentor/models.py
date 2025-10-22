@@ -40,6 +40,12 @@ class TitleMappingRule(models.Model):
         help_text="String or pattern to match against segment title_before",
         db_index=True,
     )
+    after_title = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="String or pattern to match against segment title_after",
+        db_index=True,
+    )
     skip_transcription = models.BooleanField(
         default=True,
         help_text="If true, segments matching this rule are excluded from transcription",
@@ -58,6 +64,8 @@ class TitleMappingRule(models.Model):
         ]
 
     def __str__(self):
+        if self.after_title:
+            return f"{self.category.name}: {self.before_title} -> {self.after_title}"
         return f"{self.category.name}: {self.before_title}"
 
     def clean(self):
