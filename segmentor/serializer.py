@@ -32,6 +32,25 @@ class AudioUnrecognizedCategorySerializer(serializers.ModelSerializer):
             }
         return None
 
+    def validate(self, data):
+        """Validate that name is unique per channel"""
+        name = data.get('name')
+        channel = data.get('channel')
+        
+        if name and channel:
+            # Check if another category with the same name exists for the same channel
+            existing_category = AudioUnrecognizedCategory.objects.filter(
+                name=name,
+                channel=channel
+            ).exclude(pk=self.instance.pk if self.instance else None)
+            
+            if existing_category.exists():
+                raise serializers.ValidationError({
+                    'name': f'A category with this name already exists for channel "{channel.name or channel.channel_id}".'
+                })
+        
+        return data
+
 
 class TitleMappingRuleSerializer(serializers.ModelSerializer):
     category_detail = AudioUnrecognizedCategorySerializer(source="category", read_only=True)

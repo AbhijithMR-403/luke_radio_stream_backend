@@ -7,7 +7,7 @@ from acr_admin.models import Channel
 class AudioUnrecognizedCategory(models.Model):
     """Admin-managed group title for unrecognized audio segments (e.g., News, Traffic Report)."""
 
-    name = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="unrecognized_categories")
     is_active = models.BooleanField(default=True)
@@ -18,9 +18,31 @@ class AudioUnrecognizedCategory(models.Model):
         verbose_name = "Unrecognized Audio Category"
         verbose_name_plural = "Unrecognized Audio Categories"
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['name', 'channel'],
+                name='unique_category_name_per_channel'
+            )
+        ]
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        """Ensure name is unique per channel."""
+        super().clean()
+        if self.name and self.channel:
+            qs = AudioUnrecognizedCategory.objects.filter(
+                name=self.name,
+                channel=self.channel,
+            )
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                from django.core.exceptions import ValidationError
+                raise ValidationError({
+                    'name': 'A category with this name already exists for this channel.'
+                })
 
 
 class TitleMappingRule(models.Model):
