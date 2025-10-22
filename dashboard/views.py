@@ -1,13 +1,7 @@
-import json
-from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import JSONParser
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
-from django.views import View
-from django.http import JsonResponse
 from data_analysis.models import GeneralTopic
 from .serializer import get_dashboard_stats, DashboardStatsSerializer, get_topic_audio_segments
 
@@ -276,15 +270,15 @@ class TopicAudioSegmentsView(APIView):
 
 
 
-@method_decorator(csrf_exempt, name='dispatch')
-class GeneralTopicsManagementView(View):
-    """API to manage general topics (add, update status, list)"""
+class GeneralTopicsManagementView(APIView):
+    """API to manage general topics (add, update status, list, delete)"""
+    parser_classes = [JSONParser]
     
     def get(self, request, *args, **kwargs):
         """Get all general topics with their status"""
         try:
             # Get query parameters
-            status_filter = request.GET.get('status')  # 'active', 'inactive', or None for all
+            status_filter = request.query_params.get('status')  # 'active', 'inactive', or None for all
             
             # Build query with optimized filtering
             topics_query = GeneralTopic.objects.all()
@@ -305,7 +299,7 @@ class GeneralTopicsManagementView(View):
                     'updated_at': topic.updated_at.isoformat()
                 })
             
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'data': {
                     'topics': topics_data,
@@ -316,12 +310,12 @@ class GeneralTopicsManagementView(View):
             })
             
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def post(self, request, *args, **kwargs):
         """Add or update topics (upsert functionality) - accepts list of topics"""
         try:
-            data = json.loads(request.body)
+            data = request.data
             
             # Debug: Print the data type and content
             print(f"Data type: {type(data)}")
@@ -329,10 +323,10 @@ class GeneralTopicsManagementView(View):
             
             # Check if data is a list
             if not isinstance(data, list):
-                return JsonResponse({'success': False, 'error': 'Request body must be a list of topics'}, status=400)
+                return Response({'success': False, 'error': 'Request body must be a list of topics'}, status=status.HTTP_400_BAD_REQUEST)
             
             if not data:
-                return JsonResponse({'success': False, 'error': 'Topics list cannot be empty'}, status=400)
+                return Response({'success': False, 'error': 'Topics list cannot be empty'}, status=status.HTTP_400_BAD_REQUEST)
             
             results = []
             created_count = 0
@@ -342,13 +336,13 @@ class GeneralTopicsManagementView(View):
                 print(f"Processing topic {i}: {topic_data}, type: {type(topic_data)}")
                 
                 if not isinstance(topic_data, dict):
-                    return JsonResponse({'success': False, 'error': f'Topic at index {i} must be an object, got {type(topic_data)}'}, status=400)
+                    return Response({'success': False, 'error': f'Topic at index {i} must be an object, got {type(topic_data)}'}, status=status.HTTP_400_BAD_REQUEST)
                 
                 topic_name = topic_data.get('topic_name')
                 is_active = topic_data.get('is_active', True)
                 
                 if not topic_name:
-                    return JsonResponse({'success': False, 'error': 'topic_name is required for each topic'}, status=400)
+                    return Response({'success': False, 'error': 'topic_name is required for each topic'}, status=status.HTTP_400_BAD_REQUEST)
                 
                 # Check if topic already exists
                 existing_topic = GeneralTopic.objects.filter(topic_name__iexact=topic_name).first()
@@ -378,7 +372,7 @@ class GeneralTopicsManagementView(View):
                     'action': action
                 })
             
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'message': f'Processed {len(results)} topics: {created_count} created, {updated_count} updated',
                 'summary': {
@@ -389,11 +383,85 @@ class GeneralTopicsManagementView(View):
                 'data': results
             })
             
-        except json.JSONDecodeError as e:
-            return JsonResponse({'success': False, 'error': f'Invalid JSON data: {str(e)}'}, status=400)
         except Exception as e:
             import traceback
             print(f"Error in post method: {str(e)}")
             print(f"Traceback: {traceback.format_exc()}")
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def delete(self, request, *args, **kwargs):
+        """Delete one or more topics by ID or topic name"""
+        try:
+            data = request.data
+            
+            # Check if data is a list or single object
+            if isinstance(data, list):
+                topic_identifiers = data
+            elif isinstance(data, dict):
+                topic_identifiers = [data]
+            else:
+                return Response({'success': False, 'error': 'Request body must be a list of topic identifiers or a single identifier object'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if not topic_identifiers:
+                return Response({'success': False, 'error': 'Topic identifiers list cannot be empty'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            results = []
+            deleted_count = 0
+            not_found_count = 0
+            
+            for i, identifier in enumerate(topic_identifiers):
+                if not isinstance(identifier, dict):
+                    return Response({'success': False, 'error': f'Identifier at index {i} must be an object, got {type(identifier)}'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                topic_id = identifier.get('id')
+                topic_name = identifier.get('topic_name')
+                
+                if not topic_id and not topic_name:
+                    return Response({'success': False, 'error': 'Either id or topic_name is required for each identifier'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Find the topic by ID or name
+                topic = None
+                if topic_id:
+                    try:
+                        topic = GeneralTopic.objects.get(id=topic_id)
+                    except GeneralTopic.DoesNotExist:
+                        pass
+                elif topic_name:
+                    topic = GeneralTopic.objects.filter(topic_name__iexact=topic_name).first()
+                
+                if topic:
+                    topic_name = topic.topic_name
+                    topic_id = topic.id
+                    topic.delete()
+                    deleted_count += 1
+                    results.append({
+                        'id': topic_id,
+                        'topic_name': topic_name,
+                        'action': 'deleted'
+                    })
+                else:
+                    not_found_count += 1
+                    results.append({
+                        'id': topic_id,
+                        'topic_name': topic_name,
+                        'action': 'not_found',
+                        'error': 'Topic not found'
+                    })
+            
+            return Response({
+                'success': True,
+                'message': f'Processed {len(results)} topics: {deleted_count} deleted, {not_found_count} not found',
+                'summary': {
+                    'total_processed': len(results),
+                    'deleted': deleted_count,
+                    'not_found': not_found_count
+                },
+                'data': results
+            })
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in delete method: {str(e)}")
+            print(f"Traceback: {traceback.format_exc()}")
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
