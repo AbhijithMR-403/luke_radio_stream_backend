@@ -26,7 +26,7 @@ class LoginSerializer(serializers.Serializer):
 class ChannelSerializer(serializers.ModelSerializer):
     class Meta:
         model = Channel
-        fields = ['id', 'name', 'channel_id', 'project_id']
+        fields = ['id', 'name', 'channel_id', 'project_id', 'timezone']
 
 class UserChannelAssignmentSerializer(serializers.ModelSerializer):
     channel = ChannelSerializer()
