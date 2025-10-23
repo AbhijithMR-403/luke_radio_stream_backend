@@ -162,6 +162,8 @@ def apply_shift_filtering(base_start_dt, base_end_dt, shift):
 
 def calculate_pagination_window(base_start_dt, base_end_dt, page, page_size, search_text, search_in, valid_windows=None):
     """Calculate the current page time window"""
+    import math
+    
     # If searching, collapse to a single page that spans the entire base range
     if search_text and search_in:
         if valid_windows:
@@ -172,14 +174,20 @@ def calculate_pagination_window(base_start_dt, base_end_dt, page, page_size, sea
             current_page_start = base_start_dt
             current_page_end = base_end_dt
         page = 1  # force single page
+        is_last_page = True  # Search always covers the full range
     else:
         page_start_offset = (page - 1) * page_size
         current_page_start = base_start_dt + timezone.timedelta(hours=page_start_offset)
         current_page_end = current_page_start + timezone.timedelta(hours=page_size)
         
+        # Calculate total pages needed to determine if this is the last page
+        total_hours = math.ceil((base_end_dt - base_start_dt).total_seconds() / 3600)
+        total_pages_needed = math.ceil(total_hours / page_size)
+        is_last_page = page == total_pages_needed
+        
         # Ensure current page doesn't exceed the base_end_dt
         if current_page_start >= base_end_dt:
-            return None, None, JsonResponse({
+            return None, None, None, JsonResponse({
                 'success': False, 
                 'error': f'Page {page} is beyond the available time range'
             }, status=400)
@@ -187,10 +195,10 @@ def calculate_pagination_window(base_start_dt, base_end_dt, page, page_size, sea
         if current_page_end > base_end_dt:
             current_page_end = base_end_dt
     
-    return current_page_start, current_page_end, None
+    return current_page_start, current_page_end, is_last_page, None
 
 
-def build_base_query(channel, current_page_start, current_page_end, valid_windows=None):
+def build_base_query(channel, current_page_start, current_page_end, valid_windows=None, is_last_page=False):
     """Build the base query with filter conditions"""
     # Build filter conditions for current page
     if valid_windows:
@@ -204,19 +212,34 @@ def build_base_query(channel, current_page_start, current_page_end, valid_window
             intersection_end = min(current_page_end, window_end)
             if intersection_start < intersection_end:
                 had_intersection = True
-                time_conditions |= models.Q(
-                    start_time__gte=intersection_start,
-                    start_time__lt=intersection_end
-                )
+                # Use inclusive end time for the last page to capture segments at exact end time
+                if is_last_page:
+                    time_conditions |= models.Q(
+                        start_time__gte=intersection_start,
+                        start_time__lte=intersection_end
+                    )
+                else:
+                    time_conditions |= models.Q(
+                        start_time__gte=intersection_start,
+                        start_time__lt=intersection_end
+                    )
         filter_conditions = {
             'channel': channel,
         }
     else:
-        filter_conditions = {
-            'channel': channel,
-            'start_time__gte': current_page_start,
-            'start_time__lt': current_page_end
-        }
+        # Use inclusive end time for the last page to capture segments at exact end time
+        if is_last_page:
+            filter_conditions = {
+                'channel': channel,
+                'start_time__gte': current_page_start,
+                'start_time__lte': current_page_end
+            }
+        else:
+            filter_conditions = {
+                'channel': channel,
+                'start_time__gte': current_page_start,
+                'start_time__lt': current_page_end
+            }
         time_conditions = None
     
     # Build the base query with optimized joins
@@ -290,10 +313,11 @@ def apply_search_filters(base_query, search_text, search_in):
 
 def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_text, search_in, channel, valid_windows=None):
     """Build pagination information for the response"""
+    import math
     from config.validation import TimezoneUtils
     
     available_pages = []
-    total_hours = int((base_end_dt - base_start_dt).total_seconds() / 3600)
+    total_hours = math.ceil((base_end_dt - base_start_dt).total_seconds() / 3600)
     
     if search_text and search_in:
         # Single page covering the entire range when searching
@@ -346,12 +370,15 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
             }
         }
     else:
-        for hour_offset in range(0, total_hours, page_size):
-            page_num = (hour_offset // page_size) + 1
+        # Calculate total pages needed to cover the entire time range
+        total_pages_needed = math.ceil(total_hours / page_size)
+        
+        for page_num in range(1, total_pages_needed + 1):
+            hour_offset = (page_num - 1) * page_size
             page_start = base_start_dt + timezone.timedelta(hours=hour_offset)
             page_end = page_start + timezone.timedelta(hours=page_size)
             
-            # Ensure page_end doesn't exceed base_end_dt
+            # For the last page, ensure we include all remaining time up to base_end_dt
             if page_end > base_end_dt:
                 page_end = base_end_dt
             
@@ -368,10 +395,18 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                     
                     if intersection_start < intersection_end:
                         had_intersection = True
-                        time_conditions |= models.Q(
-                            start_time__gte=intersection_start,
-                            start_time__lt=intersection_end
-                        )
+                        # Use inclusive end time for the last page to capture segments at exact end time
+                        is_last_page = page_num == total_pages_needed
+                        if is_last_page:
+                            time_conditions |= models.Q(
+                                start_time__gte=intersection_start,
+                                start_time__lte=intersection_end
+                            )
+                        else:
+                            time_conditions |= models.Q(
+                                start_time__gte=intersection_start,
+                                start_time__lt=intersection_end
+                            )
                 
                 page_filter = {
                     'channel': channel,
@@ -392,11 +427,20 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                     })
                     continue
             else:
-                page_filter = {
-                    'channel': channel,
-                    'start_time__gte': page_start,
-                    'start_time__lt': page_end
-                }
+                # Use inclusive end time for the last page to capture segments at exact end time
+                is_last_page = page_num == total_pages_needed
+                if is_last_page:
+                    page_filter = {
+                        'channel': channel,
+                        'start_time__gte': page_start,
+                        'start_time__lte': page_end
+                    }
+                else:
+                    page_filter = {
+                        'channel': channel,
+                        'start_time__gte': page_start,
+                        'start_time__lt': page_end
+                    }
                 page_query = AudioSegmentsModel.objects.filter(**page_filter)
             
             # Apply search filters if they exist

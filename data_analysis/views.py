@@ -627,7 +627,7 @@ class AudioSegments(View):
                     })
             
             # Step 5: Calculate pagination window
-            current_page_start, current_page_end, error_response = calculate_pagination_window(
+            current_page_start, current_page_end, is_last_page, error_response = calculate_pagination_window(
                 base_start_dt, base_end_dt, params['page'], params['page_size'], 
                 params['search_text'], params['search_in'], valid_windows
             )
@@ -635,7 +635,7 @@ class AudioSegments(View):
                 return error_response
             
             # Step 6: Build base query
-            base_query = build_base_query(channel, current_page_start, current_page_end, valid_windows)
+            base_query = build_base_query(channel, current_page_start, current_page_end, valid_windows, is_last_page)
             
             # Step 7: Apply search filters
             base_query = apply_search_filters(base_query, params['search_text'], params['search_in'])
