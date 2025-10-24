@@ -44,6 +44,7 @@ def filter_segments_by_shift(shift_id: int, utc_start: datetime, utc_end: dateti
     """
     Return queryset of AudioSegments overlapping the shift windows between utc_start and utc_end.
     shift.times are treated as wall-clock in shift.channel.timezone for every day in the range.
+    Only includes days that match the shift's days_of_week field.
     """
     if utc_start.tzinfo is None or utc_end.tzinfo is None:
         raise ValueError("utc_start and utc_end must be timezone-aware in UTC")
@@ -53,6 +54,9 @@ def filter_segments_by_shift(shift_id: int, utc_start: datetime, utc_end: dateti
     shift = Shift.objects.get(pk=shift_id)
     tz = ZoneInfo(shift.channel.timezone or "UTC")
 
+    # Parse the shift's days_of_week field
+    shift_days = [day.strip().lower() for day in shift.days.split(',')] if shift.days else []
+
     # Iterate days in local tz covering the UTC range
     start_local = utc_start.astimezone(tz)
     end_local = utc_end.astimezone(tz)
@@ -60,7 +64,13 @@ def filter_segments_by_shift(shift_id: int, utc_start: datetime, utc_end: dateti
     windows = []
     day = start_local.date()
     while day <= end_local.date():
-        windows.extend(_build_utc_windows_for_local_day(shift.start_time, shift.end_time, day, tz))
+        # Check if this day matches any of the shift's specified days
+        current_day_name = day.strftime('%A').lower()
+        
+        # If shift has specific days defined, only process matching days
+        if not shift_days or current_day_name in shift_days:
+            windows.extend(_build_utc_windows_for_local_day(shift.start_time, shift.end_time, day, tz))
+        
         day += timedelta(days=1)
 
     q = _build_q_for_windows(windows)

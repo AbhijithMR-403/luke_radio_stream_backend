@@ -159,7 +159,6 @@ class AudioSegments:
                     metadata_json = {
                         "source": "music",
                         "artists": music_data.get("artists", []),
-                        "external_metadata": music_data.get("external_metadata", {}),
                         "external_ids": music_data.get("external_ids", {}),
                         "sample_begin_time_offset_ms": music_data.get("sample_begin_time_offset_ms"),
                         "sample_end_time_offset_ms": music_data.get("sample_end_time_offset_ms"),

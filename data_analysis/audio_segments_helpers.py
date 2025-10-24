@@ -115,7 +115,7 @@ def parse_datetime_parameters(params):
 
 
 def apply_shift_filtering(base_start_dt, base_end_dt, shift):
-    """Apply shift-based time filtering to the datetime range"""
+    """Apply shift-based time filtering to the datetime range, considering days_of_week"""
     if not shift:
         return base_start_dt, base_end_dt
     
@@ -130,6 +130,9 @@ def apply_shift_filtering(base_start_dt, base_end_dt, shift):
     base_start_local = base_start_dt.astimezone(shift_tz)
     base_end_local = base_end_dt.astimezone(shift_tz)
     
+    # Parse the shift's days_of_week field
+    shift_days = [day.strip().lower() for day in shift.days.split(',')] if shift.days else []
+    
     # Create a list to store all valid time windows
     valid_windows = []
     
@@ -138,6 +141,14 @@ def apply_shift_filtering(base_start_dt, base_end_dt, shift):
     end_date = base_end_local.date()
     
     while current_date <= end_date:
+        # Check if this day matches any of the shift's specified days
+        current_day_name = current_date.strftime('%A').lower()
+        
+        # If shift has specific days defined, only process matching days
+        if shift_days and current_day_name not in shift_days:
+            current_date += timezone.timedelta(days=1)
+            continue
+        
         # Use the utility function to build UTC windows for this day
         day_windows = _build_utc_windows_for_local_day(
             shift.start_time, 
