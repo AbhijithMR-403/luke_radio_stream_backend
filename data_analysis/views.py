@@ -549,6 +549,7 @@ from .audio_segments_helpers import (
     get_channel_and_shift,
     parse_datetime_parameters,
     apply_shift_filtering,
+    apply_predefined_filter_filtering,
     calculate_pagination_window,
     build_base_query,
     apply_search_filters,
@@ -559,13 +560,14 @@ from .audio_segments_helpers import (
 @method_decorator(csrf_exempt, name='dispatch')
 class AudioSegments(View):
     """
-    AudioSegments API with search functionality, pagination, and shift filtering
+    AudioSegments API with search functionality, pagination, shift filtering, and predefined filter support
     
     Query Parameters:
     - channel_id (required): Channel ID to filter segments
     - start_datetime (optional): Start datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
     - end_datetime (optional): End datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
     - shift_id (optional): Shift ID to filter segments by shift time windows
+    - predefined_filter_id (optional): PredefinedFilter ID to filter segments by filter schedule time windows
     
     Pagination Parameters:
     - page (optional): Page number (default: 1)
@@ -577,13 +579,15 @@ class AudioSegments(View):
     
     Note: If search_text is provided, search_in must also be provided with a valid option.
     Maximum time range is 7 days from start_datetime.
-    When shift_id is provided, segments are filtered to only include those within the shift's time windows.
+    When shift_id or predefined_filter_id is provided, segments are filtered to only include those within the time windows.
+    Cannot use both shift_id and predefined_filter_id simultaneously.
     
     Example URLs:
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&page=1&page_size=1
     - /api/audio-segments/?channel_id=1&search_text=music&search_in=transcription&page=2
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
     - /api/audio-segments/?channel_id=1&shift_id=1&start_datetime=2025-01-01&page=1
+    - /api/audio-segments/?channel_id=1&predefined_filter_id=1&start_datetime=2025-01-01&page=1
     """
     def get(self, request, *args, **kwargs):
         try:
@@ -592,8 +596,8 @@ class AudioSegments(View):
             if error_response:
                 return error_response
             
-            # Step 2: Get channel and shift objects
-            channel, shift, error_response = get_channel_and_shift(params)
+            # Step 2: Get channel, shift, and predefined_filter objects
+            channel, shift, predefined_filter, error_response = get_channel_and_shift(params)
             if error_response:
                 return error_response
             
@@ -602,12 +606,33 @@ class AudioSegments(View):
             if error_response:
                 return error_response
             
-            # Step 4: Apply shift filtering if shift_id is provided
+            # Step 4: Apply shift or predefined_filter filtering if provided
             valid_windows = None
             if shift:
                 valid_windows = apply_shift_filtering(base_start_dt, base_end_dt, shift)
                 if not valid_windows:
                     # No valid time windows for this shift in the given range
+                    from config.validation import TimezoneUtils
+                    
+                    return JsonResponse({
+                        'success': True,
+                        'data': [],
+                        'has_data': False,
+                        'pagination': {
+                            'current_page': params['page'],
+                            'page_size': params['page_size'],
+                            'available_pages': [],
+                            'total_pages': 0,
+                            'time_range': {
+                                'start': TimezoneUtils.convert_to_channel_tz(base_start_dt, channel.timezone),
+                                'end': TimezoneUtils.convert_to_channel_tz(base_end_dt, channel.timezone)
+                            }
+                        }
+                    })
+            elif predefined_filter:
+                valid_windows = apply_predefined_filter_filtering(base_start_dt, base_end_dt, predefined_filter)
+                if not valid_windows:
+                    # No valid time windows for this predefined filter in the given range
                     from config.validation import TimezoneUtils
                     
                     return JsonResponse({

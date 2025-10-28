@@ -31,6 +31,7 @@ def validate_audio_segments_parameters(request):
     start_datetime = request.GET.get('start_datetime')
     end_datetime = request.GET.get('end_datetime')
     shift_id = request.GET.get('shift_id')
+    predefined_filter_id = request.GET.get('predefined_filter_id')
     
     # Pagination parameters
     page = int(request.GET.get('page', 1))
@@ -42,6 +43,10 @@ def validate_audio_segments_parameters(request):
     
     if not channel_pk:
         return None, JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
+    
+    # Validate that only one filtering mechanism is used at a time
+    if shift_id and predefined_filter_id:
+        return None, JsonResponse({'success': False, 'error': 'Cannot use both shift_id and predefined_filter_id simultaneously'}, status=400)
     
     # Validate search parameters
     if search_text and not search_in:
@@ -63,6 +68,7 @@ def validate_audio_segments_parameters(request):
         'start_datetime': start_datetime,
         'end_datetime': end_datetime,
         'shift_id': shift_id,
+        'predefined_filter_id': predefined_filter_id,
         'page': page,
         'page_size': page_size,
         'search_text': search_text,
@@ -71,11 +77,11 @@ def validate_audio_segments_parameters(request):
 
 
 def get_channel_and_shift(params):
-    """Get channel and shift objects from database"""
+    """Get channel, shift, and predefined_filter objects from database"""
     try:
         channel = Channel.objects.get(id=params['channel_pk'], is_deleted=False)
     except Channel.DoesNotExist:
-        return None, None, JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
+        return None, None, None, JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
     
     shift = None
     if params['shift_id']:
@@ -83,9 +89,17 @@ def get_channel_and_shift(params):
             from shift_analysis.models import Shift
             shift = Shift.objects.get(id=params['shift_id'], is_active=True)
         except Shift.DoesNotExist:
-            return None, None, JsonResponse({'success': False, 'error': 'Shift not found or inactive'}, status=404)
+            return None, None, None, JsonResponse({'success': False, 'error': 'Shift not found or inactive'}, status=404)
     
-    return channel, shift, None
+    predefined_filter = None
+    if params['predefined_filter_id']:
+        try:
+            from shift_analysis.models import PredefinedFilter
+            predefined_filter = PredefinedFilter.objects.get(id=params['predefined_filter_id'], is_active=True, channel=channel)
+        except:
+            return None, None, None, JsonResponse({'success': False, 'error': 'Predefined filter not found or inactive'}, status=404)
+    
+    return channel, shift, predefined_filter, None
 
 
 def parse_datetime_parameters(params):
@@ -165,6 +179,60 @@ def apply_shift_filtering(base_start_dt, base_end_dt, shift):
             
             if intersection_start < intersection_end:
                 valid_windows.append((intersection_start, intersection_end))
+        
+        current_date += timezone.timedelta(days=1)
+    
+    return valid_windows
+
+
+def apply_predefined_filter_filtering(base_start_dt, base_end_dt, predefined_filter):
+    """Apply predefined filter-based time filtering to the datetime range"""
+    if not predefined_filter:
+        return []
+    
+    # Use the existing utility function from shift_analysis.utils
+    from shift_analysis.utils import _build_utc_windows_for_local_day
+    from zoneinfo import ZoneInfo
+    
+    # Get channel timezone
+    filter_tz = ZoneInfo(predefined_filter.channel.timezone)
+    
+    # Convert base times to filter timezone for comparison
+    base_start_local = base_start_dt.astimezone(filter_tz)
+    base_end_local = base_end_dt.astimezone(filter_tz)
+    
+    # Create a list to store all valid time windows
+    valid_windows = []
+    
+    # Iterate through each day in the range
+    current_date = base_start_local.date()
+    end_date = base_end_local.date()
+    
+    while current_date <= end_date:
+        # Get all schedules for this day
+        day_of_week = current_date.strftime('%A').lower()
+        from shift_analysis.models import FilterSchedule
+        schedules = FilterSchedule.objects.filter(
+            predefined_filter=predefined_filter,
+            day_of_week=day_of_week
+        )
+        
+        for schedule in schedules:
+            schedule_windows = _build_utc_windows_for_local_day(
+                schedule.start_time,
+                schedule.end_time,
+                current_date,
+                filter_tz
+            )
+            
+            # Filter windows that intersect with our base time range
+            for window_start, window_end in schedule_windows:
+                # Find intersection with base time range
+                intersection_start = max(base_start_dt, window_start)
+                intersection_end = min(base_end_dt, window_end)
+                
+                if intersection_start < intersection_end:
+                    valid_windows.append((intersection_start, intersection_end))
         
         current_date += timezone.timedelta(days=1)
     

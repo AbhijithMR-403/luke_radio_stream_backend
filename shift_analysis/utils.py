@@ -80,7 +80,7 @@ def filter_segments_by_shift(shift_id: int, utc_start: datetime, utc_end: dateti
 def filter_segments_by_predefined_filter(filter_id: int, utc_start: datetime, utc_end: datetime) -> QuerySet:
     """
     Return queryset of AudioSegments overlapping any FilterSchedule windows between utc_start and utc_end
-    for the given PredefinedFilter. Each schedule applies on its day_of_week in the filter's timezone,
+    for the given PredefinedFilter. Each schedule applies on its day_of_week in the channel's timezone,
     allowing overnight windows.
     """
     if utc_start.tzinfo is None or utc_end.tzinfo is None:
@@ -89,7 +89,7 @@ def filter_segments_by_predefined_filter(filter_id: int, utc_start: datetime, ut
         return AudioSegments.objects.none()
 
     pf = PredefinedFilter.objects.get(pk=filter_id)
-    tz = ZoneInfo(pf.timezone or "UTC")
+    tz = ZoneInfo(pf.channel.timezone or "UTC")
 
     start_local = utc_start.astimezone(tz)
     end_local = utc_end.astimezone(tz)

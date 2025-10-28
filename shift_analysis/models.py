@@ -112,7 +112,6 @@ class PredefinedFilter(models.Model):
         related_name='predefined_filters',
         help_text="Channel this filter belongs to"
     )
-    timezone = models.CharField(max_length=64, help_text="IANA timezone for interpreting schedules")
     is_active = models.BooleanField(default=True, help_text="Whether this filter is currently active")
     created_by = models.ForeignKey(
         RadioUser,
