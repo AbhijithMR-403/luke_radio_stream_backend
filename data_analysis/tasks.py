@@ -155,7 +155,24 @@ def process_today_audio_data():
                 # transcription_jobs = RevAISpeechToText.create_and_save_transcription_job(download_results)
                 
                 # Step 5: Call mark_requires_analysis to determine which segments need transcription
-                marked_segments = mark_requires_analysis(inserted_segments)
+                # Convert model instances to dicts expected by mark_requires_analysis
+                segments_for_marking = [
+                    {
+                        "id": seg.id,
+                        "file_path": seg.file_path,
+                        "file_name": seg.file_name,
+                        "duration_seconds": seg.duration_seconds,
+                        "is_recognized": seg.is_recognized,
+                        "start_time": seg.start_time,
+                        "end_time": seg.end_time,
+                        "channel_id": getattr(seg, "channel_id", None) or (seg.channel.id if getattr(seg, "channel", None) else None),
+                        "title": seg.title,
+                        "title_before": seg.title_before,
+                        "title_after": seg.title_after,
+                    }
+                    for seg in inserted_segments
+                ]
+                marked_segments = mark_requires_analysis(segments_for_marking)
                 
                 # Step 6: Create and save transcription jobs only for segments requiring analysis
                 transcription_jobs = RevAISpeechToText.create_and_save_transcription_job_v2(marked_segments)
@@ -303,7 +320,23 @@ def process_previous_day_audio_data():
                 
 
                 # Step 5: Call mark_requires_analysis to determine which segments need transcription
-                marked_segments = mark_requires_analysis(inserted_segments)
+                segments_for_marking = [
+                    {
+                        "id": seg.id,
+                        "file_path": seg.file_path,
+                        "file_name": seg.file_name,
+                        "duration_seconds": seg.duration_seconds,
+                        "is_recognized": seg.is_recognized,
+                        "start_time": seg.start_time,
+                        "end_time": seg.end_time,
+                        "channel_id": getattr(seg, "channel_id", None) or (seg.channel.id if getattr(seg, "channel", None) else None),
+                        "title": seg.title,
+                        "title_before": seg.title_before,
+                        "title_after": seg.title_after,
+                    }
+                    for seg in inserted_segments
+                ]
+                marked_segments = mark_requires_analysis(segments_for_marking)
                 
                 # Step 6: Create and save transcription jobs only for segments requiring analysis
                 transcription_jobs = RevAISpeechToText.create_and_save_transcription_job_v2(marked_segments)
