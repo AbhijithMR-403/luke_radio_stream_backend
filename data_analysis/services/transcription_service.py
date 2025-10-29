@@ -240,6 +240,83 @@ class RevAISpeechToText:
         return created_jobs
 
     @staticmethod
+    def create_and_save_transcription_job_v2(segments: list[dict]) -> list[RevTranscriptionJob]:
+        """
+        Create transcription jobs only for segments where requires_analysis is True.
+
+        Expected input: a list of dicts (as produced by mark_requires_analysis),
+        each containing at least: id, file_path, requires_analysis.
+        """
+        if not isinstance(segments, list):
+            raise ValidationError("segments must be a list of dictionaries")
+
+        created_jobs: list[RevTranscriptionJob] = []
+
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+
+            if not bool(seg.get("requires_analysis", False)):
+                continue
+
+            segment_id = seg.get("id") or seg.get("segment_id")
+            file_path_from_payload = seg.get("file_path")
+
+            audio_segment: AudioSegments | None = None
+            if segment_id:
+                try:
+                    audio_segment = AudioSegments.objects.get(pk=segment_id)
+                except AudioSegments.DoesNotExist:
+                    audio_segment = None
+
+            if audio_segment is None and file_path_from_payload:
+                try:
+                    audio_segment = AudioSegments.objects.filter(file_path=file_path_from_payload).first()
+                except Exception:
+                    audio_segment = None
+
+            if audio_segment is None:
+                continue
+
+            media_url_path = f"/api/{audio_segment.file_path}"
+
+            try:
+                api_response = RevAISpeechToText.create_transcription_job(media_url_path)
+            except requests.RequestException:
+                continue
+
+            job_id = api_response.get("id")
+            job_name = api_response.get("name", "")
+            status = api_response.get("status", "")
+            created_on_str = api_response.get("created_on", "")
+
+            created_on_dt = None
+            if created_on_str:
+                try:
+                    created_on_dt = datetime.fromisoformat(created_on_str.replace("Z", "+00:00"))
+                except ValueError:
+                    created_on_dt = timezone.now()
+            else:
+                created_on_dt = timezone.now()
+
+            try:
+                job = RevTranscriptionJob(
+                    job_id=job_id,
+                    job_name=job_name,
+                    media_url=media_url_path,
+                    status=status,
+                    created_on=created_on_dt,
+                    audio_segment=audio_segment,
+                    retry_count=0,
+                )
+                job.save()
+                created_jobs.append(job)
+            except Exception:
+                continue
+
+        return created_jobs
+
+    @staticmethod
     def get_transcript_by_job_id(revid: RevTranscriptionJob, media_path: str):
         """
         Fetches the transcript for a given Rev.ai job ID using the access token from GeneralSetting.

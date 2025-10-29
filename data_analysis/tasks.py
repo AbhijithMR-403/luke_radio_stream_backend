@@ -3,6 +3,7 @@ import time
 import logging
 from datetime import datetime, timedelta
 
+from data_analysis.services.analysis_prereq_check import mark_requires_analysis
 from data_analysis.services.transcription_analyzer import TranscriptionAnalyzer
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.services.audio_segments import AudioSegments
@@ -150,8 +151,15 @@ def process_today_audio_data():
                 # Step 4: Download audio for the inserted segments
                 download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments)
                 
-                # Step 5: Create and save transcription jobs using download results
-                transcription_jobs = RevAISpeechToText.create_and_save_transcription_job(download_results)
+                # # Step 5: Create and save transcription jobs using download results
+                # transcription_jobs = RevAISpeechToText.create_and_save_transcription_job(download_results)
+                
+                # Step 5: Call mark_requires_analysis to determine which segments need transcription
+                marked_segments = mark_requires_analysis(inserted_segments)
+                
+                # Step 6: Create and save transcription jobs only for segments requiring analysis
+                transcription_jobs = RevAISpeechToText.create_and_save_transcription_job_v2(marked_segments)
+
                 
                 # Count segments for this channel
                 channel_segments = len(inserted_segments)
@@ -290,9 +298,16 @@ def process_previous_day_audio_data():
                 # Step 4: Download audio for the inserted segments
                 download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments)
                 
-                # Step 5: Create and save transcription jobs using download results
-                transcription_jobs = RevAISpeechToText.create_and_save_transcription_job(download_results)
+                # # Step 5: Create and save transcription jobs using download results
+                # transcription_jobs = RevAISpeechToText.create_and_save_transcription_job(download_results)
                 
+
+                # Step 5: Call mark_requires_analysis to determine which segments need transcription
+                marked_segments = mark_requires_analysis(inserted_segments)
+                
+                # Step 6: Create and save transcription jobs only for segments requiring analysis
+                transcription_jobs = RevAISpeechToText.create_and_save_transcription_job_v2(marked_segments)
+
                 # Count segments for this channel
                 channel_segments = len(inserted_segments)
                 channel_recognized = sum(1 for seg in inserted_segments if seg.is_recognized)
