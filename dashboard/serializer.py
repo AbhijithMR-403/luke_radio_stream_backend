@@ -83,7 +83,8 @@ def _get_transcription_stats(date_filter, channel_id, filtered_ids_qs=None):
 
 def _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id, filtered_ids_qs=None):
     """
-    Get sentiment statistics and breakdown
+    Get sentiment statistics and breakdown using duration-weighted calculation
+    Formula: Sum of (sentiment_score * duration_seconds) / Sum of duration_seconds
     
     Args:
         date_filter: Django Q object for date filtering
@@ -94,7 +95,8 @@ def _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id, filtered_ids
     Returns:
         tuple: (avg_sentiment, sentiment_breakdown, analyses)
     """
-    sentiment_scores = []
+    total_weighted_sentiment = 0
+    total_duration = 0
     sentiment_breakdown = {'numeric': 0}
     
     analyses_query = TranscriptionAnalysis.objects.all()
@@ -122,14 +124,24 @@ def _get_sentiment_stats(date_filter, start_dt, end_dt, channel_id, filtered_ids
                 score = int(sentiment_value)
                 sentiment_breakdown['numeric'] += 1
                 
-                # Add the score directly since it's already in the correct format
-                sentiment_scores.append(score)
+                # Get duration from audio segment
+                duration_seconds = 0
+                if analysis.transcription_detail and analysis.transcription_detail.audio_segment:
+                    duration_seconds = analysis.transcription_detail.audio_segment.duration_seconds
+                
+                # Calculate weighted sentiment: sentiment_score * duration
+                total_weighted_sentiment += score * duration_seconds
+                total_duration += duration_seconds
                         
             except (ValueError, TypeError):
                 # If conversion fails, skip this sentiment (shouldn't happen with integer strings)
                 continue
     
-    avg_sentiment = int(sum(sentiment_scores) / len(sentiment_scores)) if sentiment_scores else None
+    # Calculate weighted average: total_weighted_sentiment / total_duration (3 decimal places)
+    avg_sentiment = (
+        round((total_weighted_sentiment / total_duration), 3)
+        if total_duration > 0 else None
+    )
     return avg_sentiment, sentiment_breakdown, analyses
 
 
@@ -388,7 +400,7 @@ def _get_channel_stats(channel_id):
 
 def _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id, filtered_ids_qs=None):
     """
-    Get sentiment data over time
+    Get sentiment data over time using duration-weighted calculation
     
     Args:
         start_dt: Start datetime object
@@ -417,7 +429,8 @@ def _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id, fi
             if filtered_ids_qs is not None:
                 day_analyses = day_analyses.filter(transcription_detail__audio_segment__id__in=filtered_ids_qs)
             
-            day_sentiment_scores = []
+            total_weighted_sentiment = 0
+            total_duration = 0
             for analysis in day_analyses:
                 if analysis.sentiment:
                     try:
@@ -427,14 +440,22 @@ def _get_sentiment_timeline_data(start_dt, end_dt, avg_sentiment, channel_id, fi
                         
                         # Convert string to integer (since it stores int in string format)
                         score = int(sentiment_value)
-                        # Add the score directly since it's already in the correct format
-                        day_sentiment_scores.append(score)
+                        
+                        # Get duration from audio segment
+                        duration_seconds = 0
+                        if analysis.transcription_detail and analysis.transcription_detail.audio_segment:
+                            duration_seconds = analysis.transcription_detail.audio_segment.duration_seconds
+                        
+                        # Calculate weighted sentiment: sentiment_score * duration
+                        total_weighted_sentiment += score * duration_seconds
+
+                        total_duration += duration_seconds
                     except (ValueError, TypeError):
                         # If conversion fails, skip this sentiment (shouldn't happen with integer strings)
                         continue
             
-            if day_sentiment_scores:
-                day_avg = int(sum(day_sentiment_scores) / len(day_sentiment_scores))
+            if total_duration > 0:
+                day_avg = round(total_weighted_sentiment / total_duration, 3)
                 sentiment_data.append({
                     'date': current_date.strftime('%d/%m/%Y'),
                     'sentiment': day_avg
@@ -510,6 +531,8 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics=Fals
                     shift_transcriptions.append(segment)
         
         # Get transcription details and analysis for this shift
+        total_weighted_sentiment = 0
+        total_duration = 0
         for segment in shift_transcriptions:
             try:
                 transcription_detail = segment.transcription_detail
@@ -520,7 +543,15 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics=Fals
                         if analysis.sentiment:
                             try:
                                 sentiment_value = int(analysis.sentiment.strip())
-                                shift_sentiments.append(sentiment_value)
+                                
+                                # Get duration from audio segment
+                                duration_seconds = 0
+                                if segment:
+                                    duration_seconds = segment.duration_seconds
+                                
+                                # Calculate weighted sentiment: sentiment_score * duration
+                                total_weighted_sentiment += sentiment_value * duration_seconds
+                                total_duration += duration_seconds
                             except (ValueError, TypeError):
                                 continue
                         
@@ -560,9 +591,9 @@ def _get_shift_analytics_data(start_dt, end_dt, channel_id, show_all_topics=Fals
             # Update shift_topics with filtered data
             shift_topics = filtered_shift_topics
         
-        # Calculate shift statistics
+        # Calculate shift statistics using duration-weighted formula
         total_transcriptions = len(shift_transcriptions)
-        avg_sentiment = round(sum(shift_sentiments) / len(shift_sentiments), 2) if shift_sentiments else 0.0
+        avg_sentiment = round(total_weighted_sentiment / total_duration, 2) if total_duration > 0 else 0.0
         
         # Get top topic for this shift
         top_topic = 'N/A'
@@ -683,7 +714,8 @@ def _get_shift_analytics_data_v2(start_dt, end_dt, channel_id, show_all_topics=F
             shift_segments = filtered_segments
         
         # Get transcription details and analysis for this shift
-        shift_sentiments = []
+        total_weighted_sentiment = 0
+        total_duration = 0
         shift_topics = defaultdict(int)
         
         for segment in shift_segments:
@@ -696,7 +728,15 @@ def _get_shift_analytics_data_v2(start_dt, end_dt, channel_id, show_all_topics=F
                         if analysis.sentiment:
                             try:
                                 sentiment_value = int(analysis.sentiment.strip())
-                                shift_sentiments.append(sentiment_value)
+                                
+                                # Get duration from audio segment
+                                duration_seconds = 0
+                                if segment:
+                                    duration_seconds = segment.duration_seconds
+                                
+                                # Calculate weighted sentiment: sentiment_score * duration
+                                total_weighted_sentiment += sentiment_value * duration_seconds
+                                total_duration += duration_seconds
                             except (ValueError, TypeError):
                                 continue
                         
@@ -736,9 +776,9 @@ def _get_shift_analytics_data_v2(start_dt, end_dt, channel_id, show_all_topics=F
             # Update shift_topics with filtered data
             shift_topics = filtered_shift_topics
         
-        # Calculate shift statistics
+        # Calculate shift statistics using duration-weighted formula
         total_transcriptions = len(shift_segments)
-        avg_sentiment = round(sum(shift_sentiments) / len(shift_sentiments), 2) if shift_sentiments else 0.0
+        avg_sentiment = round(total_weighted_sentiment / total_duration, 2) if total_duration > 0 else 0.0
         
         # Get top topic for this shift
         top_topic = 'N/A'
