@@ -671,6 +671,26 @@ class AudioSegments(View):
             # Step 9: Use serializer to convert database objects to response format
             all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments, channel.timezone)
             
+            # Add per-segment flag when shift context with flag_seconds is available
+            print(getattr(shift, 'flag_seconds', None))
+            if shift and getattr(shift, 'flag_seconds', None) is not None:
+                try:
+                    threshold = int(shift.flag_seconds)
+                except Exception:
+                    threshold = None
+                if threshold is not None:
+                    for seg in all_segments:
+                        duration = seg.get('duration_seconds') or 0
+                        exceeded = bool(duration > threshold)
+                        message = f"Duration exceeded limit by {int(duration - threshold)} seconds" if exceeded else ""
+                        seg['flag'] = {
+                            'duration': {
+                                'exceeded': exceeded,
+                                'message': message
+                            }
+                        }
+                        print(seg)
+
             # Step 10: Build the complete response using serializer
             response_data = AudioSegmentsSerializer.build_response(all_segments, channel)
             
