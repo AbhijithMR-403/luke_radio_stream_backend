@@ -2,13 +2,16 @@ from typing import Any, Dict, List, Tuple, DefaultDict, Optional
 
 from collections import defaultdict
 
-from datetime import timedelta
+from datetime import timedelta, datetime, date, time
 
 from django.utils.dateparse import parse_datetime
 from django.utils import timezone
 
+from zoneinfo import ZoneInfo
+
 from segmentor.models import TitleMappingRule
 from data_analysis.models import AudioSegments
+from shift_analysis.models import Shift
 
 
 def _safe_parse_datetime(value: Any):
@@ -71,22 +74,24 @@ def mark_requires_analysis(
     suppression_duration: Optional[timedelta] = timedelta(minutes=10),
 ) -> List[Dict[str, Any]]:
     """
-    Annotate each segment dict with `requires_analysis` based on unrecognized audio rules.
+    Annotate each segment dict with `requires_analysis` based on unrecognized audio rules and shift configurations.
 
     Rules:
       - When a segment's `title` equals a rule's `before_title`, mark segments from that
         point up to the next segment where `title` equals the rule's `after_title` as
         requires_analysis=False.
       - If the matching `after_title` does not occur within the configured suppression duration from the
-        `before_title` segment's `start_time`, only mark up to that duration (default 5 minutes).
+        `before_title` segment's `start_time`, only mark up to that duration (default 10 minutes).
       - If a rule has empty `after_title`, only the `before_title` segment is marked.
+      - For Shift configurations with `should_transcribe=False`, mark all segments falling within
+        those shift time windows as requires_analysis=False. Shift times are processed in the channel's timezone.
       - Default for all other segments: requires_analysis=True.
 
     Each segment is expected to include: `title`, `start_time`, `end_time`, `channel_id`.
     The function mutates and returns the same list for convenience.
     Args:
         segments: List of segment dicts to annotate.
-        suppression_duration: Time delta to cap suppression after `before_title`. Defaults to 5 minutes.
+        suppression_duration: Time delta to cap suppression after `before_title`. Defaults to 10 minutes.
 
     """
 
@@ -136,6 +141,20 @@ def mark_requires_analysis(
         channel_ids,
         suppression_duration,
     )
+    
+    # Also build suppression intervals from Shift configurations
+    shift_intervals = build_suppression_intervals_from_shifts(
+        channel_to_segments,
+        channel_ids,
+    )
+    
+    # Merge shift intervals with title rule intervals
+    for channel_id, intervals in shift_intervals.items():
+        existing = channel_to_intervals.get(channel_id, [])
+        combined = existing + intervals
+        if combined:
+            channel_to_intervals[channel_id] = _merge_intervals(combined)
+    
     rename_titles_from_title_rules(channel_to_segments, channel_ids)
 
     # Apply intervals back to original segments
@@ -172,6 +191,88 @@ def get_active_title_rules(channel_ids: List[int]) -> DefaultDict[int, List[Titl
     for rule in rules:
         channel_to_rules[rule.category.channel_id].append(rule)
     return channel_to_rules
+
+
+def build_suppression_intervals_from_shifts(
+    channel_to_segments: DefaultDict[int, List[Dict[str, Any]]],
+    channel_ids: List[int],
+) -> DefaultDict[int, List[Tuple[Any, Any]]]:
+    """Create per-channel suppression intervals from Shift configuration where should_transcribe=False."""
+    # Fetch active shifts with should_transcribe=False
+    shifts = (
+        Shift.objects
+        .filter(is_active=True, should_transcribe=False, channel__in=channel_ids)
+        .select_related("channel")
+    )
+    
+    channel_to_intervals: DefaultDict[int, List[Tuple[Any, Any]]] = defaultdict(list)
+    
+    # Group shifts by channel and also map channel_id to timezone
+    channel_to_shifts: DefaultDict[int, List[Shift]] = defaultdict(list)
+    channel_id_to_timezone: Dict[int, ZoneInfo] = {}
+    
+    for shift in shifts:
+        channel_to_shifts[shift.channel.id].append(shift)
+        # Store timezone for each channel
+        if shift.channel.id not in channel_id_to_timezone:
+            channel_id_to_timezone[shift.channel.id] = ZoneInfo(shift.channel.timezone or "UTC")
+    
+    # For each channel, build UTC windows from shift times
+    for channel_id, segs in channel_to_segments.items():
+        if not segs:
+            continue
+            
+        sorted_segs = sorted(segs, key=lambda s: s["_parsed_start"])
+        
+        # Get the earliest and latest segment times to determine date range
+        if not sorted_segs:
+            continue
+        earliest_start = sorted_segs[0]["_parsed_start"]
+        latest_end = sorted_segs[-1]["_parsed_end"]
+        
+        # Get channel timezone
+        tz = channel_id_to_timezone.get(channel_id)
+        if tz is None:
+            continue
+        
+        shifts_for_channel = channel_to_shifts.get(channel_id, [])
+        if not shifts_for_channel:
+            continue
+        
+        # Convert segment times to local timezone to determine date range
+        earliest_local = earliest_start.astimezone(tz)
+        latest_local = latest_end.astimezone(tz)
+        
+        # Parse shift days
+        shift_days_map: DefaultDict[str, List[Shift]] = defaultdict(list)
+        for shift in shifts_for_channel:
+            shift_days = [day.strip().lower() for day in shift.days.split(',')] if shift.days else []
+            for day in shift_days:
+                shift_days_map[day].append(shift)
+        
+        # Build UTC windows for each day in the range
+        current_date = earliest_local.date()
+        end_date = latest_local.date()
+        
+        while current_date <= end_date:
+            current_day_name = current_date.strftime('%A').lower()
+            matching_shifts = shift_days_map.get(current_day_name, [])
+            
+            for shift in matching_shifts:
+                # Use the helper from shift_analysis.utils to build UTC windows
+                from shift_analysis.utils import _build_utc_windows_for_local_day
+                windows = _build_utc_windows_for_local_day(
+                    shift.start_time, shift.end_time, current_date, tz
+                )
+                channel_to_intervals[channel_id].extend(windows)
+            
+            current_date += timedelta(days=1)
+        
+        # Merge intervals per channel
+        if channel_to_intervals[channel_id]:
+            channel_to_intervals[channel_id] = _merge_intervals(channel_to_intervals[channel_id])
+    
+    return channel_to_intervals
 
 
 def build_suppression_intervals_from_title_rules(

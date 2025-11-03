@@ -22,6 +22,11 @@ class ShiftListCreateView(APIView):
         is_active = request.query_params.get('is_active')
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == 'true')
+
+        # Filter by should_transcribe if provided
+        should_transcribe = request.query_params.get('should_transcribe')
+        if should_transcribe is not None:
+            queryset = queryset.filter(should_transcribe=should_transcribe.lower() == 'true')
         
         # Filter by channel if provided
         channel_id = request.query_params.get('channel')
@@ -139,7 +144,14 @@ class ActiveShiftsView(APIView):
     
     def get(self, request):
         """Get all active shifts"""
-        shifts = Shift.objects.filter(is_active=True).order_by('start_time')
+        shifts = Shift.objects.filter(is_active=True)
+
+        # Optional filter: should_transcribe=true|false
+        should_transcribe = request.query_params.get('should_transcribe')
+        if should_transcribe is not None:
+            shifts = shifts.filter(should_transcribe=should_transcribe.lower() == 'true')
+
+        shifts = shifts.order_by('start_time')
         serializer = ShiftSerializer(shifts, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
