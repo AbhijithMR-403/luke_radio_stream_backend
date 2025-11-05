@@ -177,7 +177,8 @@ class AudioSegments(models.Model):
     notes = models.TextField(null=True, blank=True, help_text="Optional reason/log/debug info")
     SOURCE_CHOICES = (
         ('system', 'System'),
-        ('user', 'User'), 
+        ('user', 'User'),
+        ('merged', 'Merged'),
     )
     source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='system', help_text="Who added the segment: system or user")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_audio_segments', help_text="User who created the segment if manual")

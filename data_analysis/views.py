@@ -15,12 +15,24 @@ from rest_framework import status
 from rest_framework.permissions import IsAdminUser
 
 from acr_admin.models import Channel
-from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionAnalysis, TranscriptionQueue, GeneralTopic
-from data_analysis.services.audio_segments import AudioSegments
+from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionQueue
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.tasks import analyze_transcription_task
 from data_analysis.serializers import AudioSegmentsSerializer
 from data_analysis.services.segment_range_service import create_segment_download_and_queue
+
+# Import helper functions from the separate module
+from .audio_segments_helpers import (
+    validate_audio_segments_parameters,
+    get_channel_and_shift,
+    parse_datetime_parameters,
+    apply_shift_filtering,
+    apply_predefined_filter_filtering,
+    calculate_pagination_window,
+    build_base_query,
+    apply_search_filters,
+    build_pagination_info
+)
 
 # Create your views here.
 # Parse datetimes (accept ISO or 'YYYY-MM-DD HH:MM:SS')
@@ -542,19 +554,6 @@ class AudioSegmentsWithTranscriptionView(View):
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
-
-# Import helper functions from the separate module
-from .audio_segments_helpers import (
-    validate_audio_segments_parameters,
-    get_channel_and_shift,
-    parse_datetime_parameters,
-    apply_shift_filtering,
-    apply_predefined_filter_filtering,
-    calculate_pagination_window,
-    build_base_query,
-    apply_search_filters,
-    build_pagination_info
-)
 
 
 @method_decorator(csrf_exempt, name='dispatch')
