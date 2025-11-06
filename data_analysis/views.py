@@ -13,6 +13,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAdminUser
+from django.conf import settings
+import re
 
 from acr_admin.models import Channel
 from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionQueue
@@ -993,5 +995,51 @@ class MediaDownloadView(View):
         try:
             response = FileResponse(open(abs_file_path, 'rb'), as_attachment=True, filename=os.path.basename(file_path))
             return response
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class MediaServeOrFetchView(View):
+    def get(self, request, file_path, *args, **kwargs):
+        try:
+            relative_path = unquote(file_path.lstrip('/'))
+            if '..' in relative_path or relative_path.startswith('/'):
+                return JsonResponse({'success': False, 'error': 'Invalid file path'}, status=400)
+
+            absolute_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+
+            # Serve immediately if file exists
+            if os.path.exists(absolute_path):
+                return FileResponse(open(absolute_path, 'rb'), as_attachment=False, filename=os.path.basename(absolute_path))
+
+            # Attempt to parse filename: audio_{projectId}_{channelId}_{YYYYMMDDHHMMSS}_{duration}.mp3
+            filename = os.path.basename(absolute_path)
+            match = re.match(r"^audio_(\d+)_(\d+)_(\d{14})_(\d+)\.mp3$", filename)
+            if not match:
+                return JsonResponse({'success': False, 'error': 'Unknown media filename format'}, status=404)
+
+            project_id = int(match.group(1))
+            channel_id = int(match.group(2))
+            start_time_str = match.group(3)
+            duration_seconds = int(match.group(4))
+
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
+
+            # Download via ACRCloud
+            from data_analysis.services.audio_download import ACRCloudAudioDownloader
+            _media_url = ACRCloudAudioDownloader.download_audio(
+                project_id=project_id,
+                channel_id=channel_id,
+                start_time=start_time_str,
+                duration_seconds=duration_seconds,
+                filepath=absolute_path
+            )
+
+            if not os.path.exists(absolute_path):
+                return JsonResponse({'success': False, 'error': 'Failed to fetch media'}, status=502)
+
+            return FileResponse(open(absolute_path, 'rb'), as_attachment=False, filename=os.path.basename(absolute_path))
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=500)

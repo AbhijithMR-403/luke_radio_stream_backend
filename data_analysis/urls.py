@@ -3,6 +3,7 @@ from . import views
 
 
 urlpatterns = [
+    path('media/<path:file_path>', views.MediaServeOrFetchView.as_view(), name='media_serve_or_fetch'),
     path('audio_segments/<int:segment_id>', views.AudioSegmentIsActiveUpdateView.as_view(), name='audio_segment_is_active_update'),
     path('segments/create', views.CreateSegmentFromRangeView.as_view(), name='create_segment_manually'),
     path('audio_segments_with_transcription', views.AudioSegmentsWithTranscriptionView.as_view(), name='audio_segments_with_transcription'),
