@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Tuple, DefaultDict, Optional
+from typing import Any, Dict, List, Tuple, DefaultDict, Optional, Set
 
 from collections import defaultdict
 
@@ -41,6 +41,24 @@ def _merge_intervals(intervals: List[Tuple[Any, Any]]) -> List[Tuple[Any, Any]]:
             current_start, current_end = start, end
     merged.append((current_start, current_end))
     return merged
+
+
+def _deactivate_segments_without_analysis(segments: List[Dict[str, Any]]) -> None:
+    segments_to_deactivate: Set[int] = set()
+    for seg in segments:
+        if seg.get("requires_analysis") is not False:
+            continue
+        seg_id = seg.get("id")
+        if seg_id is None:
+            continue
+        try:
+            seg_id_int = int(seg_id)
+        except (TypeError, ValueError):
+            continue
+        segments_to_deactivate.add(seg_id_int)
+
+    if segments_to_deactivate:
+        AudioSegments.objects.filter(id__in=segments_to_deactivate, is_active=True).update(is_active=False)
 
 
 def update_audio_segment_title(segment_id: Any, category_name: Any) -> bool:
@@ -132,6 +150,7 @@ def mark_requires_analysis(
         })
 
     if not channel_to_segments:
+        _deactivate_segments_without_analysis(segments)
         return segments
 
     # Compute intervals and handle renaming using TitleMappingRule helpers
@@ -166,6 +185,8 @@ def mark_requires_analysis(
             if seg_start <= e and seg_end > s:
                 seg["requires_analysis"] = False
                 break
+
+    _deactivate_segments_without_analysis(segments)
 
     return segments
 
