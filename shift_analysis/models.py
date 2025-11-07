@@ -41,10 +41,6 @@ class Shift(models.Model):
     )
     description = models.TextField(blank=True, null=True, help_text="Optional description of the shift")
     is_active = models.BooleanField(default=True, help_text="Whether this shift is currently active")
-    should_transcribe = models.BooleanField(
-        default=False,
-        help_text="Whether audio during this shift requires transcription",
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

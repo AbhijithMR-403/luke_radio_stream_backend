@@ -83,8 +83,8 @@ def mark_requires_analysis(
       - If the matching `after_title` does not occur within the configured suppression duration from the
         `before_title` segment's `start_time`, only mark up to that duration (default 10 minutes).
       - If a rule has empty `after_title`, only the `before_title` segment is marked.
-      - For Shift configurations with `should_transcribe=False`, mark all segments falling within
-        those shift time windows as requires_analysis=False. Shift times are processed in the channel's timezone.
+      - For segments that do NOT fall within any active shift time window (based on start_time, end_time, and days),
+        mark as requires_analysis=False. Shift times are processed in the channel's timezone.
       - Default for all other segments: requires_analysis=True.
 
     Each segment is expected to include: `title`, `start_time`, `end_time`, `channel_id`.
@@ -142,22 +142,12 @@ def mark_requires_analysis(
         suppression_duration,
     )
     
-    # Also build suppression intervals from Shift configurations
-    shift_intervals = build_suppression_intervals_from_shifts(
-        channel_to_segments,
-        channel_ids,
-    )
-    
-    # Merge shift intervals with title rule intervals
-    for channel_id, intervals in shift_intervals.items():
-        existing = channel_to_intervals.get(channel_id, [])
-        combined = existing + intervals
-        if combined:
-            channel_to_intervals[channel_id] = _merge_intervals(combined)
+    # Check if segments fall within any shift - if not, mark as requires_analysis=False
+    check_segments_against_shifts(channel_to_segments, channel_ids)
     
     rename_titles_from_title_rules(channel_to_segments, channel_ids)
 
-    # Apply intervals back to original segments
+    # Apply title rule intervals back to original segments
     for seg in segments:
         channel_id = seg.get("channel_id")
         if channel_id is None:
@@ -193,19 +183,21 @@ def get_active_title_rules(channel_ids: List[int]) -> DefaultDict[int, List[Titl
     return channel_to_rules
 
 
-def build_suppression_intervals_from_shifts(
+def check_segments_against_shifts(
     channel_to_segments: DefaultDict[int, List[Dict[str, Any]]],
     channel_ids: List[int],
-) -> DefaultDict[int, List[Tuple[Any, Any]]]:
-    """Create per-channel suppression intervals from Shift configuration where should_transcribe=False."""
-    # Fetch active shifts with should_transcribe=False
+) -> None:
+    """
+    Check if segments fall within any active shift time window.
+    If a segment's time range (start_time, end_time) and day does NOT fall within any shift,
+    mark it as requires_analysis=False.
+    """
+    # Fetch all active shifts for the channels
     shifts = (
         Shift.objects
-        .filter(is_active=True, should_transcribe=False, channel__in=channel_ids)
+        .filter(is_active=True, channel__in=channel_ids)
         .select_related("channel")
     )
-    
-    channel_to_intervals: DefaultDict[int, List[Tuple[Any, Any]]] = defaultdict(list)
     
     # Group shifts by channel and also map channel_id to timezone
     channel_to_shifts: DefaultDict[int, List[Shift]] = defaultdict(list)
@@ -217,62 +209,85 @@ def build_suppression_intervals_from_shifts(
         if shift.channel.id not in channel_id_to_timezone:
             channel_id_to_timezone[shift.channel.id] = ZoneInfo(shift.channel.timezone or "UTC")
     
-    # For each channel, build UTC windows from shift times
+    # Import the helper function for building UTC windows
+    from shift_analysis.utils import _build_utc_windows_for_local_day
+    
+    # For each channel, check each segment against shifts
     for channel_id, segs in channel_to_segments.items():
         if not segs:
             continue
-            
-        sorted_segs = sorted(segs, key=lambda s: s["_parsed_start"])
-        
-        # Get the earliest and latest segment times to determine date range
-        if not sorted_segs:
-            continue
-        earliest_start = sorted_segs[0]["_parsed_start"]
-        latest_end = sorted_segs[-1]["_parsed_end"]
         
         # Get channel timezone
         tz = channel_id_to_timezone.get(channel_id)
         if tz is None:
+            # If no timezone, mark all segments as requires_analysis=False (no shifts to check)
+            for seg_data in segs:
+                seg_data["_ref"]["requires_analysis"] = False
             continue
         
         shifts_for_channel = channel_to_shifts.get(channel_id, [])
         if not shifts_for_channel:
+            # If no shifts for this channel, mark all segments as requires_analysis=False
+            for seg_data in segs:
+                seg_data["_ref"]["requires_analysis"] = False
             continue
         
-        # Convert segment times to local timezone to determine date range
-        earliest_local = earliest_start.astimezone(tz)
-        latest_local = latest_end.astimezone(tz)
-        
-        # Parse shift days
-        shift_days_map: DefaultDict[str, List[Shift]] = defaultdict(list)
-        for shift in shifts_for_channel:
-            shift_days = [day.strip().lower() for day in shift.days.split(',')] if shift.days else []
-            for day in shift_days:
-                shift_days_map[day].append(shift)
-        
-        # Build UTC windows for each day in the range
-        current_date = earliest_local.date()
-        end_date = latest_local.date()
-        
-        while current_date <= end_date:
-            current_day_name = current_date.strftime('%A').lower()
-            matching_shifts = shift_days_map.get(current_day_name, [])
+        # Check each segment against all shifts
+        for seg_data in segs:
+            seg_ref = seg_data["_ref"]
+            seg_start = seg_data["_parsed_start"]
+            seg_end = seg_data["_parsed_end"]
             
-            for shift in matching_shifts:
-                # Use the helper from shift_analysis.utils to build UTC windows
-                from shift_analysis.utils import _build_utc_windows_for_local_day
-                windows = _build_utc_windows_for_local_day(
-                    shift.start_time, shift.end_time, current_date, tz
-                )
-                channel_to_intervals[channel_id].extend(windows)
+            # Convert segment times to local timezone to get the days
+            seg_start_local = seg_start.astimezone(tz)
+            seg_end_local = seg_end.astimezone(tz)
+            seg_start_day = seg_start_local.date()
+            seg_end_day = seg_end_local.date()
             
-            current_date += timedelta(days=1)
-        
-        # Merge intervals per channel
-        if channel_to_intervals[channel_id]:
-            channel_to_intervals[channel_id] = _merge_intervals(channel_to_intervals[channel_id])
-    
-    return channel_to_intervals
+            # Get all days the segment spans (in case it crosses midnight)
+            days_to_check = [seg_start_day]
+            if seg_end_day != seg_start_day:
+                current_day = seg_start_day + timedelta(days=1)
+                while current_day <= seg_end_day:
+                    days_to_check.append(current_day)
+                    current_day += timedelta(days=1)
+            
+            # Check if segment overlaps with any shift window
+            segment_in_shift = False
+            
+            for shift in shifts_for_channel:
+                # Parse shift days
+                shift_days = [day.strip().lower() for day in shift.days.split(',')] if shift.days else []
+                
+                # Check each day the segment spans
+                for seg_day in days_to_check:
+                    seg_day_name = seg_day.strftime('%A').lower()
+                    
+                    # Check if the segment's day matches any of the shift's days
+                    if seg_day_name not in shift_days:
+                        continue
+                    
+                    # Build UTC windows for this shift on the segment's day
+                    shift_windows = _build_utc_windows_for_local_day(
+                        shift.start_time, shift.end_time, seg_day, tz
+                    )
+                    
+                    # Check if segment overlaps with any shift window
+                    for window_start, window_end in shift_windows:
+                        # Overlap check: [seg_start, seg_end] intersects [window_start, window_end]
+                        if seg_start < window_end and seg_end > window_start:
+                            segment_in_shift = True
+                            break
+                    
+                    if segment_in_shift:
+                        break
+                
+                if segment_in_shift:
+                    break
+            
+            # If segment does NOT fall within any shift, mark as requires_analysis=False
+            if not segment_in_shift:
+                seg_ref["requires_analysis"] = False
 
 
 def build_suppression_intervals_from_title_rules(
