@@ -15,6 +15,7 @@ from data_analysis.models import (
     AudioSegments as AudioSegmentsModel,
 )
 from data_analysis.services.audio_download import ACRCloudAudioDownloader
+from data_analysis.services.segment_range_service import create_segment_download_and_queue
 from data_analysis.serializers import AudioSegmentsSerializer
 
 
@@ -51,7 +52,7 @@ def _create_merged_segment(channel, start_dt, end_dt, source_segment_ids=None):
         'end_time': end_dt,
         'duration_seconds': duration_seconds,
         'is_recognized': False,
-        'is_active': True,
+        'is_active': False,
         'file_name': file_name,
         'file_path': file_path,
         'channel': channel,
@@ -287,6 +288,204 @@ class ProcessSegmentsView(APIView):
             })
         except json.JSONDecodeError:
             return Response({'success': False, 'error': 'Invalid JSON body'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SplitAudioSegmentView(APIView):
+    permission_classes = [IsAdminUser]
+    def post(self, request, *args, **kwargs):
+        try:
+            payload = request.data if hasattr(request, 'data') else json.loads(request.body)
+            
+            # Handle new request body structure
+            if isinstance(payload, dict):
+                # New structure: {channel_id, segment_id?, is_active?, split_segments: [...]}
+                channel_id = payload.get('channel_id')
+                segment_id = payload.get('segment_id')
+                is_active = payload.get('is_active')
+                split_segments = payload.get('split_segments', [])
+                
+                if not channel_id:
+                    return Response({'success': False, 'error': 'channel_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Validate channel exists
+                try:
+                    channel = Channel.objects.get(id=channel_id, is_deleted=False)
+                except Channel.DoesNotExist:
+                    return Response({'success': False, 'error': 'Channel not found'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                results = []
+                errors = []
+                updated_segments = []
+                
+                # Handle segment update if segment_id and is_active are provided
+                if segment_id is not None and is_active is not None:
+                    print(is_active)
+                    try:
+                        segment = AudioSegmentsModel.objects.get(id=segment_id, channel=channel)
+                        segment.is_active = bool(is_active)
+                        segment.save()
+                        print(segment.is_active)
+                        updated_segments.append({
+                            'segment_id': segment.id,
+                            'is_active': segment.is_active,
+                            'start_time': segment.start_time.isoformat(),
+                            'end_time': segment.end_time.isoformat()
+                        })
+                    except AudioSegmentsModel.DoesNotExist:
+                        errors.append({'segment_id': segment_id, 'error': 'Segment not found'})
+                    except Exception as e:
+                        errors.append({'segment_id': segment_id, 'error': str(e)})
+                
+                # Handle split segments creation
+                for idx, segment_data in enumerate(split_segments):
+                    try:
+                        from_ts = segment_data.get('from')
+                        to_ts = segment_data.get('to')
+                        title = segment_data.get('title')
+                        title_before = segment_data.get('title_before')
+                        title_after = segment_data.get('title_after')
+                        transcribe = bool(segment_data.get('transcribe', True))
+
+                        if not from_ts or not to_ts:
+                            raise ValueError('from and to are required (ISO or YYYY-MM-DD HH:MM:SS)')
+
+                        start_dt = _parse_dt(from_ts)
+                        end_dt = _parse_dt(to_ts)
+                        if not start_dt or not end_dt:
+                            raise ValueError('Invalid datetime format for from/to')
+                        if end_dt <= start_dt:
+                            raise ValueError('to must be after from')
+
+                        result = create_segment_download_and_queue(
+                            channel,
+                            start_dt,
+                            end_dt,
+                            user=request.user if getattr(request, 'user', None) and request.user.is_authenticated else None,
+                            title=title,
+                            title_before=title_before,
+                            title_after=title_after,
+                            transcribe=transcribe
+                        )
+
+                        created_segment = result['segment']
+                        # Set is_active and is_recognized based on transcribe parameter
+                        if transcribe:
+                            created_segment.is_active = True
+                            created_segment.is_recognized = False
+                        else:
+                            created_segment.is_active = False
+                            created_segment.is_recognized = False
+                        created_segment.save()
+                        
+                        queue_entry = result['queue']
+                        rev_job = result['rev_job']
+                        media_url = result['media_url']
+
+                        results.append({
+                            'segment_id': created_segment.id,
+                            'queue_id': queue_entry.id if queue_entry else None,
+                            'rev_job_id': rev_job.job_id if rev_job else None,
+                            'media_url': media_url,
+                            'start_time': created_segment.start_time.isoformat(),
+                            'end_time': created_segment.end_time.isoformat(),
+                            'duration_seconds': created_segment.duration_seconds
+                        })
+                    except Exception as item_err:
+                        errors.append({'index': idx, 'error': str(item_err)})
+
+                return Response({
+                    'success': True,
+                    'message': 'Request processed',
+                    'data': {
+                        'updated_segments': updated_segments,
+                        'created_segments': results,
+                        'errors': errors
+                    }
+                })
+            
+            # Handle legacy list format for backward compatibility
+            elif isinstance(payload, list):
+                results = []
+                errors = []
+                for idx, item in enumerate(payload):
+                    try:
+                        channel_pk = item.get('channel_id')
+                        from_ts = item.get('from')
+                        to_ts = item.get('to')
+                        title = item.get('title')
+                        title_before = item.get('title_before')
+                        title_after = item.get('title_after')
+                        transcribe = bool(item.get('transcribe', True))
+
+                        if not channel_pk:
+                            raise ValueError('channel_id is required')
+                        if not from_ts or not to_ts:
+                            raise ValueError('from and to are required (ISO or YYYY-MM-DD HH:MM:SS)')
+
+                        try:
+                            channel = Channel.objects.get(id=channel_pk, is_deleted=False)
+                        except Channel.DoesNotExist:
+                            raise ValueError('Channel not found')
+
+                        start_dt = _parse_dt(from_ts)
+                        end_dt = _parse_dt(to_ts)
+                        if not start_dt or not end_dt:
+                            raise ValueError('Invalid datetime format for from/to')
+                        if end_dt <= start_dt:
+                            raise ValueError('to must be after from')
+
+                        result = create_segment_download_and_queue(
+                            channel,
+                            start_dt,
+                            end_dt,
+                            user=request.user if getattr(request, 'user', None) and request.user.is_authenticated else None,
+                            title=title,
+                            title_before=title_before,
+                            title_after=title_after,
+                            transcribe=transcribe
+                        )
+
+                        created_segment = result['segment']
+                        # Set is_active and is_recognized based on transcribe parameter
+                        if transcribe:
+                            created_segment.is_active = True
+                            created_segment.is_recognized = False
+                        else:
+                            created_segment.is_active = False
+                            created_segment.is_recognized = False
+                        created_segment.save()
+                        
+                        queue_entry = result['queue']
+                        rev_job = result['rev_job']
+                        media_url = result['media_url']
+
+                        results.append({
+                            'segment_id': created_segment.id,
+                            'queue_id': queue_entry.id if queue_entry else None,
+                            'rev_job_id': rev_job.job_id if rev_job else None,
+                            'media_url': media_url,
+                            'start_time': created_segment.start_time.isoformat(),
+                            'end_time': created_segment.end_time.isoformat(),
+                            'duration_seconds': created_segment.duration_seconds
+                        })
+                    except Exception as item_err:
+                        errors.append({'index': idx, 'error': str(item_err)})
+
+                return Response({
+                    'success': True,
+                    'message': 'Batch processed',
+                    'data': {
+                        'created': results,
+                        'errors': errors
+                    }
+                })
+            else:
+                return Response({'success': False, 'error': 'Expected a JSON object or list'}, status=status.HTTP_400_BAD_REQUEST)
+
+        except json.JSONDecodeError:
+            return Response({'success': False, 'error': 'Invalid JSON data'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
