@@ -37,6 +37,7 @@ class AudioSegmentSerializer(serializers.Serializer):
     is_analysis_completed = serializers.BooleanField()
     is_audio_downloaded = serializers.BooleanField()
     metadata_json = serializers.JSONField(allow_null=True)
+    source = serializers.CharField(allow_null=True)
     transcription = TranscriptionDetailSerializer(allow_null=True)
     analysis = TranscriptionAnalysisSerializer(allow_null=True)
 
@@ -97,7 +98,8 @@ class AudioSegmentsSerializer:
                 'created_at': TimezoneUtils.convert_to_channel_tz(segment.created_at, channel_tz),
                 'is_analysis_completed': segment.is_analysis_completed,
                 'is_audio_downloaded': segment.is_audio_downloaded,
-                'metadata_json': segment.metadata_json
+                'metadata_json': segment.metadata_json,
+                'source': segment.source
             }
             
             # Use prefetched transcription detail data (no database query needed)
