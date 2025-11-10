@@ -390,6 +390,7 @@ class AudioSegments(View):
     - end_datetime (optional): End datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
     - shift_id (optional): Shift ID to filter segments by shift time windows
     - predefined_filter_id (optional): PredefinedFilter ID to filter segments by filter schedule time windows
+    - duration (optional): Minimum duration in seconds - only segments with duration >= this value will be returned
     
     Pagination Parameters:
     - page (optional): Page number (default: 1)
@@ -403,6 +404,7 @@ class AudioSegments(View):
     Maximum time range is 7 days from start_datetime.
     When shift_id or predefined_filter_id is provided, segments are filtered to only include those within the time windows.
     Cannot use both shift_id and predefined_filter_id simultaneously.
+    When duration is provided, only segments with duration_seconds >= duration will be included in the results.
     
     Example URLs:
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&page=1&page_size=1
@@ -410,6 +412,7 @@ class AudioSegments(View):
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
     - /api/audio-segments/?channel_id=1&shift_id=1&start_datetime=2025-01-01&page=1
     - /api/audio-segments/?channel_id=1&predefined_filter_id=1&start_datetime=2025-01-01&page=1
+    - /api/audio-segments/?channel_id=1&duration=30&start_datetime=2025-01-01&page=1
     """
     def get(self, request, *args, **kwargs):
         try:
@@ -482,7 +485,7 @@ class AudioSegments(View):
                 return error_response
             
             # Step 6: Build base query
-            base_query = build_base_query(channel, current_page_start, current_page_end, valid_windows, is_last_page)
+            base_query = build_base_query(channel, current_page_start, current_page_end, valid_windows, is_last_page, params['duration'])
             
             # Step 7: Apply search filters
             base_query = apply_search_filters(base_query, params['search_text'], params['search_in'])
@@ -519,7 +522,7 @@ class AudioSegments(View):
             # Step 11: Build pagination information
             response_data['pagination'] = build_pagination_info(
                 base_start_dt, base_end_dt, params['page'], params['page_size'],
-                params['search_text'], params['search_in'], channel, valid_windows
+                params['search_text'], params['search_in'], channel, valid_windows, params['duration']
             )
             
             # Step 12: Add has_data flag for current page

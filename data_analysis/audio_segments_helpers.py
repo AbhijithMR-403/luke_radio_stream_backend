@@ -41,6 +41,9 @@ def validate_audio_segments_parameters(request):
     search_text = request.GET.get('search_text')
     search_in = request.GET.get('search_in')
     
+    # Duration filter parameter
+    duration = request.GET.get('duration')
+    
     if not channel_pk:
         return None, JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
     
@@ -63,6 +66,16 @@ def validate_audio_segments_parameters(request):
             'error': f'Invalid search_in option. Must be one of: {", ".join(valid_search_options)}'
         }, status=400)
     
+    # Validate duration parameter
+    duration_value = None
+    if duration:
+        try:
+            duration_value = int(duration)
+            if duration_value < 0:
+                return None, JsonResponse({'success': False, 'error': 'duration must be a non-negative integer'}, status=400)
+        except (ValueError, TypeError):
+            return None, JsonResponse({'success': False, 'error': 'duration must be a valid integer'}, status=400)
+    
     return {
         'channel_pk': channel_pk,
         'start_datetime': start_datetime,
@@ -72,7 +85,8 @@ def validate_audio_segments_parameters(request):
         'page': page,
         'page_size': page_size,
         'search_text': search_text,
-        'search_in': search_in
+        'search_in': search_in,
+        'duration': duration_value
     }, None
 
 
@@ -277,7 +291,7 @@ def calculate_pagination_window(base_start_dt, base_end_dt, page, page_size, sea
     return current_page_start, current_page_end, is_last_page, None
 
 
-def build_base_query(channel, current_page_start, current_page_end, valid_windows=None, is_last_page=False):
+def build_base_query(channel, current_page_start, current_page_end, valid_windows=None, is_last_page=False, duration=None):
     """Build the base query with filter conditions"""
     # Build filter conditions for current page
     if valid_windows:
@@ -320,6 +334,10 @@ def build_base_query(channel, current_page_start, current_page_end, valid_window
                 'start_time__lt': current_page_end
             }
         time_conditions = None
+    
+    # Add duration filter if provided
+    if duration is not None:
+        filter_conditions['duration_seconds__gte'] = duration
     
     # Build the base query with optimized joins
     base_query = AudioSegmentsModel.objects.filter(**filter_conditions).select_related(
@@ -390,7 +408,7 @@ def apply_search_filters(base_query, search_text, search_in):
     return base_query
 
 
-def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_text, search_in, channel, valid_windows=None):
+def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_text, search_in, channel, valid_windows=None, duration=None):
     """Build pagination information for the response"""
     import math
     from config.validation import TimezoneUtils
@@ -423,6 +441,10 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                 start_time__gte=start_time,
                 start_time__lt=end_time
             )
+        
+        # Apply duration filter if provided
+        if duration is not None:
+            search_query = search_query.filter(duration_seconds__gte=duration)
         
         # Apply search filters
         search_query = apply_search_filters(search_query, search_text, search_in)
@@ -490,6 +512,10 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                 page_filter = {
                     'channel': channel,
                 }
+                # Add duration filter if provided
+                if duration is not None:
+                    page_filter['duration_seconds__gte'] = duration
+                
                 page_query = AudioSegmentsModel.objects.filter(**page_filter)
                 if had_intersection:
                     page_query = page_query.filter(time_conditions)
@@ -520,6 +546,10 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                         'start_time__gte': page_start,
                         'start_time__lt': page_end
                     }
+                # Add duration filter if provided
+                if duration is not None:
+                    page_filter['duration_seconds__gte'] = duration
+                
                 page_query = AudioSegmentsModel.objects.filter(**page_filter)
             
             # Apply search filters if they exist
