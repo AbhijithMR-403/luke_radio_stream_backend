@@ -47,6 +47,13 @@ def validate_audio_segments_parameters(request):
     if not channel_pk:
         return None, JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
     
+    # Validate that start_datetime and end_datetime are both provided
+    if not start_datetime:
+        return None, JsonResponse({'success': False, 'error': 'start_datetime is required'}, status=400)
+    
+    if not end_datetime:
+        return None, JsonResponse({'success': False, 'error': 'end_datetime is required'}, status=400)
+    
     # Validate that only one filtering mechanism is used at a time
     if shift_id and predefined_filter_id:
         return None, JsonResponse({'success': False, 'error': 'Cannot use both shift_id and predefined_filter_id simultaneously'}, status=400)
@@ -118,26 +125,18 @@ def get_channel_and_shift(params):
 
 def parse_datetime_parameters(params):
     """Parse and validate datetime parameters"""
-    if params['start_datetime']:
-        base_start_dt = parse_dt(params['start_datetime'])
-        if not base_start_dt:
-            return None, None, JsonResponse({'success': False, 'error': 'Invalid start_datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS) or YYYY-MM-DD HH:MM:SS'}, status=400)
-    else:
-        # Default to today if no start_datetime provided
-        base_start_dt = timezone.make_aware(datetime.combine(timezone.now().date(), datetime.min.time()))
+    # Both start_datetime and end_datetime are required (validated in validate_audio_segments_parameters)
+    base_start_dt = parse_dt(params['start_datetime'])
+    if not base_start_dt:
+        return None, None, JsonResponse({'success': False, 'error': 'Invalid start_datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS) or YYYY-MM-DD HH:MM:SS'}, status=400)
     
-    if params['end_datetime']:
-        base_end_dt = parse_dt(params['end_datetime'])
-        if not base_end_dt:
-            return None, None, JsonResponse({'success': False, 'error': 'Invalid end_datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS) or YYYY-MM-DD HH:MM:SS'}, status=400)
-    else:
-        # Default to 7 days from base_start_dt if no end_datetime provided
-        base_end_dt = base_start_dt + timezone.timedelta(days=7)
+    base_end_dt = parse_dt(params['end_datetime'])
+    if not base_end_dt:
+        return None, None, JsonResponse({'success': False, 'error': 'Invalid end_datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS) or YYYY-MM-DD HH:MM:SS'}, status=400)
     
-    # Ensure we don't exceed 7 days limit
-    max_end_dt = base_start_dt + timezone.timedelta(days=7)
-    if base_end_dt > max_end_dt:
-        base_end_dt = max_end_dt
+    # Validate that end_datetime is after start_datetime
+    if base_end_dt <= base_start_dt:
+        return None, None, JsonResponse({'success': False, 'error': 'end_datetime must be after start_datetime'}, status=400)
     
     return base_start_dt, base_end_dt, None
 

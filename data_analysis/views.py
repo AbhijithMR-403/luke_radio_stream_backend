@@ -386,8 +386,8 @@ class AudioSegments(View):
     
     Query Parameters:
     - channel_id (required): Channel ID to filter segments
-    - start_datetime (optional): Start datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
-    - end_datetime (optional): End datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
+    - start_datetime (required): Start datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
+    - end_datetime (required): End datetime filter (ISO format or YYYY-MM-DD HH:MM:SS)
     - shift_id (optional): Shift ID to filter segments by shift time windows
     - predefined_filter_id (optional): PredefinedFilter ID to filter segments by filter schedule time windows
     - duration (optional): Minimum duration in seconds - only segments with duration >= this value will be returned
@@ -401,18 +401,17 @@ class AudioSegments(View):
     - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'title'
     
     Note: If search_text is provided, search_in must also be provided with a valid option.
-    Maximum time range is 7 days from start_datetime.
     When shift_id or predefined_filter_id is provided, segments are filtered to only include those within the time windows.
     Cannot use both shift_id and predefined_filter_id simultaneously.
     When duration is provided, only segments with duration_seconds >= duration will be included in the results.
     
     Example URLs:
-    - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&page=1&page_size=1
-    - /api/audio-segments/?channel_id=1&search_text=music&search_in=transcription&page=2
-    - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
-    - /api/audio-segments/?channel_id=1&shift_id=1&start_datetime=2025-01-01&page=1
-    - /api/audio-segments/?channel_id=1&predefined_filter_id=1&start_datetime=2025-01-01&page=1
-    - /api/audio-segments/?channel_id=1&duration=30&start_datetime=2025-01-01&page=1
+    - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1&page_size=1
+    - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&search_text=music&search_in=transcription&page=2
+    - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-08&page=1
+    - /api/audio-segments/?channel_id=1&shift_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
+    - /api/audio-segments/?channel_id=1&predefined_filter_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
+    - /api/audio-segments/?channel_id=1&duration=30&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
     """
     def get(self, request, *args, **kwargs):
         try:

@@ -222,58 +222,6 @@ class AudioSegments(models.Model):
             if not isinstance(self.metadata_json, dict):
                 raise ValidationError("metadata_json must be a dictionary")
 
-    def set_metadata(self, metadata_dict):
-        """
-        Set metadata from music recognition data
-        
-        Args:
-            metadata_dict (dict): Dictionary containing metadata like artists, albums, etc.
-        """
-        if not isinstance(metadata_dict, dict):
-            raise ValidationError("metadata_dict must be a dictionary")
-        
-        self.metadata_json = metadata_dict
-        self.save(update_fields=['metadata_json'])
-
-    def get_artists(self):
-        """
-        Get list of artists from metadata
-        
-        Returns:
-            list: List of artist names, empty list if no artists found
-        """
-        if not self.metadata_json:
-            return []
-        
-        artists = self.metadata_json.get('artists', [])
-        if isinstance(artists, list):
-            return [artist.get('name', '') for artist in artists if isinstance(artist, dict) and artist.get('name')]
-        return []
-
-    def get_external_metadata(self):
-        """
-        Get external metadata (Spotify, Deezer, etc.) from metadata
-        
-        Returns:
-            dict: External metadata dictionary, empty dict if not found
-        """
-        if not self.metadata_json:
-            return {}
-        
-        return self.metadata_json.get('external_metadata', {})
-
-    def get_external_ids(self):
-        """
-        Get external IDs (UPC, ISRC, etc.) from metadata
-        
-        Returns:
-            dict: External IDs dictionary, empty dict if not found
-        """
-        if not self.metadata_json:
-            return {}
-        
-        return self.metadata_json.get('external_ids', {})
-
     class Meta:
         ordering = ['start_time']
         indexes = [
@@ -281,8 +229,11 @@ class AudioSegments(models.Model):
             models.Index(fields=['channel']),
             # Index for start_time range queries (used in API filters)
             models.Index(fields=['start_time']),
-            # Composite index for channel + start_time (most efficient for API queries)
+            # Composite index for channel + start_time (most efficient for API queries without duration)
             models.Index(fields=['channel', 'start_time']),
+            # Composite index for channel + start_time + duration_seconds (optimal for API queries with duration filter)
+            # This index can also be used efficiently for queries without duration (using prefix)
+            models.Index(fields=['channel', 'start_time', 'duration_seconds']),
             # Index for active segments filtering
             models.Index(fields=['is_active']),
             # Index for recognized segments filtering
