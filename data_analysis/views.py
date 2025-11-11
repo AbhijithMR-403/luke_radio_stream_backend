@@ -364,6 +364,7 @@ class AudioSegmentsWithTranscriptionView(View):
                             'general_topics': analysis.general_topics,
                             'iab_topics': analysis.iab_topics,
                             'bucket_prompt': analysis.bucket_prompt,
+                            'content_type_prompt': analysis.content_type_prompt,
                             'created_at': analysis.created_at.isoformat() if analysis.created_at else None
                         }
                     except AttributeError:
@@ -428,7 +429,7 @@ class AudioSegments(View):
     
     Search Parameters:
     - search_text (optional): Text to search for
-    - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'title'
+    - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'content_type_prompt', 'title'
     
     Note: If search_text is provided, search_in must also be provided with a valid option.
     When shift_id or predefined_filter_id is provided, segments are filtered to only include those within the time windows.
@@ -594,6 +595,7 @@ class AudioTranscriptionAndAnalysisView(View):
                         'general_topics': analysis.general_topics,
                         'iab_topics': analysis.iab_topics,
                         'bucket_prompt': analysis.bucket_prompt,
+                        'content_type_prompt': analysis.content_type_prompt,
                         'created_at': analysis.created_at.isoformat()
                     }
                 except:

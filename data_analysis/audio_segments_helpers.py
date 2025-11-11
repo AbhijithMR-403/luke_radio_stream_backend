@@ -66,7 +66,7 @@ def validate_audio_segments_parameters(request):
         return None, JsonResponse({'success': False, 'error': 'search_text parameter is required when search_in is provided'}, status=400)
     
     # Validate search_in options
-    valid_search_options = ['transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'title']
+    valid_search_options = ['transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'content_type_prompt', 'title']
     if search_in and search_in not in valid_search_options:
         return None, JsonResponse({
             'success': False, 
@@ -392,6 +392,12 @@ def apply_search_filters(base_query, search_text, search_in):
         # Search in summary
         base_query = base_query.filter(
             transcription_detail__analysis__summary__icontains=search_text
+        )
+        filter_applied = True
+    elif search_in == 'content_type_prompt':
+        # Search in content type prompt
+        base_query = base_query.filter(
+            transcription_detail__analysis__content_type_prompt__icontains=search_text
         )
         filter_applied = True
     elif search_in == 'title':

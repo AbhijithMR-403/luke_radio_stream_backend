@@ -10,6 +10,7 @@ class TranscriptionAnalysisSerializer(serializers.Serializer):
     general_topics = serializers.CharField(allow_null=True)
     iab_topics = serializers.CharField(allow_null=True)
     bucket_prompt = serializers.CharField(allow_null=True)
+    content_type_prompt = serializers.CharField(allow_null=True)
     created_at = serializers.DateTimeField(allow_null=True)
 
 
@@ -170,6 +171,7 @@ class AudioSegmentsSerializer:
                         'general_topics': analysis.general_topics,
                         'iab_topics': analysis.iab_topics,
                         'bucket_prompt': analysis.bucket_prompt,
+                        'content_type_prompt': analysis.content_type_prompt,
                         'created_at': TimezoneUtils.convert_to_channel_tz(analysis.created_at, channel_tz)
                     }
                 except AttributeError:
