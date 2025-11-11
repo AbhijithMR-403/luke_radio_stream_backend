@@ -63,6 +63,54 @@ class AudioSegmentsApiResponseSerializer(serializers.Serializer):
     channel_info = ChannelInfoSerializer()
 
 
+class AudioSegmentBulkUpdateRequestSerializer(serializers.Serializer):
+    """Serializer for bulk update request"""
+    segment_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False,
+        help_text="List of segment IDs to update"
+    )
+    is_active = serializers.BooleanField(
+        help_text="Active status to set for all segments"
+    )
+
+    def validate_segment_ids(self, value):
+        """Validate that segment_ids list is not empty and contains only positive integers"""
+        if not value:
+            raise serializers.ValidationError("segment_ids list cannot be empty")
+        
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("segment_ids must be unique")
+        
+        for segment_id in value:
+            if segment_id <= 0:
+                raise serializers.ValidationError(f"segment_id must be a positive integer, got: {segment_id}")
+        
+        return value
+
+
+class UpdatedSegmentSerializer(serializers.Serializer):
+    """Serializer for individual updated segment in response"""
+    segment_id = serializers.IntegerField()
+    is_active = serializers.BooleanField()
+    start_time = serializers.DateTimeField(allow_null=True)
+    end_time = serializers.DateTimeField(allow_null=True)
+
+
+class AudioSegmentBulkUpdateResponseDataSerializer(serializers.Serializer):
+    """Serializer for bulk update response data"""
+    updated_count = serializers.IntegerField()
+    is_active = serializers.BooleanField()
+    segments = UpdatedSegmentSerializer(many=True)
+
+
+class AudioSegmentBulkUpdateResponseSerializer(serializers.Serializer):
+    """Serializer for bulk update response"""
+    success = serializers.BooleanField()
+    message = serializers.CharField()
+    data = AudioSegmentBulkUpdateResponseDataSerializer()
+
+
 class AudioSegmentsSerializer:
     """
     Custom serializer class to handle the complex data transformation

@@ -20,7 +20,7 @@ from acr_admin.models import Channel
 from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionQueue
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.tasks import analyze_transcription_task
-from data_analysis.serializers import AudioSegmentsSerializer
+from data_analysis.serializers import AudioSegmentsSerializer, AudioSegmentBulkUpdateRequestSerializer
 
 # Import helper functions from the separate module
 from .audio_segments_helpers import (
@@ -54,44 +54,74 @@ def parse_dt(value):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
-class AudioSegmentIsActiveUpdateView(APIView):
+class AudioSegmentBulkIsActiveUpdateView(APIView):
     permission_classes = [IsAdminUser]
 
-    def patch(self, request, segment_id, *args, **kwargs):
-        return self._update_is_active(request, segment_id)
-
-    def _update_is_active(self, request, segment_id):
+    def patch(self, request, *args, **kwargs):
         try:
-            payload = request.data if hasattr(request, 'data') else json.loads(request.body)
-            if not isinstance(payload, dict):
-                return Response({'success': False, 'error': 'Expected JSON object body'}, status=status.HTTP_400_BAD_REQUEST)
+            # Parse request data
+            if hasattr(request, 'data'):
+                payload = request.data
+            else:
+                try:
+                    payload = json.loads(request.body)
+                except json.JSONDecodeError:
+                    return Response({'success': False, 'error': 'Invalid JSON body'}, status=status.HTTP_400_BAD_REQUEST)
 
-            if 'is_active' not in payload:
-                return Response({'success': False, 'error': 'is_active is required'}, status=status.HTTP_400_BAD_REQUEST)
+            # Validate request data using serializer
+            serializer = AudioSegmentBulkUpdateRequestSerializer(data=payload)
+            if not serializer.is_valid():
+                return Response({
+                    'success': False,
+                    'error': 'Validation failed',
+                    'details': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
 
-            is_active_value = bool(payload.get('is_active'))
+            validated_data = serializer.validated_data
+            segment_ids = validated_data['segment_ids']
+            is_active_value = validated_data['is_active']
 
-            try:
-                segment = AudioSegmentsModel.objects.get(id=segment_id)
-            except AudioSegmentsModel.DoesNotExist:
-                return Response({'success': False, 'error': 'Audio segment not found'}, status=status.HTTP_404_NOT_FOUND)
+            # Fetch all segments at once
+            segments = AudioSegmentsModel.objects.filter(id__in=segment_ids)
+            found_ids = set(segments.values_list('id', flat=True))
+            not_found_ids = set(segment_ids) - found_ids
 
-            segment.is_active = is_active_value
-            segment.is_manually_processed = True
-            segment.save(update_fields=['is_active', 'is_manually_processed'])
+            if not_found_ids:
+                return Response({
+                    'success': False,
+                    'error': f'Audio segments not found: {sorted(not_found_ids)}'
+                }, status=status.HTTP_404_NOT_FOUND)
 
-            return Response({
+            # Bulk update all segments
+            updated_count = segments.update(
+                is_active=is_active_value,
+                is_manually_processed=True
+            )
+
+            # Fetch updated segments for response (refresh from database)
+            updated_segments = AudioSegmentsModel.objects.filter(id__in=segment_ids).values('id', 'is_active', 'start_time', 'end_time')
+
+            # Build response
+            response_data = {
                 'success': True,
-                'message': 'Audio segment updated',
+                'message': f'Successfully updated {updated_count} audio segment(s)',
                 'data': {
-                    'segment_id': segment.id,
-                    'is_active': segment.is_active,
-                    'start_time': segment.start_time.isoformat(),
-                    'end_time': segment.end_time.isoformat()
+                    'updated_count': updated_count,
+                    'is_active': is_active_value,
+                    'segments': [
+                        {
+                            'segment_id': seg['id'],
+                            'is_active': seg['is_active'],
+                            'start_time': seg['start_time'].isoformat() if seg['start_time'] else None,
+                            'end_time': seg['end_time'].isoformat() if seg['end_time'] else None
+                        }
+                        for seg in updated_segments
+                    ]
                 }
-            })
-        except json.JSONDecodeError:
-            return Response({'success': False, 'error': 'Invalid JSON body'}, status=status.HTTP_400_BAD_REQUEST)
+            }
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
         except Exception as e:
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
