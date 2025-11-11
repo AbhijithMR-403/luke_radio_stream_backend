@@ -148,6 +148,28 @@ class TranscriptionAnalyzer:
         else:
             print("No wellness bucket prompt available, skipping bucket analysis")
 
+        # Content type classification using GeneralSetting.content_type_prompt
+        content_type_result = ""
+        try:
+            content_type_definitions = settings.content_type_prompt or ""
+            if content_type_definitions and content_type_definitions.strip():
+                content_type_instruction = (
+                    "This is a transcript of a radio station, using you knowledge of radio station production "
+                    "I would like you to determine with 0.8% or greater accuracy which one of the following "
+                    "typical radio station segments this content is: "
+                    f"{content_type_definitions} "
+                    "Output a comma-separated value of the segment type only and the percentage confidence measured "
+                    "in whole percenatges i.e. 75%, include the % please. Where you cannot identify any decipherable "
+                    "text just return an empty result"
+                )
+                content_type_resp = client.chat.completions.create(
+                    **{k: v for k, v in chat_params(content_type_instruction, transcript, 30).items() if v is not None}
+                )
+                content_type_result = content_type_resp.choices[0].message.content.strip()
+                print(content_type_result)
+        except Exception as e:
+            print(f"Error generating content type classification: {e}")
+
         # Store in TranscriptionAnalysis
         try:
             analysis = TranscriptionAnalysis.objects.create(
@@ -156,7 +178,8 @@ class TranscriptionAnalyzer:
                 sentiment=sentiment,
                 general_topics=general_topics,
                 iab_topics=iab_topics,
-                bucket_prompt=wellness_buckets
+                bucket_prompt=wellness_buckets,
+                content_type_prompt=content_type_result
             )
             print(f"Created new transcription analysis for transcription_detail {transcription_detail.id}")
             return analysis

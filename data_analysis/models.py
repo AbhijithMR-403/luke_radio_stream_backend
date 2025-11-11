@@ -115,6 +115,7 @@ class TranscriptionAnalysis(models.Model):
     general_topics = models.TextField(help_text="General topics identified in the transcript")
     iab_topics = models.TextField(help_text="IAB topics identified in the transcript")
     bucket_prompt = models.TextField(help_text="Bucket prompt for categorization")
+    content_type_prompt = models.TextField(null=True, blank=True, help_text="Content type classification result")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

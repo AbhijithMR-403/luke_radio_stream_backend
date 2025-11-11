@@ -33,6 +33,7 @@ def general_setting_to_dict(settings):
         'chatgpt_frequency_penalty': settings.chatgpt_frequency_penalty,
         'chatgpt_presence_penalty': settings.chatgpt_presence_penalty,
         'determine_radio_content_type_prompt': settings.determine_radio_content_type_prompt,
+        'content_type_prompt': settings.content_type_prompt,
         'radio_segment_types': settings.radio_segment_types,
         'radio_segment_error_rate': settings.radio_segment_error_rate,
     }

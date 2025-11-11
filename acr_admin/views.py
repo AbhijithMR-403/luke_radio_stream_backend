@@ -45,7 +45,7 @@ class SettingsAndBucketsView(View):
                 'summarize_transcript_prompt', 'sentiment_analysis_prompt', 'general_topics_prompt', 'iab_topics_prompt',
                 'bucket_definition_error_rate', 'chatgpt_model', 'chatgpt_max_tokens',
                 'chatgpt_temperature', 'chatgpt_top_p', 'chatgpt_frequency_penalty', 'chatgpt_presence_penalty',
-                'determine_radio_content_type_prompt', 'radio_segment_types', 'radio_segment_error_rate'
+                'determine_radio_content_type_prompt', 'content_type_prompt', 'radio_segment_types', 'radio_segment_error_rate'
             ]
             for field in general_setting_fields:
                 if field in settings_data:
