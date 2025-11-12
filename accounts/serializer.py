@@ -19,10 +19,6 @@ class PasswordSetupSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=64, min_length=64)
     password = serializers.CharField(min_length=8)
 
-class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField()
-
 class ChannelSerializer(serializers.ModelSerializer):
     class Meta:
         model = Channel

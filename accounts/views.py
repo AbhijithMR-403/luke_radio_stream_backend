@@ -5,12 +5,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from django.contrib.auth import authenticate
 from django.utils import timezone
 from .models import RadioUser, UserChannelAssignment, MagicLink
 from .serializer import (
     UserSerializer, UserChannelAssignmentSerializer, AssignChannelSerializer,
-    AdminCreateUserSerializer, MagicLinkVerificationSerializer, PasswordSetupSerializer, LoginSerializer,
+    AdminCreateUserSerializer, MagicLinkVerificationSerializer, PasswordSetupSerializer,
     CustomTokenObtainPairSerializer, ChannelSerializer
 )
 from .utils import generate_and_send_magic_link
@@ -235,29 +236,6 @@ class SetPasswordView(APIView):
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# User: Login with email and password
-class LoginView(APIView):
-    def post(self, request):
-        print("request.data")
-        serializer = LoginSerializer(data=request.data)
-        if serializer.is_valid():
-            email = serializer.validated_data['email']
-            password = serializer.validated_data['password']
-            
-            user = authenticate(email=email, password=password)
-            if user and user.is_active and user.password_set:
-                # Create or get token
-                token, created = Token.objects.get_or_create(user=user)
-                return Response({
-                    'message': 'Login successful.',
-                    'token': token.key,
-                    'user': UserSerializer(user).data
-                }, status=status.HTTP_200_OK)
-            else:
-                return Response({'error': 'Invalid credentials or user not properly set up.'}, status=status.HTTP_401_UNAUTHORIZED)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 # User: Resend magic link
 class ResendMagicLinkView(APIView):
     def post(self, request):
@@ -280,6 +258,36 @@ class ResendMagicLinkView(APIView):
 # Custom JWT Token Views
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+
+    def post(self, request, *args, **kwargs):
+        data = request.data.copy()
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
+
+        try:
+            user = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            return Response({'error': 'Email not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not user.is_active:
+            return Response({'error': 'Account is inactive. Please contact your administrator.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not user.password_set:
+            return Response({'error': 'Account setup incomplete. Please set your password via the magic link.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not user.check_password(password):
+            return Response({'error': 'Invalid credentials.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        data['email'] = user.email
+
+        serializer = self.get_serializer(data=data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as e:
+            raise InvalidToken(e.args[0])
+
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
+
 
 class CustomTokenRefreshView(TokenRefreshView):
     def post(self, request, *args, **kwargs):
