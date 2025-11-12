@@ -245,6 +245,22 @@ class ResendMagicLinkView(APIView):
         except User.DoesNotExist:
             return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
         
+        # Check if a magic link was recently sent (within last 60 seconds)
+        recent_magic_link = MagicLink.objects.filter(
+            user=user
+        ).order_by('-created_at').first()
+        
+        if recent_magic_link:
+            time_since_sent = timezone.now() - recent_magic_link.created_at
+            time_gap_seconds = 120  # 60 seconds gap between email sends
+            
+            if time_since_sent.total_seconds() < time_gap_seconds:
+                remaining_seconds = int(time_gap_seconds - time_since_sent.total_seconds())
+                return Response({
+                    'error': f'Please wait {remaining_seconds} more seconds before requesting a new magic link.',
+                    'seconds_remaining': remaining_seconds
+                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        
         # Generate and send new magic link
         magic_link = generate_and_send_magic_link(user)
         if magic_link:
