@@ -6,11 +6,16 @@ from acr_admin.models import Channel
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = RadioUser
-        fields = ['id', 'email', 'name', 'password_set', 'is_admin']
+        fields = ['id', 'email', 'name', 'password_set', 'is_admin', 'is_active']
 
 class AdminCreateUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
     name = serializers.CharField(max_length=255)
+    is_active = serializers.BooleanField(required=False)
+
+class AdminUpdateUserSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255, required=False)
+    is_active = serializers.BooleanField(required=False)
 
 class MagicLinkVerificationSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=64, min_length=64)

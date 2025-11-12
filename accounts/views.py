@@ -11,7 +11,7 @@ from django.utils import timezone
 from .models import RadioUser, UserChannelAssignment, MagicLink
 from .serializer import (
     UserSerializer, UserChannelAssignmentSerializer, AssignChannelSerializer,
-    AdminCreateUserSerializer, MagicLinkVerificationSerializer, PasswordSetupSerializer,
+    AdminCreateUserSerializer, AdminUpdateUserSerializer, MagicLinkVerificationSerializer, PasswordSetupSerializer,
     CustomTokenObtainPairSerializer, ChannelSerializer
 )
 from .utils import generate_and_send_magic_link
@@ -67,18 +67,15 @@ class AdminUpdateUserView(APIView):
         except User.DoesNotExist:
             return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
         
-        serializer = AdminCreateUserSerializer(data=request.data)
+        serializer = AdminUpdateUserSerializer(data=request.data)
         if serializer.is_valid():
-            email = serializer.validated_data['email']
-            name = serializer.validated_data['name']
             
-            # Check if email is being changed and if new email already exists
-            if user.email != email and User.objects.filter(email=email).exists():
-                return Response({'error': 'User with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+            if 'name' in serializer.validated_data:
+                user.name = serializer.validated_data['name']
             
-            # Update user information
-            user.email = email
-            user.name = name
+            if 'is_active' in serializer.validated_data:
+                user.is_active = serializer.validated_data['is_active']
+            
             user.save()
             
             return Response({
