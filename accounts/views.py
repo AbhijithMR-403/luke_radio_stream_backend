@@ -94,6 +94,30 @@ class AdminListUsersView(APIView):
         serializer = UserSerializer(users, many=True)
         return Response(serializer.data)
 
+# Admin: Delete user
+class AdminDeleteUserView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def delete(self, request, user_id):
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Prevent admin from deleting themselves
+        if user.id == request.user.id:
+            return Response({'error': 'You cannot delete your own account.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Store user email for response before deletion
+        user_email = user.email
+        
+        # Delete the user (related objects will be deleted via CASCADE)
+        user.delete()
+        
+        return Response({
+            'message': f'User {user_email} deleted successfully.'
+        }, status=status.HTTP_200_OK)
+
 # Admin: Assign channel to user
 class AdminAssignChannelView(APIView):
     permission_classes = [IsAdminUser]

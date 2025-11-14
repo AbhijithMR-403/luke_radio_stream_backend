@@ -1,7 +1,7 @@
 
 from django.urls import path
 from .views import (
-    AdminCreateUserView, AdminUpdateUserView, AdminListUsersView, AdminAssignChannelView, AdminUnassignChannelView, UserChannelsView,
+    AdminCreateUserView, AdminUpdateUserView, AdminListUsersView, AdminDeleteUserView, AdminAssignChannelView, AdminUnassignChannelView, UserChannelsView,
     VerifyMagicLinkView, SetPasswordView, ResendMagicLinkView,
     CustomTokenObtainPairView, CustomTokenRefreshView
 )
@@ -11,6 +11,7 @@ urlpatterns = [
 	# Admin endpoints
 	path('admin/create-user/', AdminCreateUserView.as_view(), name='admin-create-user'),
 	path('admin/update-user/<int:user_id>/', AdminUpdateUserView.as_view(), name='admin-update-user'),
+	path('admin/delete-user/<int:user_id>/', AdminDeleteUserView.as_view(), name='admin-delete-user'),
 	path('admin/list-users/', AdminListUsersView.as_view(), name='admin-list-users'),
 	path('admin/assign-channel/', AdminAssignChannelView.as_view(), name='admin-assign-channel'),
 	path('admin/unassign-channel/', AdminUnassignChannelView.as_view(), name='admin-unassign-channel'),
