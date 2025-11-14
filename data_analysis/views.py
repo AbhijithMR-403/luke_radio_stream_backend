@@ -422,6 +422,7 @@ class AudioSegments(View):
     - shift_id (optional): Shift ID to filter segments by shift time windows
     - predefined_filter_id (optional): PredefinedFilter ID to filter segments by filter schedule time windows
     - duration (optional): Minimum duration in seconds - only segments with duration >= this value will be returned
+    - show_flagged_only (optional): When set to 'true', returns only segments that have exceeded flag thresholds (requires shift_id)
     
     Pagination Parameters:
     - page (optional): Page number (default: 1)
@@ -435,6 +436,8 @@ class AudioSegments(View):
     When shift_id or predefined_filter_id is provided, segments are filtered to only include those within the time windows.
     Cannot use both shift_id and predefined_filter_id simultaneously.
     When duration is provided, only segments with duration_seconds >= duration will be included in the results.
+    When show_flagged_only is set to 'true', pagination is disabled and only segments with flags (e.g., duration exceeded) are returned.
+    show_flagged_only requires shift_id to be provided and the shift must have flag_seconds configured.
     
     Example URLs:
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1&page_size=1
@@ -443,6 +446,7 @@ class AudioSegments(View):
     - /api/audio-segments/?channel_id=1&shift_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
     - /api/audio-segments/?channel_id=1&predefined_filter_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
     - /api/audio-segments/?channel_id=1&duration=30&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
+    - /api/audio-segments/?channel_id=1&shift_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&show_flagged_only=true
     """
     def get(self, request, *args, **kwargs):
         try:
@@ -506,7 +510,76 @@ class AudioSegments(View):
                         }
                     })
             
-            # Step 5: Calculate pagination window
+            # Handle show_flagged_only mode - skip pagination and return only flagged segments
+            if params.get('show_flagged_only') and shift:
+                # Check if shift has flag_seconds configured
+                if getattr(shift, 'flag_seconds', None) is None:
+                    from config.validation import TimezoneUtils
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Shift does not have flag_seconds configured. Cannot filter flagged segments.'
+                    }, status=400)
+                
+                # Use full time range (no pagination)
+                current_page_start = base_start_dt
+                current_page_end = base_end_dt
+                is_last_page = True
+                
+                # Build base query for entire time range
+                base_query = build_base_query(channel, current_page_start, current_page_end, valid_windows, is_last_page, params['duration'])
+                
+                # Apply search filters if provided
+                base_query = apply_search_filters(base_query, params['search_text'], params['search_in'])
+                
+                # Execute the query
+                db_segments = base_query.order_by('start_time')
+                
+                # Serialize segments
+                all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments, channel.timezone)
+                
+                # Add flags to all segments and filter to only flagged ones
+                try:
+                    threshold = int(shift.flag_seconds)
+                except Exception:
+                    threshold = None
+                
+                if threshold is not None:
+                    flagged_segments = []
+                    for seg in all_segments:
+                        duration = seg.get('duration_seconds') or 0
+                        exceeded = bool(duration > threshold)
+                        message = f"Duration exceeded limit by {int(duration - threshold)} seconds" if exceeded else ""
+                        seg['flag'] = {
+                            'duration': {
+                                'exceeded': exceeded,
+                                'message': message
+                            }
+                        }
+                        # Only include segments that have exceeded the threshold
+                        if exceeded:
+                            flagged_segments.append(seg)
+                    
+                    all_segments = flagged_segments
+                
+                # Build response without pagination
+                response_data = AudioSegmentsSerializer.build_response(all_segments, channel)
+                from config.validation import TimezoneUtils
+                response_data['pagination'] = {
+                    'current_page': 1,
+                    'page_size': None,  # No pagination in flagged-only mode
+                    'available_pages': [],
+                    'total_pages': 1,
+                    'time_range': {
+                        'start': TimezoneUtils.convert_to_channel_tz(base_start_dt, channel.timezone),
+                        'end': TimezoneUtils.convert_to_channel_tz(base_end_dt, channel.timezone)
+                    },
+                    'flagged_only_mode': True
+                }
+                response_data['has_data'] = len(all_segments) > 0
+                
+                return JsonResponse(response_data)
+            
+            # Step 5: Calculate pagination window (normal mode)
             current_page_start, current_page_end, is_last_page, error_response = calculate_pagination_window(
                 base_start_dt, base_end_dt, params['page'], params['page_size'], 
                 params['search_text'], params['search_in'], valid_windows

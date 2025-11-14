@@ -44,6 +44,9 @@ def validate_audio_segments_parameters(request):
     # Duration filter parameter
     duration = request.GET.get('duration')
     
+    # Flagged only parameter
+    show_flagged_only = request.GET.get('show_flagged_only', 'false').lower() == 'true'
+    
     if not channel_pk:
         return None, JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
     
@@ -83,6 +86,13 @@ def validate_audio_segments_parameters(request):
         except (ValueError, TypeError):
             return None, JsonResponse({'success': False, 'error': 'duration must be a valid integer'}, status=400)
     
+    # Validate show_flagged_only parameter
+    if show_flagged_only and not shift_id:
+        return None, JsonResponse({
+            'success': False, 
+            'error': 'show_flagged_only requires shift_id to be provided'
+        }, status=400)
+    
     return {
         'channel_pk': channel_pk,
         'start_datetime': start_datetime,
@@ -93,7 +103,8 @@ def validate_audio_segments_parameters(request):
         'page_size': page_size,
         'search_text': search_text,
         'search_in': search_in,
-        'duration': duration_value
+        'duration': duration_value,
+        'show_flagged_only': show_flagged_only
     }, None
 
 
