@@ -110,28 +110,26 @@ class ProcessSegmentsView(APIView):
             results = []
             errors = []
 
-            # Case 1: Process a list of existing segment IDs (cluster by <=2s gaps and segregate)
+            # Case 1: Process a list of existing segment IDs (find min start_time and max end_time)
             if isinstance(segment_ids, list) and len(segment_ids) > 0:
                 # Require at least 2 segment IDs
                 if len(segment_ids) < 2:
                     return Response({'success': False, 'error': 'At least 2 segment_ids are required'}, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Fetch all segments; preserve only found IDs, report not found
+                # Fetch all segments that exist
                 db_segments = (
                     AudioSegmentsModel.objects
                     .filter(id__in=segment_ids)
                     .select_related('channel')
                     .only('id', 'start_time', 'end_time', 'duration_seconds', 'file_path', 'channel__id', 'channel__project_id', 'channel__channel_id', 'channel__timezone')
                 )
-                found_by_id = {s.id: s for s in db_segments}
-                for sid in segment_ids:
-                    if sid not in found_by_id:
-                        errors.append({'segment_id': sid, 'error': 'Segment not found'})
-                if not found_by_id:
+                found_segments = list(db_segments)
+                
+                if not found_segments:
                     return Response({'success': False, 'error': 'No valid segment_ids found'}, status=status.HTTP_400_BAD_REQUEST)
 
                 # Validate all segments are from the same channel
-                unique_channels = set(seg.channel.id for seg in found_by_id.values())
+                unique_channels = set(seg.channel.id for seg in found_segments)
                 if len(unique_channels) > 1:
                     return Response({
                         'success': False,
@@ -139,65 +137,17 @@ class ProcessSegmentsView(APIView):
                         'channels': list(unique_channels)
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-                # Validate channels and sort by time
-                segments_sorted = sorted(found_by_id.values(), key=lambda s: s.start_time)
-
-                # Cluster by <=2s gap (all segments are already from same channel)
-                def cluster_by_gap(segs):
-                    groups = []
-                    current = []
-                    for seg in segs:
-                        if not current:
-                            current = [seg]
-                            continue
-                        prev = current[-1]
-                        gap = (seg.start_time - prev.end_time).total_seconds()
-                        if gap <= 2:
-                            current.append(seg)
-                        else:
-                            groups.append(current)
-                            current = [seg]
-                    if current:
-                        groups.append(current)
-                    return groups
-
-                all_groups = cluster_by_gap(segments_sorted)
-
-                # Build groups metadata for response
-                groups_meta = []
-                for grp in all_groups:
-                    grp_sorted = sorted(grp, key=lambda s: s.start_time)
-                    gaps = []
-                    for i in range(1, len(grp_sorted)):
-                        gaps.append((grp_sorted[i].start_time - grp_sorted[i-1].end_time).total_seconds())
-                    groups_meta.append({
-                        'segment_ids': [s.id for s in grp_sorted],
-                        'channel_id': grp_sorted[0].channel.id if grp_sorted and grp_sorted[0].channel else None,
-                        'start_time': grp_sorted[0].start_time.isoformat() if grp_sorted else None,
-                        'end_time': grp_sorted[-1].end_time.isoformat() if grp_sorted else None,
-                        'total_duration_seconds': int((grp_sorted[-1].end_time - grp_sorted[0].start_time).total_seconds()) if grp_sorted else 0,
-                        'gaps_seconds': gaps,
-                    })
-
-                # Only allow one audio download at a time
-                if len(all_groups) != 1:
-                    return Response({
-                        'success': False,
-                        'error': 'Multiple groups detected. Submit one group at a time.',
-                        'data': { 'groups': groups_meta }
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-                # Create one combined segment for the single group and download its audio
-                grp = sorted(all_groups[0], key=lambda s: s.start_time)
-                combined_start = grp[0].start_time
-                combined_end = grp[-1].end_time
-                channel = grp[0].channel
+                # Find the smallest start_time and greatest end_time from all segments
+                combined_start = min(seg.start_time for seg in found_segments)
+                combined_end = max(seg.end_time for seg in found_segments)
+                channel = found_segments[0].channel
                 combined_duration = int((combined_end - combined_start).total_seconds())
+                
                 if combined_duration > 3600:
                     return Response({'success': False, 'error': 'Maximum allowed duration is 3600 seconds (1 hour)'}, status=status.HTTP_400_BAD_REQUEST)
 
                 try:
-                    source_ids = [s.id for s in grp]
+                    source_ids = [s.id for s in found_segments]
                     created_segment, media_url = _create_merged_segment(
                         channel,
                         combined_start,
