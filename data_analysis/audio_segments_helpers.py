@@ -328,6 +328,7 @@ def build_base_query(channel, current_page_start, current_page_end, valid_window
                     )
         filter_conditions = {
             'channel': channel,
+            'is_delete': False,
         }
     else:
         # Use inclusive end time for the last page to capture segments at exact end time
@@ -335,13 +336,15 @@ def build_base_query(channel, current_page_start, current_page_end, valid_window
             filter_conditions = {
                 'channel': channel,
                 'start_time__gte': current_page_start,
-                'start_time__lte': current_page_end
+                'start_time__lte': current_page_end,
+                'is_delete': False,
             }
         else:
             filter_conditions = {
                 'channel': channel,
                 'start_time__gte': current_page_start,
-                'start_time__lt': current_page_end
+                'start_time__lt': current_page_end,
+                'is_delete': False,
             }
         time_conditions = None
     
@@ -442,7 +445,7 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
             end_time = base_end_dt
             
         # Count segments for this search
-        search_query = AudioSegmentsModel.objects.filter(channel=channel)
+        search_query = AudioSegmentsModel.objects.filter(channel=channel, is_delete=False)
         if valid_windows:
             from django.db import models
             time_conditions = models.Q()
@@ -527,6 +530,7 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                 
                 page_filter = {
                     'channel': channel,
+                    'is_delete': False,
                 }
                 # Add duration filter if provided
                 if duration is not None:
@@ -554,13 +558,15 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                     page_filter = {
                         'channel': channel,
                         'start_time__gte': page_start,
-                        'start_time__lte': page_end
+                        'start_time__lte': page_end,
+                        'is_delete': False,
                     }
                 else:
                     page_filter = {
                         'channel': channel,
                         'start_time__gte': page_start,
-                        'start_time__lt': page_end
+                        'start_time__lt': page_end,
+                        'is_delete': False,
                     }
                 # Add duration filter if provided
                 if duration is not None:
