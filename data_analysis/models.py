@@ -149,6 +149,7 @@ class AudioSegments(models.Model):
     is_analysis_completed = models.BooleanField(default=False, help_text="Whether data analysis has been completed for this audio segment")
     is_audio_downloaded = models.BooleanField(default=False, help_text="Whether the audio file has been downloaded")
     is_manually_processed = models.BooleanField(default=False, help_text="Whether the segment was manually transcribed or analyzed")
+    is_delete = models.BooleanField(default=False, help_text="Whether the segment is marked for deletion (soft delete)")
     file_name = models.CharField(max_length=255)  # e.g., "def_channel_20250804_101500"
     file_path = models.CharField(max_length=512)  # e.g., "/mnt/audio_storage/def_channel_20250804_101500.wav"
     title = models.CharField(
@@ -187,10 +188,11 @@ class AudioSegments(models.Model):
 
     def __str__(self):
         status = "ACTIVE" if self.is_active else "INACTIVE"
+        deleted_status = " [DELETED]" if self.is_delete else ""
         if self.is_recognized and self.title:
-            return f"Recognized: {self.title} ({self.start_time} - {self.end_time}) [{status}]"
+            return f"Recognized: {self.title} ({self.start_time} - {self.end_time}) [{status}]{deleted_status}"
         else:
-            return f"Unrecognized: {self.start_time} - {self.end_time} ({self.duration_seconds}s) [{status}]"
+            return f"Unrecognized: {self.start_time} - {self.end_time} ({self.duration_seconds}s) [{status}]{deleted_status}"
 
     def clean(self):
         """Validate the model data"""
@@ -239,8 +241,12 @@ class AudioSegments(models.Model):
             models.Index(fields=['is_active']),
             # Index for recognized segments filtering
             models.Index(fields=['is_recognized']),
+            # Index for deleted segments filtering
+            models.Index(fields=['is_delete']),
             # Composite index for channel + is_active (common filter combination)
             models.Index(fields=['channel', 'is_active']),
+            # Composite index for channel + is_delete (common filter combination)
+            models.Index(fields=['channel', 'is_delete']),
             # Index for file_path uniqueness checks
             models.Index(fields=['file_path']),
         ] 

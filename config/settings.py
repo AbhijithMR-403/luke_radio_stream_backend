@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "segmentor",
     "shift_analysis",
     "support",
+    "logger",
 ]
 
 MIDDLEWARE = [

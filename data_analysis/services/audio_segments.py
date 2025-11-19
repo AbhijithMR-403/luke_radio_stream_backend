@@ -2,12 +2,16 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 import requests
 from typing import Optional
 import os
+import copy
 from django.utils import timezone
 from decouple import config
 from acr_admin.models import GeneralSetting, Channel
 from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
+from logger.repositories import AudioSegmentEditLogDAO
+from logger.models import AudioSegmentEditLog
+from logger.models import AudioSegmentEditLog
 
 from data_analysis.models import AudioSegments as AudioSegmentsModel
 from data_analysis.services.transcription_service import RevAISpeechToText
@@ -102,7 +106,7 @@ class AudioSegments:
 
 
     @staticmethod
-    def process_audio_data(data_list, channel=None):
+    def process_audio_data(data_list, channel=Channel|None):
         """
         Process data from custom_files or music format and create unrecognized audio segments.
         
@@ -257,9 +261,303 @@ class AudioSegments:
         return all_segments
 
     @staticmethod
+    def _get_segment_value(segment, key):
+        """Helper to get value from segment (handles both dict and model instance)"""
+        if isinstance(segment, dict):
+            return segment.get(key)
+        return getattr(segment, key, None)
+    
+    @staticmethod
+    def _merge_short_recognized_segments(segments, channel):
+        """
+        Merge recognized segments below 20 seconds with adjacent segments (above and below).
+        Creates merged segments in database, marks original segments as deleted, and logs operations.
+        Only merges segments that are actually adjacent (no gaps between them).
+        
+        Args:
+            segments: List of AudioSegments model instances or dictionaries (will be sorted by start_time)
+            channel: Channel object for generating file names and paths
+            
+        Returns:
+            list: List of AudioSegments instances (original + newly created merged ones)
+        """
+        if not segments:
+            return segments
+        
+        # Convert to list if QuerySet
+        segments_list = list(segments) if hasattr(segments, '__iter__') and not isinstance(segments, (list, tuple)) else segments
+        
+        # Check if we're dealing with dictionaries or model instances
+        is_dict_format = isinstance(segments_list[0], dict) if segments_list else False
+        
+        # If dictionaries, convert to model instances first
+        if is_dict_format:
+            # Convert dict segments to model instances
+            model_segments = []
+            for seg_dict in segments_list:
+                # Get segment ID if exists
+                seg_id = seg_dict.get('id')
+                if seg_id:
+                    try:
+                        # Try to get existing model instance
+                        model_seg = AudioSegmentsModel.objects.get(id=seg_id)
+                        model_segments.append(model_seg)
+                    except AudioSegmentsModel.DoesNotExist:
+                        print(f"Warning: Segment ID {seg_id} not found in database, skipping")
+                        continue
+                else:
+                    print(f"Warning: Segment dict missing 'id' field, skipping")
+                    continue
+            segments_list = model_segments
+        
+        if not segments_list:
+            print("No valid segments found after conversion")
+            return []
+        
+        # Explicitly sort by start_time to ensure correct order (handles unsorted input)
+        segments_list = sorted(segments_list, key=lambda x: x.start_time)
+        
+        # Track which segments have been used to create a merged segment (to avoid duplicate merges)
+        processed_for_merge = set()
+        merged_segments_created = []
+        
+        # Find recognized segments < 20 seconds and create merged segments
+        for i, current_segment in enumerate(segments_list):
+            # Skip segments that are already merged or deleted
+            if (current_segment.source == 'merged' or 
+                current_segment.is_delete):
+                continue
+            
+            # Check if current segment is recognized and below 20 seconds
+            if (current_segment.is_recognized and 
+                current_segment.duration_seconds < 20 and
+                i not in processed_for_merge):
+                
+                # Find adjacent segments to merge
+                segments_to_merge = [current_segment]
+                merge_indices = [i]
+                
+                # Get previous segment if exists, not already processed, and is adjacent (no gap)
+                if i > 0 and (i - 1) not in processed_for_merge:
+                    prev_segment = segments_list[i - 1]
+                    # Skip if previous segment is already merged or deleted
+                    if not (prev_segment.source == 'merged' or prev_segment.is_delete):
+                        # Check if segments are adjacent (prev_segment.end_time == current_segment.start_time)
+                        # Allow small tolerance (1 second) for floating point precision issues
+                        time_diff = abs((current_segment.start_time - prev_segment.end_time).total_seconds())
+                        if time_diff <= 1.0:  # Adjacent or overlapping (within 1 second tolerance)
+                            segments_to_merge.insert(0, prev_segment)
+                            merge_indices.insert(0, i - 1)
+                        else:
+                            print(f"Skipping merge with previous segment: gap of {time_diff}s between "
+                                  f"{prev_segment.end_time} and {current_segment.start_time}")
+                
+                # Get next segment if exists, not already processed, and is adjacent (no gap)
+                if i < len(segments_list) - 1 and (i + 1) not in processed_for_merge:
+                    next_segment = segments_list[i + 1]
+                    # Skip if next segment is already merged or deleted
+                    if not (next_segment.source == 'merged' or next_segment.is_delete):
+                        # Check if segments are adjacent (current_segment.end_time == next_segment.start_time)
+                        # Allow small tolerance (1 second) for floating point precision issues
+                        time_diff = abs((next_segment.start_time - current_segment.end_time).total_seconds())
+                        if time_diff <= 1.0:  # Adjacent or overlapping (within 1 second tolerance)
+                            segments_to_merge.append(next_segment)
+                            merge_indices.append(i + 1)
+                        else:
+                            print(f"Skipping merge with next segment: gap of {time_diff}s between "
+                                  f"{current_segment.end_time} and {next_segment.start_time}")
+                
+                # Only create merged segment if we have at least 2 segments to merge
+                # (current + at least one adjacent segment)
+                if len(segments_to_merge) >= 2:
+                    # Create merged segment in database and handle logging
+                    merged_segment_model = AudioSegments._create_and_save_merged_segment(
+                        segments_to_merge, channel
+                    )
+                    
+                    if merged_segment_model:
+                        merged_segments_created.append(merged_segment_model)
+                        
+                        # Mark indices as processed to avoid creating duplicate merges
+                        processed_for_merge.update(merge_indices)
+                        
+                        print(f"Created merged segment ID {merged_segment_model.id} from {len(segments_to_merge)} segments: "
+                              f"{merged_segment_model.start_time} - {merged_segment_model.end_time} "
+                              f"({merged_segment_model.duration_seconds}s).")
+                else:
+                    print(f"Skipping merge for segment at {current_segment.start_time}: "
+                          f"no adjacent segments found (may have gaps)")
+        
+        # Return original segments + newly created merged segments
+        all_segments = list(segments_list) + merged_segments_created
+        # Sort by start_time (in case merged segments changed order)
+        all_segments.sort(key=lambda x: x.start_time)
+        
+        return all_segments
+    
+    @staticmethod
+    def _create_and_save_merged_segment(segments_to_merge, channel):
+        """
+        Create a merged segment in the database, mark original segments as deleted, and log the operation.
+        Skips creation if any segment is already merged or deleted.
+        
+        Args:
+            segments_to_merge: List of AudioSegments model instances to merge
+            channel: Channel object for generating file names and paths
+            
+        Returns:
+            AudioSegments: Created merged segment model instance, or None if creation failed
+        """
+        if not segments_to_merge:
+            return None
+        
+        # Check if any segment is already merged or deleted - if so, skip creating a new merge
+        for seg in segments_to_merge:
+            if seg.source == 'merged' or seg.is_delete:
+                print(f"Skipping merge: segment {seg.id} is already merged (source={seg.source}) or deleted (is_delete={seg.is_delete})")
+                return None
+        
+        # Find earliest start_time and latest end_time
+        start_times = [seg.start_time for seg in segments_to_merge]
+        end_times = [seg.end_time for seg in segments_to_merge]
+        
+        merged_start_time = min(start_times)
+        merged_end_time = max(end_times)
+        merged_duration = int((merged_end_time - merged_start_time).total_seconds())
+        
+        # Determine if merged segment should be recognized
+        # If all segments are recognized, keep as recognized
+        # Otherwise, mark as unrecognized
+        all_recognized = all(seg.is_recognized for seg in segments_to_merge)
+        
+        # Generate file name and path
+        start_time_str = merged_start_time.strftime("%Y%m%d%H%M%S")
+        file_name = f"audio_{channel.project_id}_{channel.channel_id}_{start_time_str}_{merged_duration}.mp3"
+        start_date = merged_start_time.strftime("%Y%m%d")
+        file_path = f"media/{start_date}/{file_name}"
+        
+        # Prepare segment data
+        segment_data = {
+            'start_time': merged_start_time,
+            'end_time': merged_end_time,
+            'duration_seconds': merged_duration,
+            'is_active': True,
+            'file_name': file_name,
+            'file_path': file_path,
+            'channel': channel,
+            'source': 'merged',
+            'is_delete': False
+        }
+        
+        if all_recognized:
+            # If all are recognized, use the longest segment's title
+            longest_segment = max(segments_to_merge, key=lambda x: x.duration_seconds)
+            segment_data['is_recognized'] = True
+            segment_data['title'] = longest_segment.title or "Unknown Title"
+            
+            # Try to preserve metadata from the longest segment
+            if longest_segment.metadata_json:
+                segment_data['metadata_json'] = longest_segment.metadata_json
+        else:
+            # If mixing recognized and unrecognized, mark as unrecognized
+            # Use title_before from first segment and title_after from last segment
+            first_segment = segments_to_merge[0]
+            last_segment = segments_to_merge[-1]
+            
+            segment_data['is_recognized'] = False
+            
+            # Get title_before from first segment
+            if first_segment.is_recognized:
+                segment_data['title_before'] = first_segment.title or ""
+            else:
+                segment_data['title_before'] = first_segment.title_before or ""
+            
+            # Get title_after from last segment
+            if last_segment.is_recognized:
+                segment_data['title_after'] = last_segment.title or ""
+            else:
+                segment_data['title_after'] = last_segment.title_after or ""
+        
+        # Create merged segment in database
+        try:
+            merged_segment = AudioSegmentsModel.objects.create(**segment_data)
+            
+            # Mark original segments as deleted
+            source_segment_ids = [seg.id for seg in segments_to_merge]
+            for seg in segments_to_merge:
+                if not seg.is_delete:
+                    seg.is_delete = True
+                    seg.is_active = False
+                    seg.save(update_fields=["is_delete", "is_active"])
+            
+            # Log the merge operation
+            AudioSegments._handle_merged_segment_logging(merged_segment, channel, source_segment_ids)
+            
+            return merged_segment
+        except Exception as e:
+            print(f"Error creating merged segment: {str(e)}")
+            return None
+
+    @staticmethod
+    def _handle_merged_segment_logging(segment: AudioSegmentsModel, channel, source_segment_ids):
+        """
+        Persist logging information when a merge occurs.
+        Skips logging if a log entry already exists for the same merge operation.
+        
+        Args:
+            segment: AudioSegments model instance (the merged segment)
+            channel: Channel object
+            source_segment_ids: List of IDs of segments that were merged
+        """
+        if not segment or not source_segment_ids:
+            return
+
+        # Check if a log entry already exists for this merge operation
+        # Check by looking for existing merge logs with the same source_segment_ids
+        source_segment_ids_sorted = sorted(source_segment_ids)
+        existing_logs = AudioSegmentEditLog.objects.filter(
+            action="merge",
+            trigger_type="automatic",
+            audio_segment=segment
+        )
+        
+        # Check if any existing log has the same source_segment_ids
+        for log in existing_logs:
+            if log.metadata and log.metadata.get("source_segment_ids"):
+                existing_source_ids = sorted(log.metadata.get("source_segment_ids", []))
+                if existing_source_ids == source_segment_ids_sorted:
+                    print(f"Skipping duplicate merge log for segment {segment.id}: log entry already exists")
+                    return
+
+        # Get affected segments from database
+        affected_segments = list(
+            AudioSegmentsModel.objects.filter(id__in=source_segment_ids)
+        ) if source_segment_ids else []
+
+        metadata = {
+            "merged_segment_id": segment.id,
+            "merged_segment_duration": segment.duration_seconds,
+            "source_segment_ids": source_segment_ids,
+            "source_segment_count": len(source_segment_ids),
+        }
+
+        try:
+            AudioSegmentEditLogDAO.create(
+                audio_segment=segment,
+                action="merge",
+                trigger_type="automatic",
+                metadata=metadata,
+                affected_segments=affected_segments if affected_segments else None
+            )
+        except ValidationError as exc:
+            print(f"Failed to create merge log for segment {segment.id}: {exc}")
+
+    @staticmethod
     def _check_segment_overlap(new_segment, existing_segments, gap_threshold_seconds=2):
         """
         Check if a new segment should be included based on overlap rules.
+        Example: audio1 =  1:00 to 2:00, audio2 = 1:30 to 1:50
+        as audio1 include all those details already present in audio2, so we should not include audio1 in the list.
         
         Args:
             new_segment: Dictionary with start_time and end_time

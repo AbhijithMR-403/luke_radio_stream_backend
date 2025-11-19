@@ -137,6 +137,9 @@ def process_today_audio_data():
                 # Step 3: Insert audio segments into database
                 inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
                 
+                # Step 3.5: Merge short recognized segments
+                AudioSegments._merge_short_recognized_segments(inserted_segments, channel)
+                
                 if not inserted_segments:
                     print(f"No segments inserted for channel {channel.id}")
                     channel_results.append({
@@ -299,6 +302,9 @@ def process_previous_day_audio_data():
                 print(f"Processed segments: {processed_segments}")
                 # Step 3: Insert audio segments into database
                 inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
+                
+                # Step 3.5: Merge short recognized segments
+                AudioSegments._merge_short_recognized_segments(inserted_segments, channel)
                 
                 if not inserted_segments:
                     print(f"No segments inserted for channel {channel.id}")
