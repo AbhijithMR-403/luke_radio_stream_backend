@@ -138,7 +138,7 @@ def process_today_audio_data():
                 inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
                 
                 # Step 3.5: Merge short recognized segments
-                AudioSegments._merge_short_recognized_segments(inserted_segments, channel)
+                inserted_segments = AudioSegments._merge_short_recognized_segments(inserted_segments, channel)
                 
                 if not inserted_segments:
                     print(f"No segments inserted for channel {channel.id}")
@@ -304,7 +304,7 @@ def process_previous_day_audio_data():
                 inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
                 
                 # Step 3.5: Merge short recognized segments
-                AudioSegments._merge_short_recognized_segments(inserted_segments, channel)
+                inserted_segments = AudioSegments._merge_short_recognized_segments(inserted_segments, channel)
                 
                 if not inserted_segments:
                     print(f"No segments inserted for channel {channel.id}")
