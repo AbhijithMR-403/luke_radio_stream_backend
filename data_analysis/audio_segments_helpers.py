@@ -9,6 +9,7 @@ from datetime import datetime
 from acr_admin.models import Channel
 from data_analysis.models import AudioSegments as AudioSegmentsModel
 from data_analysis.serializers import AudioSegmentsSerializer
+from data_analysis.repositories import AudioSegmentDAO
 
 
 def parse_dt(value):
@@ -46,6 +47,15 @@ def validate_audio_segments_parameters(request):
     
     # Flagged only parameter
     show_flagged_only = request.GET.get('show_flagged_only', 'false').lower() == 'true'
+    
+    # Status filter parameter (is_active)
+    status = request.GET.get('status')
+    
+    # Recognition status filter parameter
+    recognition_status = request.GET.get('recognition_status')
+    
+    # Has content filter parameter
+    has_content = request.GET.get('has_content')
     
     if not channel_pk:
         return None, JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
@@ -93,6 +103,46 @@ def validate_audio_segments_parameters(request):
             'error': 'show_flagged_only requires shift_id to be provided'
         }, status=400)
     
+    # Validate status parameter (is_active)
+    status_value = None
+    if status:
+        status_lower = status.lower()
+        if status_lower == 'true':
+            status_value = True
+        elif status_lower == 'false':
+            status_value = False
+        else:
+            return None, JsonResponse({
+                'success': False,
+                'error': 'status must be "true" or "false"'
+            }, status=400)
+    
+    # Validate recognition_status parameter
+    recognition_status_value = None
+    if recognition_status:
+        recognition_status_lower = recognition_status.lower()
+        valid_recognition_statuses = ['all', 'recognized', 'unrecognized']
+        if recognition_status_lower not in valid_recognition_statuses:
+            return None, JsonResponse({
+                'success': False,
+                'error': f'recognition_status must be one of: {", ".join(valid_recognition_statuses)}'
+            }, status=400)
+        recognition_status_value = recognition_status_lower
+    
+    # Validate has_content parameter
+    has_content_value = None
+    if has_content:
+        has_content_lower = has_content.lower()
+        if has_content_lower == 'true':
+            has_content_value = True
+        elif has_content_lower == 'false':
+            has_content_value = False
+        else:
+            return None, JsonResponse({
+                'success': False,
+                'error': 'has_content must be "true" or "false"'
+            }, status=400)
+    
     return {
         'channel_pk': channel_pk,
         'start_datetime': start_datetime,
@@ -104,7 +154,10 @@ def validate_audio_segments_parameters(request):
         'search_text': search_text,
         'search_in': search_in,
         'duration': duration_value,
-        'show_flagged_only': show_flagged_only
+        'show_flagged_only': show_flagged_only,
+        'status': status_value,
+        'recognition_status': recognition_status_value,
+        'has_content': has_content_value
     }, None
 
 
@@ -301,12 +354,26 @@ def calculate_pagination_window(base_start_dt, base_end_dt, page, page_size, sea
     return current_page_start, current_page_end, is_last_page, None
 
 
-def build_base_query(channel, current_page_start, current_page_end, valid_windows=None, is_last_page=False, duration=None):
-    """Build the base query with filter conditions"""
-    # Build filter conditions for current page
+def build_base_query(channel, current_page_start, current_page_end, valid_windows=None, is_last_page=False, duration=None, status=None, recognition_status=None, has_content=None):
+    """Build the base query with filter conditions using AudioSegmentDAO"""
+    from django.db import models
+    
+    # Apply time window filtering
     if valid_windows:
+        # Use AudioSegmentDAO.filter() to get base queryset with all filters applied
+        # Time filtering will be applied separately using window Q objects
+        base_query = AudioSegmentDAO.filter(
+            channel_id=channel.id,
+            is_active=status,
+            recognition_status=recognition_status,
+            has_content=has_content,
+            is_delete=False
+        )
+        
+        # Apply duration filter if provided
+        if duration is not None:
+            base_query = base_query.filter(duration_seconds__gte=duration)
         # Use shift-based filtering, constrained to current page window
-        from django.db import models
         time_conditions = models.Q()
         had_intersection = False
         for window_start, window_end in valid_windows:
@@ -326,48 +393,49 @@ def build_base_query(channel, current_page_start, current_page_end, valid_window
                         start_time__gte=intersection_start,
                         start_time__lt=intersection_end
                     )
-        filter_conditions = {
-            'channel': channel,
-            'is_delete': False,
-        }
-    else:
-        # Use inclusive end time for the last page to capture segments at exact end time
-        if is_last_page:
-            filter_conditions = {
-                'channel': channel,
-                'start_time__gte': current_page_start,
-                'start_time__lte': current_page_end,
-                'is_delete': False,
-            }
-        else:
-            filter_conditions = {
-                'channel': channel,
-                'start_time__gte': current_page_start,
-                'start_time__lt': current_page_end,
-                'is_delete': False,
-            }
-        time_conditions = None
-    
-    # Add duration filter if provided
-    if duration is not None:
-        filter_conditions['duration_seconds__gte'] = duration
-    
-    # Build the base query with optimized joins
-    base_query = AudioSegmentsModel.objects.filter(**filter_conditions).select_related(
-        'channel'
-    ).prefetch_related(
-        'transcription_detail__rev_job',
-        'transcription_detail__analysis'
-    )
-    
-    if valid_windows:
+        
         if had_intersection:
             base_query = base_query.filter(time_conditions)
         else:
             # No overlap between page window and any valid shift window → empty queryset
             return base_query.none()
-    elif time_conditions:
-        base_query = base_query.filter(time_conditions)
+    else:
+        # Simple time range filtering - use AudioSegmentDAO with start_time/end_time
+        if is_last_page:
+            base_query = AudioSegmentDAO.filter(
+                channel_id=channel.id,
+                start_time=current_page_start,
+                end_time=current_page_end,
+                is_active=status,
+                recognition_status=recognition_status,
+                has_content=has_content,
+                is_delete=False
+            )
+            # Override end_time filter to use lte instead of lt for last page
+            base_query = base_query.filter(
+                start_time__gte=current_page_start,
+                start_time__lte=current_page_end
+            )
+        else:
+            base_query = AudioSegmentDAO.filter(
+                channel_id=channel.id,
+                start_time=current_page_start,
+                end_time=current_page_end,
+                is_active=status,
+                recognition_status=recognition_status,
+                has_content=has_content,
+                is_delete=False
+            )
+        
+        # Apply duration filter if provided
+        if duration is not None:
+            base_query = base_query.filter(duration_seconds__gte=duration)
+    
+    # Add prefetch_related for optimized data loading (AudioSegmentDAO already has select_related)
+    base_query = base_query.prefetch_related(
+        'transcription_detail__rev_job',
+        'transcription_detail__analysis'
+    )
     
     return base_query
 
@@ -427,7 +495,7 @@ def apply_search_filters(base_query, search_text, search_in):
     return base_query
 
 
-def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_text, search_in, channel, valid_windows=None, duration=None):
+def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_text, search_in, channel, valid_windows=None, duration=None, status=None, recognition_status=None, has_content=None):
     """Build pagination information for the response"""
     import math
     from config.validation import TimezoneUtils
@@ -444,10 +512,23 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
             start_time = base_start_dt
             end_time = base_end_dt
             
-        # Count segments for this search
-        search_query = AudioSegmentsModel.objects.filter(channel=channel, is_delete=False)
+        # Use AudioSegmentDAO.filter() as base, then apply time windows and search
+        from django.db import models
+        
+        search_query = AudioSegmentDAO.filter(
+            channel_id=channel.id,
+            is_active=status,
+            recognition_status=recognition_status,
+            has_content=has_content,
+            is_delete=False
+        )
+        
+        # Apply duration filter if provided
+        if duration is not None:
+            search_query = search_query.filter(duration_seconds__gte=duration)
+        
+        # Apply time window filtering
         if valid_windows:
-            from django.db import models
             time_conditions = models.Q()
             for window_start, window_end in valid_windows:
                 time_conditions |= models.Q(
@@ -460,10 +541,6 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                 start_time__gte=start_time,
                 start_time__lt=end_time
             )
-        
-        # Apply duration filter if provided
-        if duration is not None:
-            search_query = search_query.filter(duration_seconds__gte=duration)
         
         # Apply search filters
         search_query = apply_search_filters(search_query, search_text, search_in)
@@ -528,15 +605,19 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                                 start_time__lt=intersection_end
                             )
                 
-                page_filter = {
-                    'channel': channel,
-                    'is_delete': False,
-                }
-                # Add duration filter if provided
-                if duration is not None:
-                    page_filter['duration_seconds__gte'] = duration
+                # Use AudioSegmentDAO.filter() as base, then apply time windows
+                page_query = AudioSegmentDAO.filter(
+                    channel_id=channel.id,
+                    is_active=status,
+                    recognition_status=recognition_status,
+                    has_content=has_content,
+                    is_delete=False
+                )
                 
-                page_query = AudioSegmentsModel.objects.filter(**page_filter)
+                # Apply duration filter if provided
+                if duration is not None:
+                    page_query = page_query.filter(duration_seconds__gte=duration)
+                
                 if had_intersection:
                     page_query = page_query.filter(time_conditions)
                 else:
@@ -552,29 +633,31 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                     })
                     continue
             else:
-                # Use inclusive end time for the last page to capture segments at exact end time
+                # Use AudioSegmentDAO.filter() as base, then apply time range and duration
                 is_last_page = page_num == total_pages_needed
-                if is_last_page:
-                    page_filter = {
-                        'channel': channel,
-                        'start_time__gte': page_start,
-                        'start_time__lte': page_end,
-                        'is_delete': False,
-                    }
-                else:
-                    page_filter = {
-                        'channel': channel,
-                        'start_time__gte': page_start,
-                        'start_time__lt': page_end,
-                        'is_delete': False,
-                    }
-                # Add duration filter if provided
-                if duration is not None:
-                    page_filter['duration_seconds__gte'] = duration
                 
-                page_query = AudioSegmentsModel.objects.filter(**page_filter)
+                page_query = AudioSegmentDAO.filter(
+                    channel_id=channel.id,
+                    start_time=page_start,
+                    end_time=page_end,
+                    is_active=status,
+                    recognition_status=recognition_status,
+                    has_content=has_content,
+                    is_delete=False
+                )
+                
+                # For last page, override end_time filter to use lte instead of lt
+                if is_last_page:
+                    page_query = page_query.filter(
+                        start_time__gte=page_start,
+                        start_time__lte=page_end
+                    )
+                
+                # Apply duration filter if provided
+                if duration is not None:
+                    page_query = page_query.filter(duration_seconds__gte=duration)
             
-            # Apply search filters if they exist
+            # Apply search filters if they exist (for both window and non-window cases)
             if search_text and search_in:
                 page_query = apply_search_filters(page_query, search_text, search_in)
             

@@ -423,6 +423,9 @@ class AudioSegments(View):
     - predefined_filter_id (optional): PredefinedFilter ID to filter segments by filter schedule time windows
     - duration (optional): Minimum duration in seconds - only segments with duration >= this value will be returned
     - show_flagged_only (optional): When set to 'true', returns only segments that have exceeded flag thresholds (requires shift_id)
+    - status (optional): Filter by active status - must be 'true' or 'false' (filters by is_active field)
+    - recognition_status (optional): Filter by recognition status - must be one of: 'all', 'recognized', 'unrecognized'
+    - has_content (optional): Filter by transcription content - must be 'true' or 'false' (True = segments with transcription_detail, False = segments without)
     
     Pagination Parameters:
     - page (optional): Page number (default: 1)
@@ -447,6 +450,7 @@ class AudioSegments(View):
     - /api/audio-segments/?channel_id=1&predefined_filter_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
     - /api/audio-segments/?channel_id=1&duration=30&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1
     - /api/audio-segments/?channel_id=1&shift_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&show_flagged_only=true
+    - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&status=true&recognition_status=recognized&has_content=true
     """
     def get(self, request, *args, **kwargs):
         try:
@@ -526,7 +530,10 @@ class AudioSegments(View):
                 is_last_page = True
                 
                 # Build base query for entire time range
-                base_query = build_base_query(channel, current_page_start, current_page_end, valid_windows, is_last_page, params['duration'])
+                base_query = build_base_query(
+                    channel, current_page_start, current_page_end, valid_windows, is_last_page, 
+                    params['duration'], params.get('status'), params.get('recognition_status'), params.get('has_content')
+                )
                 
                 # Apply search filters if provided
                 base_query = apply_search_filters(base_query, params['search_text'], params['search_in'])
@@ -588,7 +595,10 @@ class AudioSegments(View):
                 return error_response
             
             # Step 6: Build base query
-            base_query = build_base_query(channel, current_page_start, current_page_end, valid_windows, is_last_page, params['duration'])
+            base_query = build_base_query(
+                channel, current_page_start, current_page_end, valid_windows, is_last_page, 
+                params['duration'], params.get('status'), params.get('recognition_status'), params.get('has_content')
+            )
             
             # Step 7: Apply search filters
             base_query = apply_search_filters(base_query, params['search_text'], params['search_in'])
@@ -625,7 +635,8 @@ class AudioSegments(View):
             # Step 11: Build pagination information
             response_data['pagination'] = build_pagination_info(
                 base_start_dt, base_end_dt, params['page'], params['page_size'],
-                params['search_text'], params['search_in'], channel, valid_windows, params['duration']
+                params['search_text'], params['search_in'], channel, valid_windows, params['duration'],
+                params.get('status'), params.get('recognition_status'), params.get('has_content')
             )
             
             # Step 12: Add has_data flag for current page
