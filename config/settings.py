@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "shift_analysis",
     "support",
     "logger",
+    "audio_flags"
 ]
 
 MIDDLEWARE = [

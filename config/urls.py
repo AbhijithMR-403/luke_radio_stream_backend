@@ -26,6 +26,7 @@ urlpatterns = [
     path('api/', include('audio_merger.urls')),
     path('api/', include('report.urls')),
     path('api/', include('dashboard.urls')),
+    path('api/', include('audio_flags.urls')),
     path('api/accounts/', include('accounts.urls')), 
     path('api/segmentor/', include('segmentor.urls')),
     path('api/shift-analysis/', include('shift_analysis.urls')),
