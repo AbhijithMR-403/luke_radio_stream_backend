@@ -31,6 +31,7 @@ urlpatterns = [
     path('api/segmentor/', include('segmentor.urls')),
     path('api/shift-analysis/', include('shift_analysis.urls')),
     path('api/', include('support.urls')),
+    path('api/', include('logger.urls')),
 ]
 
 if settings.DEBUG:
