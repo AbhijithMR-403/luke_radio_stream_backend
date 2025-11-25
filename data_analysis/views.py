@@ -32,7 +32,11 @@ from .audio_segments_helpers import (
     calculate_pagination_window,
     build_base_query,
     apply_search_filters,
-    build_pagination_info
+    build_pagination_info,
+    check_flag_conditions,
+    apply_flag_conditions_to_segments,
+    flag_entry_is_active,
+    has_active_flag_condition
 )
 
 # Create your views here.
@@ -409,7 +413,6 @@ class AudioSegmentsWithTranscriptionView(View):
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
 
 
-
 @method_decorator(csrf_exempt, name='dispatch')
 class AudioSegments(View):
     """
@@ -422,7 +425,7 @@ class AudioSegments(View):
     - shift_id (optional): Shift ID to filter segments by shift time windows
     - predefined_filter_id (optional): PredefinedFilter ID to filter segments by filter schedule time windows
     - duration (optional): Minimum duration in seconds - only segments with duration >= this value will be returned
-    - show_flagged_only (optional): When set to 'true', returns only segments that have exceeded flag thresholds (requires shift_id)
+    - show_flagged_only (optional): When set to 'true', returns only segments that have triggered flag thresholds (requires shift_id)
     - status (optional): Filter by active status - must be 'true' or 'false' (filters by is_active field)
     - recognition_status (optional): Filter by recognition status - must be one of: 'all', 'recognized', 'unrecognized'
     - has_content (optional): Filter by transcription content - must be 'true' or 'false' (True = segments with transcription_detail, False = segments without)
@@ -435,12 +438,19 @@ class AudioSegments(View):
     - search_text (optional): Text to search for
     - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'content_type_prompt', 'title'
     
+    Flagging:
+    - All segments are automatically checked against FlagCondition for the channel (if configured and active)
+    - Flag conditions check: transcription_keywords, summary_keywords, sentiment range, iab_topics, bucket_prompt, general_topics
+    - Flag information is included in the 'flag' field of each segment
+    - When shift_id is provided with flag_seconds, duration flags are also checked
+    - When show_flagged_only is set to 'true', only segments matching any flag condition are returned
+    
     Note: If search_text is provided, search_in must also be provided with a valid option.
     When shift_id or predefined_filter_id is provided, segments are filtered to only include those within the time windows.
     Cannot use both shift_id and predefined_filter_id simultaneously.
     When duration is provided, only segments with duration_seconds >= duration will be included in the results.
-    When show_flagged_only is set to 'true', pagination is disabled and only segments with flags (e.g., duration exceeded) are returned.
-    show_flagged_only requires shift_id to be provided and the shift must have flag_seconds configured.
+    When show_flagged_only is set to 'true', pagination is disabled and only segments with flags (duration threshold triggered or FlagCondition matches) are returned.
+    show_flagged_only requires either: (1) shift_id with flag_seconds configured, or (2) an active FlagCondition for the channel.
     
     Example URLs:
     - /api/audio-segments/?channel_id=1&start_datetime=2025-01-01&end_datetime=2025-01-02&page=1&page_size=1
@@ -515,13 +525,24 @@ class AudioSegments(View):
                     })
             
             # Handle show_flagged_only mode - skip pagination and return only flagged segments
-            if params.get('show_flagged_only') and shift:
-                # Check if shift has flag_seconds configured
-                if getattr(shift, 'flag_seconds', None) is None:
+            if params.get('show_flagged_only'):
+                # Check if we have a way to flag (either shift with flag_seconds or FlagCondition)
+                has_flag_condition = has_active_flag_condition(channel)
+                
+                if shift:
+                    # Check if shift has flag_seconds configured
+                    if getattr(shift, 'flag_seconds', None) is None and not has_flag_condition:
+                        from config.validation import TimezoneUtils
+                        return JsonResponse({
+                            'success': False,
+                            'error': 'Shift does not have flag_seconds configured and no FlagCondition found. Cannot filter flagged segments.'
+                        }, status=400)
+                elif not has_flag_condition:
+                    # No shift and no FlagCondition
                     from config.validation import TimezoneUtils
                     return JsonResponse({
                         'success': False,
-                        'error': 'Shift does not have flag_seconds configured. Cannot filter flagged segments.'
+                        'error': 'No FlagCondition found for this channel. Cannot filter flagged segments.'
                     }, status=400)
                 
                 # Use full time range (no pagination)
@@ -544,28 +565,57 @@ class AudioSegments(View):
                 # Serialize segments
                 all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments, channel.timezone)
                 
-                # Add flags to all segments and filter to only flagged ones
-                try:
-                    threshold = int(shift.flag_seconds)
-                except Exception:
-                    threshold = None
+                # Add flags to all segments (duration and FlagCondition)
+                threshold = None
+                if shift and getattr(shift, 'flag_seconds', None) is not None:
+                    try:
+                        threshold = int(shift.flag_seconds)
+                    except Exception:
+                        threshold = None
                 
+                # Apply duration flags if threshold is set
                 if threshold is not None:
-                    flagged_segments = []
                     for seg in all_segments:
                         duration = seg.get('duration_seconds') or 0
                         exceeded = bool(duration > threshold)
                         message = f"Duration exceeded limit by {int(duration - threshold)} seconds" if exceeded else ""
-                        seg['flag'] = {
-                            'duration': {
-                                'exceeded': exceeded,
-                                'message': message
-                            }
+                        seg.setdefault('flag', {})
+                        seg['flag']['duration'] = {
+                            'flagged': exceeded,
+                            'message': message
                         }
-                        # Only include segments that have exceeded the threshold
-                        if exceeded:
+                
+                # Apply FlagCondition flags
+                all_segments = apply_flag_conditions_to_segments(all_segments, channel)
+                
+                # Filter to only flagged segments (duration or FlagCondition)
+                if threshold is not None:
+                    flagged_segments = []
+                    for seg in all_segments:
+                        has_flag = False
+                        
+                        # Check duration flag
+                        if flag_entry_is_active(seg.get('flag', {}).get('duration')):
+                            has_flag = True
+                        
+                        # Check FlagCondition flags
+                        for flag_key, flag_data in seg.get('flag', {}).items():
+                            if flag_key != 'duration' and flag_entry_is_active(flag_data):
+                                has_flag = True
+                                break
+                        
+                        if has_flag:
                             flagged_segments.append(seg)
                     
+                    all_segments = flagged_segments
+                else:
+                    # If no duration threshold, filter by FlagCondition flags only
+                    flagged_segments = []
+                    for seg in all_segments:
+                        for flag_key, flag_data in seg.get('flag', {}).items():
+                            if flag_entry_is_active(flag_data):
+                                flagged_segments.append(seg)
+                                break
                     all_segments = flagged_segments
                 
                 # Build response without pagination
@@ -609,8 +659,8 @@ class AudioSegments(View):
             # Step 9: Use serializer to convert database objects to response format
             all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments, channel.timezone)
             
-            # Add per-segment flag when shift context with flag_seconds is available
-            print(getattr(shift, 'flag_seconds', None))
+            # Add per-segment flags (duration and FlagCondition)
+            # Add duration flag when shift context with flag_seconds is available
             if shift and getattr(shift, 'flag_seconds', None) is not None:
                 try:
                     threshold = int(shift.flag_seconds)
@@ -621,13 +671,14 @@ class AudioSegments(View):
                         duration = seg.get('duration_seconds') or 0
                         exceeded = bool(duration > threshold)
                         message = f"Duration exceeded limit by {int(duration - threshold)} seconds" if exceeded else ""
-                        seg['flag'] = {
-                            'duration': {
-                                'exceeded': exceeded,
-                                'message': message
-                            }
+                        seg.setdefault('flag', {})
+                        seg['flag']['duration'] = {
+                            'flagged': exceeded,
+                            'message': message
                         }
-                        print(seg)
+            
+            # Apply FlagCondition flags to all segments
+            all_segments = apply_flag_conditions_to_segments(all_segments, channel)
 
             # Step 10: Build the complete response using serializer
             response_data = AudioSegmentsSerializer.build_response(all_segments, channel)

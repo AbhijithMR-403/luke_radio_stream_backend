@@ -10,6 +10,7 @@ from acr_admin.models import Channel
 from data_analysis.models import AudioSegments as AudioSegmentsModel
 from data_analysis.serializers import AudioSegmentsSerializer
 from data_analysis.repositories import AudioSegmentDAO
+from audio_flags.models import FlagCondition
 
 
 def parse_dt(value):
@@ -97,11 +98,11 @@ def validate_audio_segments_parameters(request):
             return None, JsonResponse({'success': False, 'error': 'duration must be a valid integer'}, status=400)
     
     # Validate show_flagged_only parameter
-    if show_flagged_only and not shift_id:
-        return None, JsonResponse({
-            'success': False, 
-            'error': 'show_flagged_only requires shift_id to be provided'
-        }, status=400)
+    # if show_flagged_only and not shift_id:
+    #     return None, JsonResponse({
+    #         'success': False, 
+    #         'error': 'show_flagged_only requires shift_id to be provided'
+    #     }, status=400)
     
     # Validate status parameter (is_active)
     status_value = None
@@ -683,3 +684,232 @@ def build_pagination_info(base_start_dt, base_end_dt, page, page_size, search_te
                 'end': TimezoneUtils.convert_to_channel_tz(base_end_dt, channel.timezone)
             }
         }
+
+
+def check_flag_conditions(segment, flag_condition):
+    """
+    Check if a segment matches the flag condition criteria.
+    Returns a dictionary with flag information for each condition type.
+    
+    Args:
+        segment: Dictionary containing segment data (from serialize_segments_data)
+        flag_condition: FlagCondition model instance
+    
+    Returns:
+        Dictionary with flag information, e.g.:
+        {
+            'transcription_keywords': {'flagged': True, 'message': '...'},
+            'summary_keywords': {'flagged': False, 'message': ''},
+            'sentiment': {'flagged': True, 'message': '...'},
+            ...
+        }
+    """
+    def build_flag_entry(triggered=False, message=''):
+        return {
+            'flagged': bool(triggered),
+            'message': message or ''
+        }
+    
+    flags = {}
+    transcription = segment.get('transcription') if isinstance(segment.get('transcription'), dict) else {}
+    analysis = segment.get('analysis') if isinstance(segment.get('analysis'), dict) else {}
+    
+    # Check transcription keywords
+    if flag_condition.transcription_keywords:
+        transcript = transcription.get('transcript') or ''
+        transcript_lower = transcript.lower()
+        matched_groups = []
+        
+        for keyword_group in flag_condition.transcription_keywords:
+            if isinstance(keyword_group, list):
+                # Check if any keyword in the group matches
+                for keyword in keyword_group:
+                    if keyword and keyword.lower() in transcript_lower:
+                        matched_groups.append(keyword_group)
+                        break
+        
+        if matched_groups:
+            flags['transcription_keywords'] = build_flag_entry(
+                True,
+                f"Found matching keywords in transcription: {', '.join([', '.join(group) for group in matched_groups[:3]])}"
+            )
+        else:
+            flags['transcription_keywords'] = build_flag_entry(False, '')
+    
+    # Check summary keywords
+    if flag_condition.summary_keywords:
+        summary = analysis.get('summary') or ''
+        summary_lower = summary.lower()
+        matched_groups = []
+        
+        for keyword_group in flag_condition.summary_keywords:
+            if isinstance(keyword_group, list):
+                # Check if any keyword in the group matches
+                for keyword in keyword_group:
+                    if keyword and keyword.lower() in summary_lower:
+                        matched_groups.append(keyword_group)
+                        break
+        
+        if matched_groups:
+            flags['summary_keywords'] = build_flag_entry(
+                True,
+                f"Found matching keywords in summary: {', '.join([', '.join(group) for group in matched_groups[:3]])}"
+            )
+        else:
+            flags['summary_keywords'] = build_flag_entry(False, '')
+    
+    # Check sentiment range (flag when sentiment is WITHIN the configured range)
+    if flag_condition.sentiment_min is not None or flag_condition.sentiment_max is not None:
+        sentiment_str = analysis.get('sentiment') or ''
+        sentiment_value = None
+        
+        # Try to parse sentiment as float
+        try:
+            sentiment_value = float(sentiment_str)
+        except (ValueError, TypeError):
+            # If not a number, try to extract number from string
+            import re
+            numbers = re.findall(r'-?\d+\.?\d*', sentiment_str)
+            if numbers:
+                try:
+                    sentiment_value = float(numbers[0])
+                except (ValueError, TypeError):
+                    pass
+        
+        triggered = False
+        message = ''
+        
+        if sentiment_value is not None:
+            meets_min = flag_condition.sentiment_min is None or sentiment_value >= flag_condition.sentiment_min
+            meets_max = flag_condition.sentiment_max is None or sentiment_value <= flag_condition.sentiment_max
+            triggered = meets_min and meets_max
+            if triggered:
+                range_msg = []
+                if flag_condition.sentiment_min is not None:
+                    range_msg.append(f">= {flag_condition.sentiment_min}")
+                if flag_condition.sentiment_max is not None:
+                    range_msg.append(f"<= {flag_condition.sentiment_max}")
+                message = f"Sentiment {sentiment_value} is within configured range ({' and '.join(range_msg)})"
+            else:
+                message = f"Sentiment {sentiment_value} is outside configured range"
+        elif sentiment_str:
+            message = f"Sentiment '{sentiment_str}' cannot be compared to numeric range"
+        
+        flags['sentiment'] = build_flag_entry(triggered, message)
+    
+    # Check IAB topics
+    if flag_condition.iab_topics:
+        iab_topics = analysis.get('iab_topics') or ''
+        iab_topics_lower = iab_topics.lower() if isinstance(iab_topics, str) else str(iab_topics).lower()
+        matched_topics = []
+        
+        for topic in flag_condition.iab_topics:
+            if topic and topic.lower() in iab_topics_lower:
+                matched_topics.append(topic)
+        
+        if matched_topics:
+            flags['iab_topics'] = build_flag_entry(
+                True,
+                f"Found matching IAB topics: {', '.join(matched_topics[:5])}"
+            )
+        else:
+            flags['iab_topics'] = build_flag_entry(False, '')
+    
+    # Check bucket prompt
+    if flag_condition.bucket_prompt:
+        bucket_prompt = analysis.get('bucket_prompt') or ''
+        bucket_prompt_lower = bucket_prompt.lower() if isinstance(bucket_prompt, str) else str(bucket_prompt).lower()
+        matched_prompts = []
+        
+        for prompt in flag_condition.bucket_prompt:
+            if prompt and prompt.lower() in bucket_prompt_lower:
+                matched_prompts.append(prompt)
+        
+        if matched_prompts:
+            flags['bucket_prompt'] = build_flag_entry(
+                True,
+                f"Found matching bucket prompts: {', '.join(matched_prompts[:5])}"
+            )
+        else:
+            flags['bucket_prompt'] = build_flag_entry(False, '')
+    
+    # Check general topics
+    if flag_condition.general_topics:
+        general_topics = analysis.get('general_topics') or ''
+        general_topics_lower = general_topics.lower() if isinstance(general_topics, str) else str(general_topics).lower()
+        matched_topics = []
+        
+        for topic in flag_condition.general_topics:
+            if topic and topic.lower() in general_topics_lower:
+                matched_topics.append(topic)
+        
+        if matched_topics:
+            flags['general_topics'] = build_flag_entry(
+                True,
+                f"Found matching general topics: {', '.join(matched_topics[:5])}"
+            )
+        else:
+            flags['general_topics'] = build_flag_entry(False, '')
+    
+    return flags
+
+
+def apply_flag_conditions_to_segments(segments, channel):
+    """
+    Apply FlagCondition checks to all segments and add flag information.
+    Merges with existing flags if they exist.
+    
+    Args:
+        segments: List of segment dictionaries
+        channel: Channel model instance
+    
+    Returns:
+        List of segments with flag information added
+    """
+    # Get FlagCondition for the channel if it exists and is active
+    try:
+        flag_condition = FlagCondition.objects.get(channel=channel, is_active=True)
+    except FlagCondition.DoesNotExist:
+        # No flag condition configured, return segments as-is
+        return segments
+    
+    # Apply flag conditions to each segment
+    for seg in segments:
+        flag_info = check_flag_conditions(seg, flag_condition)
+        
+        # Merge with existing flags if they exist
+        if 'flag' in seg:
+            seg['flag'].update(flag_info)
+        else:
+            seg['flag'] = flag_info
+    
+    return segments
+
+
+def flag_entry_is_active(flag_entry):
+    """
+    Helper to determine if a flag entry is active.
+    Supports both the new 'flagged' key and legacy 'exceeded' key.
+    """
+    if not isinstance(flag_entry, dict):
+        return False
+    if 'flagged' in flag_entry:
+        return bool(flag_entry['flagged'])
+    return bool(flag_entry.get('exceeded'))
+
+
+def has_active_flag_condition(channel):
+    """
+    Check if a channel has an active FlagCondition configured.
+    
+    Args:
+        channel: Channel model instance
+    
+    Returns:
+        bool: True if channel has an active FlagCondition, False otherwise
+    """
+    try:
+        FlagCondition.objects.get(channel=channel, is_active=True)
+        return True
+    except FlagCondition.DoesNotExist:
+        return False
