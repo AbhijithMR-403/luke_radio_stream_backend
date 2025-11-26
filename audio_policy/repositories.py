@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import QuerySet
 
-from audio_flags.models import FlagCondition
+from audio_policy.models import FlagCondition
 
 
 class FlagConditionRepository:

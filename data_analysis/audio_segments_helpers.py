@@ -10,7 +10,7 @@ from acr_admin.models import Channel
 from data_analysis.models import AudioSegments as AudioSegmentsModel
 from data_analysis.serializers import AudioSegmentsSerializer
 from data_analysis.repositories import AudioSegmentDAO
-from audio_flags.models import FlagCondition
+from audio_policy.models import FlagCondition
 
 
 def parse_dt(value):

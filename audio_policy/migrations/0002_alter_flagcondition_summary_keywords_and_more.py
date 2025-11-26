@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("audio_flags", "0001_initial"),
+        ("audio_policy", "0001_initial"),
     ]
 
     operations = [

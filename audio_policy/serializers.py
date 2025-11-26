@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import FlagCondition
+from .models import FlagCondition, ContentTypeDeactivationRule
 
 
 class FlagConditionSerializer(serializers.ModelSerializer):
@@ -29,4 +29,22 @@ class FlagConditionSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at", "created_by"]
+
+
+class ContentTypeDeactivationRuleSerializer(serializers.ModelSerializer):
+    """
+    Serializer for CRUD operations on ContentTypeDeactivationRule.
+    """
+
+    class Meta:
+        model = ContentTypeDeactivationRule
+        fields = [
+            "id",
+            "channel",
+            "content_type",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at"]
 

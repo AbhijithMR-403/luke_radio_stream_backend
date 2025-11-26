@@ -10,6 +10,7 @@ from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
 
 from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail
+from audio_policy.models import ContentTypeDeactivationRule
 
 class TranscriptionAnalyzer:
     @staticmethod
@@ -57,6 +58,68 @@ class TranscriptionAnalyzer:
         except Exception as e:
             print(f"Error constructing bucket prompt: {e}")
             return None
+
+    @staticmethod
+    def check_and_deactivate_by_content_type(analysis, content_type_result):
+        """
+        Check if the content_type_prompt matches any active deactivation rules
+        and deactivate the audio segment if it does.
+        
+        Args:
+            analysis: TranscriptionAnalysis instance
+            content_type_result: The content type classification result string
+        """
+        if not content_type_result or not content_type_result.strip():
+            return
+        
+        try:
+            # Get the audio segment from the transcription detail
+            if not analysis.transcription_detail.audio_segment:
+                return
+            
+            audio_segment = analysis.transcription_detail.audio_segment
+            
+            # Get the channel from the audio segment
+            channel = audio_segment.channel
+            
+            # Get all active deactivation rules for this channel
+            deactivation_rules = ContentTypeDeactivationRule.objects.filter(
+                channel=channel,
+                is_active=True
+            )
+            
+            if not deactivation_rules.exists():
+                return
+            
+            # Parse content_type_result - it might be in format like "Commercial, 85%" or comma-separated
+            # Extract content type names (before percentages or commas)
+            content_type_lower = content_type_result.lower().strip()
+            
+            # Check if any deactivation rule matches
+            for rule in deactivation_rules:
+                rule_content_type_lower = rule.content_type.lower().strip()
+                
+                # Check if the rule's content type appears in the result
+                # This handles formats like "Commercial, 85%" or "Commercial, Advertisement, 75%"
+                if rule_content_type_lower in content_type_lower:
+                    # Create deactivation note
+                    deactivation_note = f"🔴 Automatically deactivated due to content type match: '{rule.content_type}'. Content type classification: {content_type_result}"
+                    
+                    # Append to existing notes or create new note
+                    if audio_segment.notes:
+                        audio_segment.notes = f"{audio_segment.notes}\n{deactivation_note}"
+                    else:
+                        audio_segment.notes = deactivation_note
+                    
+                    # Deactivate the audio segment
+                    audio_segment.is_active = False
+                    audio_segment.save(update_fields=['is_active', 'notes'])
+                    print(f"Deactivated audio segment {audio_segment.id} due to content type match: {rule.content_type}")
+                    break  # Only need to match once
+                    
+        except Exception as e:
+            print(f"Error checking content type deactivation rules: {e}")
+            # Don't raise, just log the error
 
     @staticmethod
     def analyze_transcription(transcription_detail):
@@ -182,6 +245,10 @@ class TranscriptionAnalyzer:
                 content_type_prompt=content_type_result
             )
             print(f"Created new transcription analysis for transcription_detail {transcription_detail.id}")
+            
+            # Check if content type matches deactivation rules
+            TranscriptionAnalyzer.check_and_deactivate_by_content_type(analysis, content_type_result)
+            
             return analysis
         except Exception as e:
             print(f"Error creating transcription analysis: {e}")

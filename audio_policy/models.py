@@ -41,3 +41,36 @@ class FlagCondition(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class ContentTypeDeactivationRule(models.Model):
+    """Model to store content types that should automatically deactivate audio segments"""
+    channel = models.ForeignKey(
+        'acr_admin.Channel',
+        on_delete=models.CASCADE,
+        related_name="content_type_deactivation_rules",
+        help_text="Channel this rule applies to",
+    )
+    content_type = models.CharField(
+        max_length=255,
+        help_text="Content type name that should trigger deactivation (e.g., 'Commercial', 'Advertisement')",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this rule is currently active",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        status = "Active" if self.is_active else "Inactive"
+        return f"{self.content_type} ({self.channel.name}) ({status})"
+
+    class Meta:
+        ordering = ['channel', 'content_type']
+        unique_together = [['channel', 'content_type']]
+        indexes = [
+            models.Index(fields=['is_active']),
+            models.Index(fields=['channel', 'is_active']),
+            models.Index(fields=['content_type']),
+        ]
