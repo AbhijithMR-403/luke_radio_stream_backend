@@ -116,8 +116,19 @@ class GeneralSetting(models.Model):
 
 
 class WellnessBucket(models.Model):
+    CATEGORY_CHOICES = [
+        ('personal', 'Personal'),
+        ('community', 'Community'),
+        ('spiritual', 'Spiritual'),
+    ]
+    
     title = models.CharField(max_length=255)  # eg: "Emotional Wellness"
     description = models.TextField()
+    category = models.CharField(
+        max_length=20,
+        choices=CATEGORY_CHOICES,
+        help_text="Category for dashboard classification"
+    )
 
     def __str__(self):
         return f"Bucket {self.id} - {self.title}"
