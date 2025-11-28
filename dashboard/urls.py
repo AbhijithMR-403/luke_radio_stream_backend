@@ -1,5 +1,6 @@
 from django.urls import path
 from dashboard.v1.views import DashboardStatsView, ShiftAnalyticsView, ShiftAnalyticsV2View, TopicAudioSegmentsView, GeneralTopicsManagementView
+from dashboard.v2.views import SummaryView
 
 app_name = 'dashboard'
 
@@ -10,5 +11,9 @@ urlpatterns = [
     path('dashboard/topic-audio-segments/', TopicAudioSegmentsView.as_view(), name='topic_audio_segments'),
     # General Topic Management
     path('general_topics', GeneralTopicsManagementView.as_view(), name='general_topics_management'),
+
+    # V2 API
+    # Summary API
+    path('v2/dashboard/summary/', SummaryView.as_view(), name='summary'),
 
 ]

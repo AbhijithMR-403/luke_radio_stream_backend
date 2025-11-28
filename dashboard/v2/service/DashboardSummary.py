@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Iterable
 from data_analysis.models import AudioSegments
 
 
-class OverallSummaryService:
+class SummaryService:
     """
     Service class for calculating overall sentiment analysis summary statistics.
     Provides methods for average sentiment, low/high sentiment percentages, and per-day averages.
@@ -63,7 +63,7 @@ class OverallSummaryService:
             if not analysis.sentiment:
                 continue
             
-            score = OverallSummaryService._parse_sentiment_score(analysis.sentiment)
+            score = SummaryService._parse_sentiment_score(analysis.sentiment)
             if score is None:
                 continue
             
@@ -83,7 +83,7 @@ class OverallSummaryService:
     @staticmethod
     def get_low_sentiment_percentage(
         audio_segments: Iterable[AudioSegments],
-        threshold: int = 70,
+        threshold: int = 20,
     ) -> Optional[float]:
         """
         Calculate percentage of segments with low sentiment (below threshold).
@@ -111,7 +111,7 @@ class OverallSummaryService:
             if not analysis.sentiment:
                 continue
             
-            score = OverallSummaryService._parse_sentiment_score(analysis.sentiment)
+            score = SummaryService._parse_sentiment_score(analysis.sentiment)
             if score is None:
                 continue
             
@@ -132,7 +132,7 @@ class OverallSummaryService:
     @staticmethod
     def get_high_sentiment_percentage(
         audio_segments: Iterable[AudioSegments],
-        threshold: int = 90,
+        threshold: int = 80,
     ) -> Optional[float]:
         """
         Calculate percentage of segments with high sentiment (above threshold).
@@ -160,7 +160,7 @@ class OverallSummaryService:
             if not analysis.sentiment:
                 continue
             
-            score = OverallSummaryService._parse_sentiment_score(analysis.sentiment)
+            score = SummaryService._parse_sentiment_score(analysis.sentiment)
             if score is None:
                 continue
             
@@ -223,7 +223,7 @@ class OverallSummaryService:
                     'total_duration': 0
                 }
             
-            score = OverallSummaryService._parse_sentiment_score(analysis.sentiment)
+            score = SummaryService._parse_sentiment_score(analysis.sentiment)
             if score is None:
                 continue
             
