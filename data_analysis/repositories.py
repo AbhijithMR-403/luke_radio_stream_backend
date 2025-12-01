@@ -5,7 +5,7 @@ from typing import Iterable, List, Literal, Optional, Sequence
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 
 from data_analysis.models import AudioSegments
 
@@ -223,6 +223,125 @@ class AudioSegmentDAO:
             has_content=has_content,
             is_delete=is_delete,
         )
+        
+        # Optimize with select_related for ForeignKey and OneToOne relationships
+        # This fetches channel, transcription_detail, and transcription_detail.analysis in a single query
+        qs = qs.select_related(
+            'channel',
+            'transcription_detail',
+            'transcription_detail__analysis'
+        )
+        
+        # Order by start_time (uses the same index)
+        qs = qs.order_by('start_time')
+        
+        return qs
+
+    @staticmethod
+    def filter_with_q(
+        q_objects: Q | List[Q],
+        *,
+        channel_id: Optional[int] = None,
+        is_recognized: Optional[bool] = None,
+        has_content: bool = True,
+        is_active: bool = True,
+        is_delete: bool = False,
+    ) -> QuerySet[AudioSegments]:
+        """
+        Filter AudioSegments using Q objects (typically for multiple time ranges) with optimized defaults.
+        
+        This method is designed for complex queries where you need to filter by multiple time ranges
+        using Q objects. It applies sensible defaults and combines Q objects with OR logic.
+        
+        Default filter values:
+        - has_content=True: Only segments with transcription_detail
+        - is_active=True: Only active segments
+        - is_delete=False: Exclude deleted segments
+        
+        This method is designed to use database indexes efficiently:
+        - Uses ['channel', 'start_time'] index when channel_id is provided
+        - Uses ['channel', 'is_active'] index when channel_id and is_active are provided
+        - Uses ['channel', 'is_delete'] index when channel_id and is_delete are provided
+        
+        Automatically fetches related data from:
+        - channel (ForeignKey)
+        - transcription_detail (OneToOneField)
+        - transcription_detail.analysis (OneToOneField via TranscriptionDetail)
+        
+        Args:
+            q_objects: Q object or list of Q objects containing time range queries 
+                (e.g., Q(start_time__gte=start, start_time__lte=end))
+                Multiple Q objects are combined with OR logic
+            channel_id: Filter by channel ID (highly recommended for index usage)
+            is_recognized: Filter by recognized status (True/False/None for all)
+                Note: If recognition_status is provided, it will override this parameter
+            recognition_status: Filter by recognition status:
+                - 'all': All segments (recognized and unrecognized)
+                - 'recognized': Only recognized segments (is_recognized=True)
+                - 'unrecognized': Only unrecognized segments (is_recognized=False)
+            has_content: Filter by transcription content (default: True)
+                - True: Only segments with transcription_detail (With Content)
+                - False: Only segments without transcription_detail (No Content)
+            is_active: Filter by active status (default: True)
+            is_delete: Filter by delete status (default: False)
+        
+        Returns:
+            QuerySet[AudioSegments]: Optimized queryset ordered by start_time with related data prefetched
+        
+        Examples:
+            from django.db.models import Q
+            from datetime import datetime
+            
+            # Filter by multiple time ranges (list of Q objects)
+            q1 = Q(start_time__gte=datetime(2024, 1, 1), start_time__lte=datetime(2024, 1, 2))
+            q2 = Q(start_time__gte=datetime(2024, 1, 5), start_time__lte=datetime(2024, 1, 6))
+            segments = AudioSegmentDAO.filter_with_q(
+                q_objects=[q1, q2],
+                channel_id=1,
+                recognition_status='recognized'
+            )
+            
+            # Single time range with Q object (can pass single Q or list)
+            q = Q(start_time__gte=datetime(2024, 1, 1), start_time__lte=datetime(2024, 1, 2))
+            segments = AudioSegmentDAO.filter_with_q(
+                q_objects=q,
+                channel_id=1
+            )
+        """
+        # Normalize q_objects to a list
+        if isinstance(q_objects, Q):
+            q_objects = [q_objects]
+        
+        if not q_objects:
+            # If no Q objects provided, return empty queryset
+            return AudioSegments.objects.none()
+        
+        # Start with base queryset - filter by channel first for index optimization
+        if channel_id is not None:
+            qs = AudioSegments.objects.filter(channel_id=channel_id)
+        else:
+            qs = AudioSegments.objects.all()
+        
+        # Apply default filters
+        qs = qs.filter(is_delete=is_delete)
+        qs = qs.filter(is_active=is_active)
+        
+        # Apply content filter
+        if has_content:
+            qs = qs.filter(transcription_detail__isnull=False)
+        
+        # recognition_status takes precedence over is_recognized if both are provided
+        if is_recognized is not None:
+            # Fall back to is_recognized if recognition_status not provided
+            qs = qs.filter(is_recognized=is_recognized)
+        
+        # Combine all Q objects with OR logic
+        combined_q = q_objects[0]
+        for q_obj in q_objects[1:]:
+            combined_q |= q_obj
+        
+        # Apply the combined Q object
+        qs = qs.filter(combined_q)
         
         # Optimize with select_related for ForeignKey and OneToOne relationships
         # This fetches channel, transcription_detail, and transcription_detail.analysis in a single query

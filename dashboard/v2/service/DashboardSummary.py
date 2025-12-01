@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Iterable
+from typing import Optional, List, Dict, Iterable, Any
+from datetime import datetime
+from django.db.models import QuerySet, Q
+
 from data_analysis.models import AudioSegments
+from data_analysis.repositories import AudioSegmentDAO
+from dashboard.models import UserSentimentPreference
+from shift_analysis.models import Shift
 
 
 class SummaryService:
@@ -248,4 +254,126 @@ class SummaryService:
                 })
         
         return result
+
+    @staticmethod
+    def get_summary_data(
+        *,
+        channel_id: int,
+        start_dt: datetime,
+        end_dt: datetime,
+        user,
+        shift_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get complete summary data including all sentiment metrics.
+        
+        This method handles:
+        - Filtering audio segments by datetime, channel, and optionally shift
+        - Getting user sentiment preferences (or defaults)
+        - Calculating all sentiment metrics
+        - Building the complete response data
+        
+        Args:
+            channel_id: Channel ID to filter by
+            start_dt: Start datetime (timezone-aware)
+            end_dt: End datetime (timezone-aware)
+            user: User object to get preferences for
+            shift_id: Optional shift ID to filter by
+        
+        Returns:
+            Dictionary containing all summary data including:
+            - average_sentiment
+            - target_sentiment_score
+            - low_sentiment_percentage
+            - high_sentiment_percentage
+            - per_day_average_sentiments
+            - thresholds
+            - segment_count
+        """
+        # Build Q object for filtering
+        if shift_id is not None:
+            # Use shift's get_datetime_filter which already handles datetime range
+            try:
+                shift = Shift.objects.get(id=shift_id, channel_id=channel_id)
+                # Get Q object from shift's get_datetime_filter method
+                # This already filters by the shift's time windows within the datetime range
+                q_object = shift.get_datetime_filter(utc_start=start_dt, utc_end=end_dt)
+            except Shift.DoesNotExist:
+                # If shift doesn't exist, return empty result
+                audio_segments = []
+                return {
+                    'average_sentiment': None,
+                    'target_sentiment_score': 75,
+                    'low_sentiment': None,
+                    'high_sentiment': None,
+                    'per_day_average_sentiments': [],
+                    'thresholds': {
+                        'target_sentiment_score': 75,
+                        'low_sentiment_threshold': 20,
+                        'high_sentiment_threshold': 80
+                    },
+                    'segment_count': 0
+                }
+        else:
+            # No shift filter - use datetime range filter
+            q_object = Q(start_time__gte=start_dt, start_time__lt=end_dt)
+        
+        # Use filter_with_q for optimized filtering with Q object
+        # This method automatically handles select_related for transcription_detail and analysis
+        audio_segments_query = AudioSegmentDAO.filter_with_q(
+            q_objects=q_object,
+            channel_id=channel_id,
+            is_active=True,
+            is_delete=False,
+            has_content=True  # Ensures transcription_detail exists
+        ).filter(
+            transcription_detail__analysis__isnull=False  # Also ensure analysis exists
+        )
+        
+        # Get all audio segments with transcription and analysis
+        audio_segments = list(audio_segments_query)
+        
+        # Get sentiment preferences from UserSentimentPreference
+        # Default values if no preference exists
+        target_sentiment_score = 75
+        low_sentiment_threshold = 20
+        high_sentiment_threshold = 80
+        
+        try:
+            sentiment_preference = UserSentimentPreference.objects.get(user=user)
+            target_sentiment_score = sentiment_preference.target_sentiment_score
+            low_sentiment_threshold = sentiment_preference.low_sentiment_score
+            high_sentiment_threshold = sentiment_preference.high_sentiment_score
+        except UserSentimentPreference.DoesNotExist:
+            # If no preference exists, use default values
+            pass
+        
+        # Calculate all sentiment metrics
+        average_sentiment = SummaryService.get_average_sentiment(audio_segments)
+        low_sentiment_percentage = SummaryService.get_low_sentiment_percentage(
+            audio_segments,
+            threshold=low_sentiment_threshold
+        )
+        high_sentiment_percentage = SummaryService.get_high_sentiment_percentage(
+            audio_segments,
+            threshold=high_sentiment_threshold
+        )
+        per_day_average_sentiments = SummaryService.get_per_day_average_sentiments(
+            audio_segments
+        )
+        
+        # Build and return summary data
+        return {
+            'average_sentiment': average_sentiment,
+            'target_sentiment_score': target_sentiment_score,
+            'low_sentiment': low_sentiment_percentage,
+            'high_sentiment': high_sentiment_percentage,
+            'per_day_average_sentiments': per_day_average_sentiments,
+            'thresholds': {
+                'target_sentiment_score': target_sentiment_score,
+                'low_sentiment_threshold': low_sentiment_threshold,
+                'high_sentiment_threshold': high_sentiment_threshold
+            },
+            'segment_count': len(audio_segments)
+        }
 

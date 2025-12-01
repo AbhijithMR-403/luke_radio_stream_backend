@@ -1,7 +1,9 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
-from datetime import time
+from django.db.models import Q
+from datetime import time, datetime, timedelta
+from zoneinfo import ZoneInfo
 from acr_admin.models import Channel
 from accounts.models import RadioUser
 
@@ -87,6 +89,79 @@ class Shift(models.Model):
         # Check for duplicate days
         if len(day_list) != len(set(day_list)):
             raise ValidationError("Duplicate days are not allowed")
+
+    def get_datetime_filter(self, utc_start: datetime, utc_end: datetime) -> Q:
+        """
+        Returns a Q object that can be used to filter AudioSegments by this shift's time windows.
+        
+        The shift's start_time and end_time are treated as wall-clock times in the channel's timezone
+        for every day in the specified UTC datetime range. Only includes days that match the shift's
+        days_of_week field.
+        
+        Args:
+            utc_start: Start datetime in UTC (must be timezone-aware)
+            utc_end: End datetime in UTC (must be timezone-aware)
+            
+        Returns:
+            Q: Django Q object that can be used in AudioSegments.objects.filter()
+            
+        Example:
+            shift = Shift.objects.get(id=1)
+            q = shift.get_datetime_filter(utc_start, utc_end)
+            segments = AudioSegments.objects.filter(q, channel=shift.channel)
+        """
+        if utc_start.tzinfo is None or utc_end.tzinfo is None:
+            raise ValueError("utc_start and utc_end must be timezone-aware in UTC")
+        if utc_end <= utc_start:
+            return Q(pk__isnull=True)  # Return a Q that matches nothing
+        
+        tz = ZoneInfo(self.channel.timezone)
+        
+        # Parse the shift's days_of_week field
+        shift_days = [day.strip().lower() for day in self.days.split(',')] if self.days else []
+        
+        # Iterate days in local tz covering the UTC range
+        start_local = utc_start.astimezone(tz)
+        end_local = utc_end.astimezone(tz)
+        
+        windows = []
+        day = start_local.date()
+        while day <= end_local.date():
+            # Check if this day matches any of the shift's specified days
+            current_day_name = day.strftime('%A').lower()
+            
+            # If shift has specific days defined, only process matching days
+            if not shift_days or current_day_name in shift_days:
+                windows.extend(self._build_utc_windows_for_local_day(self.start_time, self.end_time, day, tz))
+            
+            day += timedelta(days=1)
+        
+        # Build Q object from windows
+        q = Q()
+        for start_utc, end_utc in windows:
+            q |= Q(start_time__lt=end_utc, end_time__gt=start_utc)
+        
+        return q
+    
+    def _build_utc_windows_for_local_day(self, start_t: time, end_t: time, local_day, tz: ZoneInfo):
+        """
+        Build one or two UTC windows corresponding to a local wall-clock interval.
+        Allows overnight intervals when start_t > end_t.
+        Returns list of tuples: [(start_utc_dt, end_utc_dt), ...]
+        """
+        start_local = datetime.combine(local_day, start_t, tzinfo=tz)
+        if start_t <= end_t:
+            end_local = datetime.combine(local_day, end_t, tzinfo=tz)
+            return [(start_local.astimezone(ZoneInfo("UTC")), end_local.astimezone(ZoneInfo("UTC")))]
+        
+        # Overnight: split across midnight
+        end_local_first = datetime.combine(local_day, time(23, 59, 59, 999999), tzinfo=tz)
+        start_local_second = datetime.combine(local_day + timedelta(days=1), time(0, 0), tzinfo=tz)
+        end_local_second = datetime.combine(local_day + timedelta(days=1), end_t, tzinfo=tz)
+        return [
+            (start_local.astimezone(ZoneInfo("UTC")), end_local_first.astimezone(ZoneInfo("UTC"))),
+            (start_local_second.astimezone(ZoneInfo("UTC")), end_local_second.astimezone(ZoneInfo("UTC"))),
+        ]
 
 
 class PredefinedFilter(models.Model):
