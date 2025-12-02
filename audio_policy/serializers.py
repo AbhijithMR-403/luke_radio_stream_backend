@@ -30,6 +30,36 @@ class FlagConditionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at", "created_by"]
 
+    def validate(self, attrs):
+        """
+        Validate sentiment values:
+        - sentiment_min and sentiment_max must be between 0 and 100 (inclusive) if provided
+        - sentiment_min must be less than or equal to sentiment_max when both are provided
+        """
+        sentiment_min = attrs.get("sentiment_min")
+        sentiment_max = attrs.get("sentiment_max")
+        
+        if sentiment_min is not None:
+            if sentiment_min < 0 or sentiment_min > 100:
+                raise serializers.ValidationError({
+                    "sentiment_min": "Sentiment minimum must be between 0 and 100 (inclusive)."
+                })
+        
+        if sentiment_max is not None:
+            if sentiment_max < 0 or sentiment_max > 100:
+                raise serializers.ValidationError({
+                    "sentiment_max": "Sentiment maximum must be between 0 and 100 (inclusive)."
+                })
+        
+        # Validate that sentiment_min <= sentiment_max when both are provided
+        if sentiment_min is not None and sentiment_max is not None:
+            if sentiment_min > sentiment_max:
+                raise serializers.ValidationError({
+                    "sentiment_min": "Sentiment minimum must be less than or equal to sentiment maximum."
+                })
+        
+        return attrs
+
 
 class ContentTypeDeactivationRuleSerializer(serializers.ModelSerializer):
     """
