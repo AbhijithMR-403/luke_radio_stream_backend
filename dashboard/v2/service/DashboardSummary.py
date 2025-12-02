@@ -289,6 +289,7 @@ class SummaryService:
             - per_day_average_sentiments
             - thresholds
             - segment_count
+            - total_talk_break
         """
         # Build Q object for filtering
         if shift_id is not None:
@@ -301,6 +302,15 @@ class SummaryService:
             except Shift.DoesNotExist:
                 # If shift doesn't exist, return empty result
                 audio_segments = []
+                # Count total talk break even when shift doesn't exist
+                total_talk_break_query = AudioSegmentDAO.filter_with_q(
+                    q_objects=Q(start_time__gte=start_dt, start_time__lt=end_dt),
+                    channel_id=channel_id,
+                    is_active=True,
+                    is_delete=False,
+                    has_content=True
+                )
+                total_talk_break = total_talk_break_query.count()
                 return {
                     'average_sentiment': None,
                     'target_sentiment_score': 75,
@@ -312,7 +322,8 @@ class SummaryService:
                         'low_sentiment_threshold': 20,
                         'high_sentiment_threshold': 80
                     },
-                    'segment_count': 0
+                    'segment_count': 0,
+                    'total_talk_break': total_talk_break
                 }
         else:
             # No shift filter - use datetime range filter
@@ -332,6 +343,17 @@ class SummaryService:
         
         # Get all audio segments with transcription and analysis
         audio_segments = list(audio_segments_query)
+        
+        # Count total talk break (segments with transcription, is_active=True, is_delete=False)
+        # This uses the same datetime/shift filter but doesn't require analysis
+        total_talk_break_query = AudioSegmentDAO.filter_with_q(
+            q_objects=q_object,
+            channel_id=channel_id,
+            is_active=True,
+            is_delete=False,
+            has_content=True  # Ensures transcription_detail exists
+        )
+        total_talk_break = total_talk_break_query.count()
         
         # Get sentiment preferences from UserSentimentPreference
         # Default values if no preference exists
@@ -374,6 +396,7 @@ class SummaryService:
                 'low_sentiment_threshold': low_sentiment_threshold,
                 'high_sentiment_threshold': high_sentiment_threshold
             },
-            'segment_count': len(audio_segments)
+            'segment_count': len(audio_segments),
+            'total_talk_break': total_talk_break
         }
 
