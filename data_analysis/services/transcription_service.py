@@ -278,6 +278,16 @@ class RevAISpeechToText:
             if audio_segment is None:
                 continue
 
+            # Check if TranscriptionDetail already exists for this audio segment (transcription already completed)
+            if TranscriptionDetail.objects.filter(audio_segment=audio_segment).exists():
+                print(f"Skipping segment {audio_segment.id} - TranscriptionDetail already exists")
+                continue  # Skip this segment if TranscriptionDetail already exists
+            
+            # # Check if RevTranscriptionJob already exists (job already created, even if not completed)
+            # if RevTranscriptionJob.objects.filter(audio_segment=audio_segment).exists():
+            #     print(f"Skipping segment {audio_segment.id} - RevTranscriptionJob already exists")
+            #     continue  # Skip this segment if job already exists
+
             media_url_path = f"/api/{audio_segment.file_path}"
 
             try:
