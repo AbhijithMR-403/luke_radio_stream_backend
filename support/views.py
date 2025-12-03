@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.http import HttpResponse
 from django.db.models import Sum
+from zoneinfo import ZoneInfo
 import csv
 from io import StringIO
 
@@ -124,6 +125,41 @@ class TranscribedAudioStatsBaseMixin:
         
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     
+    def _convert_to_channel_timezone(self, dt, channel_timezone):
+        """
+        Convert datetime to channel timezone
+        
+        Args:
+            dt: datetime object (timezone-aware or None)
+            channel_timezone: timezone string (e.g., 'America/New_York') or None for UTC
+            
+        Returns:
+            str: ISO formatted datetime string in the channel timezone, or None if dt is None
+        """
+        if not dt:
+            return None
+        
+        try:
+            # Ensure timezone-aware
+            from django.utils import timezone as django_timezone
+            if django_timezone.is_naive(dt):
+                dt = django_timezone.make_aware(dt)
+            
+            # Convert to channel timezone if specified
+            if channel_timezone:
+                try:
+                    channel_zone = ZoneInfo(channel_timezone)
+                    return dt.astimezone(channel_zone).isoformat()
+                except Exception:
+                    # If timezone is invalid, fall back to UTC
+                    return dt.isoformat()
+            else:
+                # Default to UTC
+                return dt.isoformat()
+        except Exception:
+            # If conversion fails, return original
+            return dt.isoformat() if hasattr(dt, 'isoformat') else str(dt)
+    
     def _get_transcribed_audio_data(self, start_date=None, end_date=None, channel_id=None):
         """
         Get transcribed audio data with filters
@@ -166,11 +202,25 @@ class TranscribedAudioStatsBaseMixin:
             audio_segment = transcription.audio_segment
             rev_job = transcription.rev_job
             
+            # Get channel timezone
+            channel_timezone = None
+            if audio_segment and audio_segment.channel:
+                channel_timezone = audio_segment.channel.timezone or 'UTC'
+            
+            # Convert created_at to channel timezone
+            created_at_channel_tz = None
+            if transcription.created_at:
+                created_at_channel_tz = self._convert_to_channel_timezone(
+                    transcription.created_at,
+                    channel_timezone
+                )
+            
             transcribed_audio_list.append({
                 'id': transcription.id,
                 'audio_segment_id': audio_segment.id if audio_segment else None,
                 'channel_id': audio_segment.channel.id if audio_segment and audio_segment.channel else None,
                 'channel_name': audio_segment.channel.name if audio_segment and audio_segment.channel else None,
+                'channel_timezone': channel_timezone or 'UTC',
                 'start_time': audio_segment.start_time.isoformat() if audio_segment and audio_segment.start_time else None,
                 'end_time': audio_segment.end_time.isoformat() if audio_segment and audio_segment.end_time else None,
                 'duration_seconds': rev_job.duration_seconds if rev_job else None,
@@ -178,6 +228,7 @@ class TranscribedAudioStatsBaseMixin:
                 'transcript': transcription.transcript,
                 'job_id': rev_job.job_id if rev_job else None,
                 'created_at': transcription.created_at.isoformat() if transcription.created_at else None,
+                'created_at_channel_tz': created_at_channel_tz,
                 'file_name': audio_segment.file_name if audio_segment else None,
                 'file_path': audio_segment.file_path if audio_segment else None,
             })
@@ -323,6 +374,16 @@ class TranscribedAudioStatsCSVView(TranscribedAudioStatsBaseMixin, APIView):
         writer.writerow([])
         writer.writerow([])
         
+        # Determine timezone for column header
+        # Check if all items have the same timezone
+        timezones = set(item.get('channel_timezone', 'UTC') for item in data if item.get('channel_timezone'))
+        if len(timezones) == 1:
+            # All rows have the same timezone, use it in header
+            header_timezone = timezones.pop()
+        else:
+            # Multiple timezones, use generic label
+            header_timezone = 'Channel Timezone'
+        
         # Write column headers
         writer.writerow([
             'ID',
@@ -336,6 +397,7 @@ class TranscribedAudioStatsCSVView(TranscribedAudioStatsBaseMixin, APIView):
             'Transcript',
             'Job ID',
             'Created At',
+            f'Created At ({header_timezone})',
             'File Name',
             'File Path'
         ])
@@ -354,6 +416,7 @@ class TranscribedAudioStatsCSVView(TranscribedAudioStatsBaseMixin, APIView):
                 item['transcript'],
                 item['job_id'],
                 item['created_at'],
+                item['created_at_channel_tz'],
                 item['file_name'],
                 item['file_path'],
             ])
