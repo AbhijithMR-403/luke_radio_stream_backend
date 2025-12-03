@@ -4,10 +4,18 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.core.exceptions import ValidationError
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
 
 from .models import Channel, GeneralSetting, WellnessBucket
 from .utils import ACRCloudUtils
-from .serializer import channel_to_dict, general_setting_to_dict, wellness_bucket_to_dict
+from .serializer import (
+    channel_to_dict, 
+    general_setting_to_dict, 
+    wellness_bucket_to_dict,
+    SettingsAndBucketsSerializer
+)
 from config.validation import ValidationUtils
 import json
 from django.views import View
@@ -16,29 +24,37 @@ from django.conf import settings
 from urllib.parse import unquote
 
 
-@method_decorator(csrf_exempt, name='dispatch')
-class SettingsAndBucketsView(View):
+class SettingsAndBucketsView(APIView):
     def get(self, request, *args, **kwargs):
         try:
             settings_obj = GeneralSetting.objects.first()
             settings_data = general_setting_to_dict(settings_obj) if settings_obj else None
             buckets = WellnessBucket.objects.all()
             buckets_data = [wellness_bucket_to_dict(b) for b in buckets]
-            return JsonResponse({'success': True, 'settings': settings_data, 'buckets': buckets_data})
+            return Response({'success': True, 'settings': settings_data, 'buckets': buckets_data})
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def put(self, request, *args, **kwargs):
+        # Validate request payload using serializer FIRST - all validation happens here
+        serializer = SettingsAndBucketsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'success': False, 'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Only proceed if validation passes - use validated_data exclusively
         try:
-            data = json.loads(request.body)
-            settings_data = data.get('settings', {})
-            buckets = data.get('buckets', [])
+            validated_data = serializer.validated_data
+            settings_data = validated_data.get('settings') or {}
+            buckets = validated_data.get('buckets', [])
 
-            settings_obj, _ = GeneralSetting.objects.get_or_create(id=settings_data.get('id', 1))
+            # Get or create settings object
+            settings_id = settings_data.get('id', 1)
+            settings_obj, _ = GeneralSetting.objects.get_or_create(id=settings_id)
 
-            if buckets and len(buckets) > 20:
-                return JsonResponse({'success': False, 'error': 'You can only have 20 buckets'}, status=400)
-
+            # Update settings fields from validated data only
             # List of all fields in GeneralSetting
             general_setting_fields = [
                 'openai_api_key', 'openai_org_id', 'acr_cloud_api_key', 'revai_access_token',
@@ -52,18 +68,27 @@ class SettingsAndBucketsView(View):
                     setattr(settings_obj, field, settings_data[field])
             settings_obj.save()
 
+            # Process buckets from validated data only
             bucket_ids_in_payload = set()
             for bucket in buckets:
-                bucket_id = bucket.get('id')  # Use 'id' instead of 'bucket_id'
+                bucket_id = bucket.get('id')
                 if bucket_id:
                     # Update existing bucket
-                    wb = WellnessBucket.objects.get(id=bucket_id)
+                    try:
+                        wb = WellnessBucket.objects.get(id=bucket_id)
+                    except WellnessBucket.DoesNotExist:
+                        return Response(
+                            {'success': False, 'error': f'Bucket with id {bucket_id} not found'}, 
+                            status=status.HTTP_404_NOT_FOUND
+                        )
                 else:
                     # Create new bucket
                     wb = WellnessBucket()
                 
+                # Use validated data only - all fields are already validated
                 wb.title = bucket.get('title', '')
                 wb.description = bucket.get('description', '')
+                wb.category = bucket.get('category')  # Required and validated by serializer
                 wb.save()
                 bucket_ids_in_payload.add(wb.id)
 
@@ -73,9 +98,17 @@ class SettingsAndBucketsView(View):
             if buckets_to_delete:
                 WellnessBucket.objects.filter(id__in=buckets_to_delete).delete()
 
-            return JsonResponse({'success': True, 'settings': general_setting_to_dict(settings_obj), 'bucket_ids': list(WellnessBucket.objects.all().values())})
+            buckets_data = [wellness_bucket_to_dict(b) for b in WellnessBucket.objects.all()]
+            return Response({
+                'success': True, 
+                'settings': general_setting_to_dict(settings_obj), 
+                'buckets': buckets_data
+            })
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+            return Response(
+                {'success': False, 'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -171,4 +204,5 @@ class ChannelCRUDView(View):
             return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
 
