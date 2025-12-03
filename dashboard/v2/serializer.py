@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.utils import timezone
 from datetime import datetime
+from acr_admin.models import WellnessBucket
 
 
 def parse_datetime_string(value, field_name='datetime'):
@@ -88,6 +89,55 @@ class BucketCountQuerySerializer(serializers.Serializer):
         Validate and parse end_datetime string to timezone-aware datetime
         """
         return parse_datetime_string(value, field_name='end_datetime')
+    
+    def validate(self, attrs):
+        """
+        Validate that end_datetime is after start_datetime
+        """
+        start_dt = attrs.get('start_datetime')
+        end_dt = attrs.get('end_datetime')
+        
+        if start_dt and end_dt:
+            if end_dt <= start_dt:
+                raise serializers.ValidationError({
+                    'end_datetime': 'end_datetime must be greater than start_datetime'
+                })
+        
+        return attrs
+
+
+class CategoryBucketCountQuerySerializer(serializers.Serializer):
+    """
+    Serializer for validating category bucket count API query parameters
+    """
+    start_datetime = serializers.CharField(required=True)
+    end_datetime = serializers.CharField(required=True)
+    category_name = serializers.CharField(required=True)
+    channel_id = serializers.IntegerField(required=True, min_value=1)
+    
+    def validate_start_datetime(self, value):
+        """
+        Validate and parse start_datetime string to timezone-aware datetime
+        """
+        return parse_datetime_string(value, field_name='start_datetime')
+    
+    def validate_end_datetime(self, value):
+        """
+        Validate and parse end_datetime string to timezone-aware datetime
+        """
+        return parse_datetime_string(value, field_name='end_datetime')
+    
+    def validate_category_name(self, value):
+        """
+        Validate that category_name is one of the valid categories from WellnessBucket model
+        """
+        # Get valid categories from WellnessBucket.CATEGORY_CHOICES
+        valid_categories = [choice[0] for choice in WellnessBucket.CATEGORY_CHOICES]
+        if value.lower() not in valid_categories:
+            raise serializers.ValidationError(
+                f'category_name must be one of: {", ".join(valid_categories)}'
+            )
+        return value.lower()
     
     def validate(self, attrs):
         """

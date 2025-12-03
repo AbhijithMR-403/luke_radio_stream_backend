@@ -469,3 +469,188 @@ class BucketCountService:
             'monthly_breakdown': monthly_breakdown
         }
 
+    @staticmethod
+    def _extract_bucket_titles_for_category(
+        bucket_text: str,
+        category_name: str,
+        bucket_title_to_category: Dict[str, str]
+    ) -> List[str]:
+        """
+        Extract bucket titles from bucket_prompt that belong to the specified category.
+        
+        Args:
+            bucket_text: The bucket_prompt text from TranscriptionAnalysis
+            category_name: The category to filter by (personal, community, spiritual)
+            bucket_title_to_category: Mapping from bucket title to category
+        
+        Returns:
+            List of bucket titles that belong to the specified category
+        """
+        found_buckets = []
+        
+        if not bucket_text:
+            return found_buckets
+        
+        # Parse bucket_prompt to extract bucket names
+        lines = [l for l in str(bucket_text).split('\n') if l.strip()]
+        if not lines:
+            lines = [str(bucket_text)]
+        
+        for line in lines:
+            primary, secondary = BucketCountService._parse_bucket_prompt_line(line)
+            
+            # Check each bucket name to see if it belongs to the specified category
+            for bucket_name in [primary, secondary]:
+                if not bucket_name:
+                    continue
+                
+                # Normalize bucket name
+                bucket_name_normalized = ' '.join(bucket_name.upper().split())
+                
+                # Check if this bucket belongs to the specified category
+                if bucket_name_normalized in bucket_title_to_category:
+                    if bucket_title_to_category[bucket_name_normalized] == category_name:
+                        found_buckets.append(bucket_name_normalized)
+                else:
+                    # Try fuzzy matching
+                    for title, cat in bucket_title_to_category.items():
+                        title_normalized = ' '.join(title.split())
+                        if (bucket_name_normalized == title_normalized or 
+                            bucket_name_normalized in title_normalized or 
+                            title_normalized in bucket_name_normalized):
+                            if cat == category_name:
+                                found_buckets.append(title_normalized)
+                            break
+        
+        return found_buckets
+
+    @staticmethod
+    def get_category_bucket_counts(
+        start_dt: datetime,
+        end_dt: datetime,
+        category_name: str,
+        channel_id: int
+    ) -> Dict[str, any]:
+        """
+        Get count and percentage of each bucket within a specific category.
+        
+        Args:
+            start_dt: Start datetime (timezone-aware)
+            end_dt: End datetime (timezone-aware)
+            category_name: Category to filter by (personal, community, spiritual)
+            channel_id: Channel ID to filter by
+        
+        Returns:
+            Dictionary containing:
+            - buckets: Dictionary mapping bucket title to {count, percentage}
+            - total: Total count of buckets in the specified category
+            - category: The category name
+        """
+        # Validate category name using WellnessBucket.CATEGORY_CHOICES
+        valid_categories = [choice[0] for choice in WellnessBucket.CATEGORY_CHOICES]
+        if category_name not in valid_categories:
+            raise ValueError(f'category_name must be one of: {", ".join(valid_categories)}')
+        
+        # Get bucket title to category mapping
+        bucket_title_to_category = BucketCountService._get_bucket_title_to_category_mapping()
+        
+        # Get all buckets that belong to this category
+        category_buckets = {
+            title: cat for title, cat in bucket_title_to_category.items()
+            if cat == category_name
+        }
+        
+        # Build Q object for filtering by date range and channel
+        base_q = Q(
+            transcription_detail__audio_segment__start_time__gte=start_dt,
+            transcription_detail__audio_segment__start_time__lte=end_dt,
+            transcription_detail__audio_segment__channel_id=channel_id,
+            bucket_prompt__isnull=False
+        )
+        
+        # Get all TranscriptionAnalysis records with bucket_prompt in the date range
+        analyses = TranscriptionAnalysis.objects.filter(
+            base_q
+        ).exclude(
+            bucket_prompt=''
+        ).select_related(
+            'transcription_detail__audio_segment'
+        )
+        
+        # Initialize bucket counts and durations for this category
+        bucket_counts = {bucket_title: 0 for bucket_title in category_buckets.keys()}
+        bucket_durations = {bucket_title: 0 for bucket_title in category_buckets.keys()}
+        
+        # Track total filtered duration
+        total_filtered_duration = 0
+        
+        # Process each analysis
+        for analysis in analyses:
+            bucket_text = analysis.bucket_prompt
+            if not bucket_text:
+                continue
+            
+            # Get duration from audio segment
+            audio_segment = analysis.transcription_detail.audio_segment
+            duration_seconds = audio_segment.duration_seconds if audio_segment else 0
+            total_filtered_duration += duration_seconds
+            
+            # Extract bucket titles that belong to the specified category
+            found_buckets = BucketCountService._extract_bucket_titles_for_category(
+                bucket_text,
+                category_name,
+                bucket_title_to_category
+            )
+            
+            # Count and accumulate duration for each found bucket
+            for bucket_title in found_buckets:
+                if bucket_title in bucket_counts:
+                    bucket_counts[bucket_title] += 1
+                    bucket_durations[bucket_title] += duration_seconds
+        
+        # Calculate total time period (end_dt - start_dt) in seconds
+        total_time_period_seconds = (end_dt - start_dt).total_seconds()
+        total_time_period_hours = round(total_time_period_seconds / 3600, 2)
+        
+        # Calculate total filtered duration in hours
+        total_filtered_duration_hours = round(total_filtered_duration / 3600, 2)
+        
+        # Calculate total and percentages
+        total = sum(bucket_counts.values())
+        
+        # Build response with count, percentage, and duration for each bucket
+        result = {}
+        for bucket_title in category_buckets.keys():
+            count = bucket_counts[bucket_title]
+            duration_seconds = bucket_durations[bucket_title]
+            duration_hours = round(duration_seconds / 3600, 2)
+            
+            if total > 0:
+                percentage = round((count / total) * 100, 2)
+            else:
+                percentage = 0.0
+            
+            # Calculate Content Time percentage: (bucket duration / total filtered duration) * 100
+            if total_filtered_duration > 0:
+                content_time_percentage = round((duration_seconds / total_filtered_duration) * 100, 2)
+            else:
+                content_time_percentage = 0.0
+            
+            result[bucket_title] = {
+                'count': count,
+                'percentage': percentage,
+                'duration_seconds': duration_seconds,
+                'duration_hours': duration_hours,
+                'content_time_percentage': content_time_percentage
+            }
+        
+        return {
+            'buckets': result,
+            'total': total,
+            'category': category_name,
+            'total_time_period_seconds': total_time_period_seconds,
+            'total_time_period_hours': total_time_period_hours,
+            'total_filtered_duration_seconds': total_filtered_duration,
+            'total_filtered_duration_hours': total_filtered_duration_hours
+        }
+

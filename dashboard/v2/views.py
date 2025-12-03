@@ -6,7 +6,7 @@ from rest_framework import permissions
 
 from dashboard.v2.service.DashboardSummary import SummaryService
 from dashboard.v2.service.BucketCountService import BucketCountService
-from dashboard.v2.serializer import SummaryQuerySerializer, BucketCountQuerySerializer
+from dashboard.v2.serializer import SummaryQuerySerializer, BucketCountQuerySerializer, CategoryBucketCountQuerySerializer
 
 
 class SummaryView(APIView):
@@ -129,6 +129,67 @@ class BucketCountView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Failed to fetch bucket count: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CategoryBucketCountView(APIView):
+    """
+    API endpoint to get percentage of count of each bucket within a specific category
+    """
+    parser_classes = [JSONParser]
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get bucket count percentages for a specific category with datetime filtering
+        
+        Query Parameters:
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            category_name (str): Category name to filter by - one of: personal, community, spiritual (required)
+            channel_id (int): Channel ID to filter by (required)
+        """
+        try:
+            # Validate query parameters
+            serializer = CategoryBucketCountQuerySerializer(data=request.query_params)
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get validated data
+            validated_data = serializer.validated_data
+            start_dt = validated_data['start_datetime']
+            end_dt = validated_data['end_datetime']
+            category_name = validated_data['category_name']
+            channel_id = validated_data['channel_id']
+            
+            # Get bucket counts from service
+            bucket_data = BucketCountService.get_category_bucket_counts(
+                start_dt=start_dt,
+                end_dt=end_dt,
+                category_name=category_name,
+                channel_id=channel_id
+            )
+            
+            # Build response
+            response_data = {
+                **bucket_data,
+                'filters': {
+                    'start_datetime': request.query_params.get('start_datetime'),
+                    'end_datetime': request.query_params.get('end_datetime'),
+                    'category_name': category_name,
+                    'channel_id': channel_id
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch category bucket count: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
