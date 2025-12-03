@@ -1,6 +1,6 @@
 from django.urls import path
 from dashboard.v1.views import DashboardStatsView, ShiftAnalyticsView, ShiftAnalyticsV2View, TopicAudioSegmentsView, GeneralTopicsManagementView
-from dashboard.v2.views import SummaryView
+from dashboard.v2.views import SummaryView, BucketCountView
 
 app_name = 'dashboard'
 
@@ -15,5 +15,7 @@ urlpatterns = [
     # V2 API
     # Summary API
     path('v2/dashboard/summary/', SummaryView.as_view(), name='summary'),
+    # Bucket Count API
+    path('v2/dashboard/bucket-count/', BucketCountView.as_view(), name='bucket_count'),
 
 ]

@@ -1,0 +1,471 @@
+from typing import Dict, Set, Tuple, Optional, List
+from datetime import datetime, timedelta
+from django.db.models import QuerySet, Q
+from django.utils import timezone
+from collections import defaultdict
+
+from data_analysis.models import TranscriptionAnalysis
+from acr_admin.models import WellnessBucket
+from shift_analysis.models import Shift
+
+
+class BucketCountService:
+    """
+    Service class for counting audio segments analyzed from bucket_prompt,
+    classified by WellnessBucket categories (personal, community, spiritual).
+    """
+
+    @staticmethod
+    def _parse_bucket_prompt_line(line: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Parse a single bucket prompt line and return (primary, secondary) topic names.
+        Handles formats like:
+          - "FUN, 85, RELATIONSHIPS, 75"
+          - "MENTAL, 100, FAITH JOURNEY, 0"
+          - "RELATIONSHIPS, 90%, FUN, 85%"
+          - "GENEROSITY, 90%, CHRISTIAN COMMUNITY, 10%"
+          - "PHYSICAL, 85, undefined, 0"
+        
+        Returns tuple of (primary_or_None, secondary_or_None)
+        """
+        if not line:
+            return None, None
+        text = line.strip()
+        if not text:
+            return None, None
+        
+        # Skip AI output prefixes
+        ai_prefixes = ["empty result", "output:", "result:", "analysis:", "response:"]
+        text_lower = text.lower()
+        for prefix in ai_prefixes:
+            if text_lower.startswith(prefix):
+                text = text[len(prefix):].strip()
+                if text.startswith('\n'):
+                    text = text[1:].strip()
+                break
+        
+        # Normalize separators to comma
+        parts = [p.strip() for p in text.replace("\t", ",").replace("|", ",").split(",")]
+        
+        # Must have at least 4 comma-separated values to determine primary/secondary
+        if len(parts) < 4:
+            return None, None
+        
+        def is_undefined(token):
+            if token is None:
+                return True
+            t = str(token).strip().lower()
+            return t in {"undefined", "undef", "none", "null", "na", "n/a", "", "empty result", "output"}
+        
+        def is_score(token):
+            if token is None:
+                return False
+            t = str(token).strip().replace("%", "")
+            if not t:
+                return False
+            try:
+                float(t)
+                return True
+            except ValueError:
+                return False
+        
+        # Extract first two valid topics (skip scores)
+        topics = []
+        i = 0
+        while i < len(parts) and len(topics) < 2:
+            token = parts[i]
+            # Skip empty tokens
+            if token == "":
+                i += 1
+                continue
+            # If looks like a score, skip and move on
+            if is_score(token):
+                i += 1
+                continue
+            # This token is a candidate topic; ensure it's not undefined
+            if not is_undefined(token):
+                topics.append(token)
+            # Advance; also skip next token if it's a score paired with this topic
+            if i + 1 < len(parts) and is_score(parts[i+1]):
+                i += 2
+            else:
+                i += 1
+        
+        # Return primary and secondary only if we found both
+        primary = topics[0] if len(topics) > 0 else None
+        secondary = topics[1] if len(topics) > 1 else None
+        return primary, secondary
+
+    @staticmethod
+    def _get_bucket_title_to_category_mapping() -> Dict[str, str]:
+        """
+        Get mapping from WellnessBucket title (uppercase) to category.
+        
+        Returns:
+            Dictionary mapping bucket title (uppercase) to category
+        """
+        wellness_buckets = WellnessBucket.objects.all()
+        bucket_title_to_category = {}
+        for bucket in wellness_buckets:
+            bucket_title_to_category[bucket.title.upper()] = bucket.category
+        return bucket_title_to_category
+
+    @staticmethod
+    def _map_bucket_name_to_categories(
+        bucket_name: str,
+        bucket_title_to_category: Dict[str, str]
+    ) -> Set[str]:
+        """
+        Map a bucket name to its category(ies) using exact and fuzzy matching.
+        
+        Args:
+            bucket_name: The bucket name to map
+            bucket_title_to_category: Mapping from bucket title to category
+        
+        Returns:
+            Set of category names that match the bucket name
+        """
+        found_categories = set()
+        
+        if not bucket_name:
+            return found_categories
+        
+        # Normalize bucket name: uppercase and strip whitespace
+        bucket_name_normalized = ' '.join(bucket_name.upper().split())
+        
+        # Try exact match first
+        if bucket_name_normalized in bucket_title_to_category:
+            found_categories.add(bucket_title_to_category[bucket_name_normalized])
+        else:
+            # Try partial/fuzzy match (case-insensitive)
+            # Normalize titles for comparison
+            for title, category in bucket_title_to_category.items():
+                title_normalized = ' '.join(title.split())
+                # Check if bucket name matches title (exact or contains)
+                if (bucket_name_normalized == title_normalized or 
+                    bucket_name_normalized in title_normalized or 
+                    title_normalized in bucket_name_normalized):
+                    found_categories.add(category)
+                    break
+        
+        return found_categories
+
+    @staticmethod
+    def _extract_categories_from_bucket_prompt(
+        bucket_text: str,
+        bucket_title_to_category: Dict[str, str]
+    ) -> Set[str]:
+        """
+        Extract categories from bucket_prompt text by parsing and mapping bucket names.
+        
+        Args:
+            bucket_text: The bucket_prompt text from TranscriptionAnalysis
+            bucket_title_to_category: Mapping from bucket title to category
+        
+        Returns:
+            Set of category names found in the bucket_prompt
+        """
+        found_categories = set()
+        
+        if not bucket_text:
+            return found_categories
+        
+        # Parse bucket_prompt to extract bucket names
+        lines = [l for l in str(bucket_text).split('\n') if l.strip()]
+        if not lines:
+            lines = [str(bucket_text)]
+        
+        for line in lines:
+            primary, secondary = BucketCountService._parse_bucket_prompt_line(line)
+            
+            # Map bucket names to categories
+            for bucket_name in [primary, secondary]:
+                categories = BucketCountService._map_bucket_name_to_categories(
+                    bucket_name,
+                    bucket_title_to_category
+                )
+                found_categories.update(categories)
+        
+        return found_categories
+
+    @staticmethod
+    def _convert_shift_q_for_transcription_analysis(q_obj: Q) -> Q:
+        """
+        Convert a Q object designed for AudioSegments to work with TranscriptionAnalysis.
+        Prefixes field names with 'transcription_detail__audio_segment__'
+        
+        Args:
+            q_obj: Q object with AudioSegments field names
+        
+        Returns:
+            Q object with prefixed field names for TranscriptionAnalysis
+        """
+        if not q_obj.children:
+            return q_obj
+        
+        # Build a new Q object with converted field names
+        converted_children = []
+        for child in q_obj.children:
+            if isinstance(child, Q):
+                # Recursively process nested Q objects
+                converted_children.append(BucketCountService._convert_shift_q_for_transcription_analysis(child))
+            elif isinstance(child, tuple):
+                # Convert field name: ('start_time__lt', value) -> ('transcription_detail__audio_segment__start_time__lt', value)
+                field_name, value = child
+                new_field_name = f'transcription_detail__audio_segment__{field_name}'
+                converted_children.append((new_field_name, value))
+            else:
+                converted_children.append(child)
+        
+        # Create new Q object with converted children and same connector
+        return Q(*converted_children, _connector=q_obj.connector, _negated=q_obj.negated)
+
+    @staticmethod
+    def _get_last_6_months() -> List[Tuple[str, datetime, datetime]]:
+        """
+        Calculate the last 6 months (excluding current month).
+        
+        Returns:
+            List of tuples: (month_key, month_start, month_end) for last 6 months
+        """
+        current_time = timezone.now()
+        current_month_start = current_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
+        months = []
+        for i in range(1, 7):  # Last 6 months (1 to 6 months ago)
+            # Calculate target month and year
+            target_month = current_time.month - i
+            if target_month > 0:
+                year = current_time.year
+                month = target_month
+            else:
+                # Need to go to previous year
+                year = current_time.year - 1
+                month = 12 + target_month  # target_month is negative (e.g., -1 becomes 11)
+            
+            month_start = datetime(year, month, 1, 0, 0, 0, 0, tzinfo=current_time.tzinfo)
+            
+            # Calculate month end (last day of the month)
+            if month == 12:
+                next_month_start = datetime(year + 1, 1, 1, 0, 0, 0, 0, tzinfo=current_time.tzinfo)
+            else:
+                next_month_start = datetime(year, month + 1, 1, 0, 0, 0, 0, tzinfo=current_time.tzinfo)
+            month_end = next_month_start - timedelta(microseconds=1)
+            
+            month_key = month_start.strftime('%Y-%m')
+            months.append((month_key, month_start, month_end))
+        
+        return months
+
+    @staticmethod
+    def get_bucket_counts(
+        start_dt: datetime,
+        end_dt: datetime,
+        channel_id: int,
+        shift_id: Optional[int] = None
+    ) -> Dict[str, any]:
+        """
+        Get count of audio segments analyzed from bucket_prompt, classified by category.
+        Includes overall counts and monthly breakdowns for last 6 months (excluding current month).
+        
+        Args:
+            start_dt: Start datetime (timezone-aware) - used for overall counts only
+            end_dt: End datetime (timezone-aware) - used for overall counts only
+            channel_id: Channel ID to filter by
+            shift_id: Optional shift ID to filter by
+        
+        Returns:
+            Dictionary containing:
+            - Category objects (personal, community, spiritual) with count and percentage
+            - total: Total count across all categories
+            - monthly_breakdown: Monthly breakdown for last 6 months (excluding current month)
+        """
+        # Get bucket title to category mapping
+        bucket_title_to_category = BucketCountService._get_bucket_title_to_category_mapping()
+        
+        # Get last 6 months (excluding current month)
+        last_6_months = BucketCountService._get_last_6_months()
+        
+        # Build Q object for filtering by date range and channel
+        base_q = Q(
+            transcription_detail__audio_segment__start_time__gte=start_dt,
+            transcription_detail__audio_segment__start_time__lte=end_dt,
+            transcription_detail__audio_segment__channel_id=channel_id,
+            bucket_prompt__isnull=False
+        )
+        
+        # Apply shift filtering if shift_id is provided
+        if shift_id is not None:
+            try:
+                shift = Shift.objects.get(id=shift_id, channel_id=channel_id)
+                # Get Q object from shift's get_datetime_filter method
+                # This returns Q object for AudioSegments, so we need to prefix with relationship path
+                shift_q = shift.get_datetime_filter(utc_start=start_dt, utc_end=end_dt)
+                # Convert Q object to work with TranscriptionAnalysis by prefixing field paths
+                shift_q_modified = BucketCountService._convert_shift_q_for_transcription_analysis(shift_q)
+                # Combine with base query
+                base_q = base_q & shift_q_modified
+            except Shift.DoesNotExist:
+                # If shift doesn't exist, return empty result
+                return {
+                    'personal': {'count': 0, 'percentage': 0.0},
+                    'community': {'count': 0, 'percentage': 0.0},
+                    'spiritual': {'count': 0, 'percentage': 0.0},
+                    'total': 0,
+                    'monthly_breakdown': {}
+                }
+        
+        # Get all TranscriptionAnalysis records with bucket_prompt in the date range (for overall counts)
+        analyses = TranscriptionAnalysis.objects.filter(
+            base_q
+        ).exclude(
+            bucket_prompt=''
+        ).select_related(
+            'transcription_detail__audio_segment'
+        )
+        
+        # Build Q object for last 6 months query
+        monthly_q_objects = Q()
+        for month_key, month_start, month_end in last_6_months:
+            monthly_q_objects |= Q(
+                transcription_detail__audio_segment__start_time__gte=month_start,
+                transcription_detail__audio_segment__start_time__lte=month_end,
+                transcription_detail__audio_segment__channel_id=channel_id
+            )
+        
+        # Apply shift filtering to monthly query if shift_id is provided
+        if shift_id is not None:
+            try:
+                shift = Shift.objects.get(id=shift_id, channel_id=channel_id)
+                # For monthly breakdown, we need to apply shift filter for each month
+                # Build combined Q object for all months with shift filtering
+                monthly_shift_q = Q()
+                for month_key, month_start, month_end in last_6_months:
+                    shift_q = shift.get_datetime_filter(utc_start=month_start, utc_end=month_end)
+                    # Convert shift Q object for TranscriptionAnalysis
+                    shift_q_modified = BucketCountService._convert_shift_q_for_transcription_analysis(shift_q)
+                    monthly_shift_q |= (
+                        Q(
+                            transcription_detail__audio_segment__start_time__gte=month_start,
+                            transcription_detail__audio_segment__start_time__lte=month_end,
+                            transcription_detail__audio_segment__channel_id=channel_id
+                        ) & shift_q_modified
+                    )
+                monthly_q_objects = monthly_shift_q
+            except Shift.DoesNotExist:
+                # If shift doesn't exist, monthly breakdown will be empty
+                monthly_q_objects = Q(pk__in=[])  # Empty query
+        
+        # Get analyses for last 6 months (independent of start_dt/end_dt)
+        monthly_analyses = TranscriptionAnalysis.objects.filter(
+            monthly_q_objects,
+            bucket_prompt__isnull=False
+        ).exclude(
+            bucket_prompt=''
+        ).select_related(
+            'transcription_detail__audio_segment'
+        )
+        
+        # Initialize category counts for overall
+        category_counts = {
+            'personal': 0,
+            'community': 0,
+            'spiritual': 0
+        }
+        
+        # Initialize monthly breakdown structure
+        # Format: { 'YYYY-MM': { 'personal': count, 'community': count, 'spiritual': count } }
+        monthly_counts = {}
+        for month_key, _, _ in last_6_months:
+            monthly_counts[month_key] = {
+                'personal': 0,
+                'community': 0,
+                'spiritual': 0
+            }
+        
+        # Process each analysis for overall counts
+        for analysis in analyses:
+            bucket_text = analysis.bucket_prompt
+            if not bucket_text:
+                continue
+            
+            # Extract categories from bucket_prompt
+            found_categories = BucketCountService._extract_categories_from_bucket_prompt(
+                bucket_text,
+                bucket_title_to_category
+            )
+            
+            # Count each found category (a segment can belong to multiple categories)
+            for category in found_categories:
+                if category in category_counts:
+                    category_counts[category] += 1
+        
+        # Process monthly analyses
+        for analysis in monthly_analyses:
+            bucket_text = analysis.bucket_prompt
+            if not bucket_text:
+                continue
+            
+            # Get the month of this analysis
+            segment_start_time = analysis.transcription_detail.audio_segment.start_time
+            month_key = segment_start_time.strftime('%Y-%m')
+            
+            # Only process if it's in our last 6 months list
+            if month_key not in monthly_counts:
+                continue
+            
+            # Extract categories from bucket_prompt
+            found_categories = BucketCountService._extract_categories_from_bucket_prompt(
+                bucket_text,
+                bucket_title_to_category
+            )
+            
+            # Count each found category for this month
+            for category in found_categories:
+                if category in monthly_counts[month_key]:
+                    monthly_counts[month_key][category] += 1
+        
+        # Calculate total and percentages for overall
+        total = sum(category_counts.values())
+        
+        # Build response with count and percentage grouped by category
+        result = {}
+        for category, count in category_counts.items():
+            if total > 0:
+                percentage = round((count / total) * 100, 2)
+            else:
+                percentage = 0.0
+            
+            result[category] = {
+                'count': count,
+                'percentage': percentage
+            }
+        
+        # Build monthly breakdown for last 6 months
+        monthly_breakdown = {}
+        for month_key, _, _ in last_6_months:
+            month_data = monthly_counts[month_key]
+            month_total = sum(month_data.values())
+            
+            month_result = {}
+            for category, count in month_data.items():
+                if month_total > 0:
+                    percentage = round((count / month_total) * 100, 2)
+                else:
+                    percentage = 0.0
+                month_result[category] = {
+                    'count': count,
+                    'percentage': percentage
+                }
+            
+            monthly_breakdown[month_key] = {
+                **month_result,
+                'total': month_total
+            }
+        
+        return {
+            **result,
+            'total': total,
+            'monthly_breakdown': monthly_breakdown
+        }
+
