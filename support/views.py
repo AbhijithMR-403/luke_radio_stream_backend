@@ -1,13 +1,18 @@
 from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework import permissions, status
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.http import HttpResponse
+from django.db.models import Sum
+import csv
+from io import StringIO
 
 from .models import SupportTicket, SupportTicketResponse
-from .serializer import SupportTicketSerializer, SupportTicketResponseSerializer
+from .serializer import SupportTicketSerializer, SupportTicketResponseSerializer, TranscribedAudioQuerySerializer
+from data_analysis.models import TranscriptionDetail
 
 
 class SupportTicketListCreateAPIView(APIView):
@@ -100,4 +105,270 @@ class SupportTicketRespondAPIView(APIView):
 
         output = SupportTicketResponseSerializer(response)
         return Response(output.data, status=status.HTTP_201_CREATED)
+
+
+class TranscribedAudioStatsBaseMixin:
+    """
+    Base mixin with shared logic for transcribed audio statistics
+    """
+    def _format_duration(self, seconds):
+        """
+        Format duration in seconds to human-readable format (HH:MM:SS)
+        """
+        if not seconds:
+            return "00:00:00"
+        
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    
+    def _get_transcribed_audio_data(self, start_date=None, end_date=None, channel_id=None):
+        """
+        Get transcribed audio data with filters
+        
+        Returns:
+            tuple: (transcribed_audio_list, total_duration_seconds, total_duration_formatted)
+        """
+        # Query transcribed audio with related data
+        queryset = TranscriptionDetail.objects.select_related(
+            'rev_job',
+            'audio_segment',
+            'audio_segment__channel'
+        ).filter(
+            rev_job__status='transcribed',
+            rev_job__duration_seconds__isnull=False,
+            audio_segment__isnull=False  # Ensure audio_segment exists
+        )
+        
+        # Apply date filter on audio segment start_time
+        if start_date:
+            queryset = queryset.filter(audio_segment__start_time__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(audio_segment__start_time__lte=end_date)
+        
+        # Apply channel filter
+        if channel_id:
+            queryset = queryset.filter(audio_segment__channel_id=channel_id)
+        
+        # Exclude deleted segments
+        queryset = queryset.filter(audio_segment__is_delete=False)
+        
+        # Calculate total duration
+        total_duration_seconds = queryset.aggregate(
+            total=Sum('rev_job__duration_seconds')
+        )['total'] or 0.0
+        
+        # Get all transcribed audio data
+        transcribed_audio_list = []
+        for transcription in queryset.order_by('audio_segment__start_time'):
+            audio_segment = transcription.audio_segment
+            rev_job = transcription.rev_job
+            
+            transcribed_audio_list.append({
+                'id': transcription.id,
+                'audio_segment_id': audio_segment.id if audio_segment else None,
+                'channel_id': audio_segment.channel.id if audio_segment and audio_segment.channel else None,
+                'channel_name': audio_segment.channel.name if audio_segment and audio_segment.channel else None,
+                'start_time': audio_segment.start_time.isoformat() if audio_segment and audio_segment.start_time else None,
+                'end_time': audio_segment.end_time.isoformat() if audio_segment and audio_segment.end_time else None,
+                'duration_seconds': rev_job.duration_seconds if rev_job else None,
+                'duration_formatted': self._format_duration(rev_job.duration_seconds) if rev_job and rev_job.duration_seconds else None,
+                'transcript': transcription.transcript,
+                'job_id': rev_job.job_id if rev_job else None,
+                'created_at': transcription.created_at.isoformat() if transcription.created_at else None,
+                'file_name': audio_segment.file_name if audio_segment else None,
+                'file_path': audio_segment.file_path if audio_segment else None,
+            })
+        
+        # Format total duration
+        total_duration_formatted = self._format_duration(total_duration_seconds)
+        
+        return transcribed_audio_list, total_duration_seconds, total_duration_formatted
+
+
+class TranscribedAudioStatsView(TranscribedAudioStatsBaseMixin, APIView):
+    """
+    API endpoint for transcribed audio statistics (JSON response)
+    """
+    parser_classes = [JSONParser]
+    # permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get transcribed audio statistics with filters (JSON response)
+        
+        Query Parameters:
+            start_date (str): Start date in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format (optional)
+            end_date (str): End date in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format (optional)
+            channel_id (int): Channel ID to filter by (optional)
+        """
+        try:
+            # Validate query parameters using serializer
+            serializer = TranscribedAudioQuerySerializer(data=request.query_params)
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get validated data
+            validated_data = serializer.validated_data
+            start_date = validated_data.get('start_date')
+            end_date = validated_data.get('end_date')
+            channel_id = validated_data.get('channel_id')
+            
+            # Get transcribed audio data
+            transcribed_audio_list, total_duration_seconds, total_duration_formatted = self._get_transcribed_audio_data(
+                start_date=start_date,
+                end_date=end_date,
+                channel_id=channel_id
+            )
+            
+            # Return JSON response
+            response_data = {
+                'total_duration_seconds': total_duration_seconds,
+                'total_duration_formatted': total_duration_formatted,
+                'total_count': len(transcribed_audio_list),
+                'filters': {
+                    'start_date': request.query_params.get('start_date'),
+                    'end_date': request.query_params.get('end_date'),
+                    'channel_id': channel_id
+                },
+                'transcribed_audio': transcribed_audio_list
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch transcribed audio statistics: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TranscribedAudioStatsCSVView(TranscribedAudioStatsBaseMixin, APIView):
+    """
+    API endpoint for transcribed audio statistics CSV export
+    """
+    parser_classes = [JSONParser]
+    # permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get transcribed audio statistics as CSV file
+        
+        Query Parameters:
+            start_date (str): Start date in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format (optional)
+            end_date (str): End date in YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS format (optional)
+            channel_id (int): Channel ID to filter by (optional)
+        """
+        try:
+            # Validate query parameters using serializer
+            serializer = TranscribedAudioQuerySerializer(data=request.query_params)
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get validated data
+            validated_data = serializer.validated_data
+            start_date = validated_data.get('start_date')
+            end_date = validated_data.get('end_date')
+            channel_id = validated_data.get('channel_id')
+            
+            # Get transcribed audio data
+            transcribed_audio_list, total_duration_seconds, total_duration_formatted = self._get_transcribed_audio_data(
+                start_date=start_date,
+                end_date=end_date,
+                channel_id=channel_id
+            )
+            
+            # Generate and return CSV response
+            return self._generate_csv_response(
+                transcribed_audio_list,
+                total_duration_seconds,
+                total_duration_formatted,
+                start_date,
+                end_date,
+                channel_id
+            )
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate CSV: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _generate_csv_response(self, data, total_seconds, total_formatted, start_date, end_date, channel_id):
+        """
+        Generate CSV response with transcribed audio data
+        """
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # Write header with total duration
+        writer.writerow(['Transcribed Audio Statistics'])
+        writer.writerow([])
+        writer.writerow(['Total Duration (seconds)', total_seconds])
+        writer.writerow(['Total Duration (formatted)', total_formatted])
+        writer.writerow(['Total Count', len(data)])
+        writer.writerow([])
+        writer.writerow(['Filters:'])
+        writer.writerow(['Start Date', start_date.isoformat() if start_date else 'All'])
+        writer.writerow(['End Date', end_date.isoformat() if end_date else 'All'])
+        writer.writerow(['Channel ID', channel_id if channel_id else 'All'])
+        writer.writerow([])
+        writer.writerow([])
+        
+        # Write column headers
+        writer.writerow([
+            'ID',
+            'Audio Segment ID',
+            'Channel ID',
+            'Channel Name',
+            'Start Time',
+            'End Time',
+            'Duration (seconds)',
+            'Duration (formatted)',
+            'Transcript',
+            'Job ID',
+            'Created At',
+            'File Name',
+            'File Path'
+        ])
+        
+        # Write data rows
+        for item in data:
+            writer.writerow([
+                item['id'],
+                item['audio_segment_id'],
+                item['channel_id'],
+                item['channel_name'],
+                item['start_time'],
+                item['end_time'],
+                item['duration_seconds'],
+                item['duration_formatted'],
+                item['transcript'],
+                item['job_id'],
+                item['created_at'],
+                item['file_name'],
+                item['file_path'],
+            ])
+        
+        # Create HTTP response with CSV content
+        response = HttpResponse(output.getvalue(), content_type='text/csv')
+        
+        # Generate filename with date range
+        filename = 'transcribed_audio_stats'
+        if start_date:
+            filename += f'_{start_date.strftime("%Y%m%d")}'
+        if end_date:
+            filename += f'_{end_date.strftime("%Y%m%d")}'
+        filename += '.csv'
+        
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 
