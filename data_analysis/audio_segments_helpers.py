@@ -13,6 +13,25 @@ from data_analysis.repositories import AudioSegmentDAO
 from audio_policy.models import FlagCondition
 
 
+def flatten_nested_list(nested_list):
+    """
+    Flatten a nested list structure into a single list of strings.
+    Handles cases like: [["item1"], ["item2"], ["item3", "item4"]] -> ["item1", "item2", "item3", "item4"]
+    """
+    if not nested_list:
+        return []
+    
+    flattened = []
+    for item in nested_list:
+        if isinstance(item, list):
+            # Recursively flatten nested lists
+            flattened.extend(flatten_nested_list(item))
+        elif item:  # Only add non-empty items
+            flattened.append(str(item))
+    
+    return flattened
+
+
 def parse_dt(value):
     if isinstance(value, str):
         if 'T' in value:
@@ -799,11 +818,20 @@ def check_flag_conditions(segment, flag_condition):
     
     # Check IAB topics
     if flag_condition.iab_topics:
+        # Flatten nested lists from flag_condition
+        flag_topics_flat = flatten_nested_list(flag_condition.iab_topics)
+        
         iab_topics = analysis.get('iab_topics') or ''
-        iab_topics_lower = iab_topics.lower() if isinstance(iab_topics, str) else str(iab_topics).lower()
+        # Handle both string and list cases for segment's iab_topics
+        if isinstance(iab_topics, list):
+            iab_topics_flat = flatten_nested_list(iab_topics)
+            iab_topics_lower = ' '.join(iab_topics_flat).lower()
+        else:
+            iab_topics_lower = str(iab_topics).lower()
+        
         matched_topics = []
         
-        for topic in flag_condition.iab_topics:
+        for topic in flag_topics_flat:
             if topic and topic.lower() in iab_topics_lower:
                 matched_topics.append(topic)
         
@@ -817,11 +845,20 @@ def check_flag_conditions(segment, flag_condition):
     
     # Check bucket prompt
     if flag_condition.bucket_prompt:
+        # Flatten nested lists from flag_condition
+        flag_prompts_flat = flatten_nested_list(flag_condition.bucket_prompt)
+        
         bucket_prompt = analysis.get('bucket_prompt') or ''
-        bucket_prompt_lower = bucket_prompt.lower() if isinstance(bucket_prompt, str) else str(bucket_prompt).lower()
+        # Handle both string and list cases for segment's bucket_prompt
+        if isinstance(bucket_prompt, list):
+            bucket_prompt_flat = flatten_nested_list(bucket_prompt)
+            bucket_prompt_lower = ' '.join(bucket_prompt_flat).lower()
+        else:
+            bucket_prompt_lower = str(bucket_prompt).lower()
+        
         matched_prompts = []
         
-        for prompt in flag_condition.bucket_prompt:
+        for prompt in flag_prompts_flat:
             if prompt and prompt.lower() in bucket_prompt_lower:
                 matched_prompts.append(prompt)
         
@@ -835,11 +872,20 @@ def check_flag_conditions(segment, flag_condition):
     
     # Check general topics
     if flag_condition.general_topics:
+        # Flatten nested lists from flag_condition
+        flag_topics_flat = flatten_nested_list(flag_condition.general_topics)
+        
         general_topics = analysis.get('general_topics') or ''
-        general_topics_lower = general_topics.lower() if isinstance(general_topics, str) else str(general_topics).lower()
+        # Handle both string and list cases for segment's general_topics
+        if isinstance(general_topics, list):
+            general_topics_flat = flatten_nested_list(general_topics)
+            general_topics_lower = ' '.join(general_topics_flat).lower()
+        else:
+            general_topics_lower = str(general_topics).lower()
+        
         matched_topics = []
         
-        for topic in flag_condition.general_topics:
+        for topic in flag_topics_flat:
             if topic and topic.lower() in general_topics_lower:
                 matched_topics.append(topic)
         
