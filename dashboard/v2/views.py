@@ -7,7 +7,7 @@ from rest_framework import permissions
 from dashboard.v2.service.DashboardSummary import SummaryService
 from dashboard.v2.service.BucketCountService import BucketCountService
 from dashboard.v2.service.TopicService import TopicService
-from dashboard.v2.serializer import SummaryQuerySerializer, BucketCountQuerySerializer, CategoryBucketCountQuerySerializer, TopicQuerySerializer
+from dashboard.v2.serializer import SummaryQuerySerializer, BucketCountQuerySerializer, CategoryBucketCountQuerySerializer, TopicQuerySerializer, GeneralTopicCountByShiftQuerySerializer
 
 
 class SummaryView(APIView):
@@ -276,6 +276,67 @@ class TopTopicsView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Failed to fetch top topics: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class GeneralTopicCountByShiftView(APIView):
+    """
+    API endpoint to get count of general topics grouped by shift
+    """
+    parser_classes = [JSONParser]
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get general topic counts grouped by shift
+        
+        Query Parameters:
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            channel_id (int): Channel ID to filter by (required)
+            show_all_topics (bool): If True, show all topics. If False, only show topics that are in GeneralTopic model (default: False)
+        """
+        try:
+            # Validate query parameters
+            serializer = GeneralTopicCountByShiftQuerySerializer(data=request.query_params)
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get validated data
+            validated_data = serializer.validated_data
+            start_dt = validated_data['start_datetime']
+            end_dt = validated_data['end_datetime']
+            channel_id = validated_data['channel_id']
+            show_all_topics = validated_data.get('show_all_topics', False)
+            
+            # Get general topic counts by shift from service
+            result_data = TopicService.get_general_topic_counts_by_shift(
+                start_dt=start_dt,
+                end_dt=end_dt,
+                channel_id=channel_id,
+                show_all_topics=show_all_topics
+            )
+            
+            # Build response
+            response_data = {
+                **result_data,
+                'filters': {
+                    'start_datetime': request.query_params.get('start_datetime'),
+                    'end_datetime': request.query_params.get('end_datetime'),
+                    'channel_id': channel_id,
+                    'show_all_topics': show_all_topics
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch general topic counts by shift: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

@@ -300,4 +300,176 @@ class TopicService:
         
         return " ".join(parts) if parts else "0s"
 
+    @staticmethod
+    def get_general_topic_counts_by_shift(
+        start_dt: datetime,
+        end_dt: datetime,
+        channel_id: int,
+        show_all_topics: bool = False
+    ) -> Dict:
+        """
+        Get count of general topics grouped by shift.
+        
+        Args:
+            start_dt: Start datetime
+            end_dt: End datetime
+            channel_id: Channel ID to filter by
+            show_all_topics: If True, show all topics. If False, only show topics that are in GeneralTopic model (default: False)
+            
+        Returns:
+            Dictionary with general topic counts grouped by shift
+        """
+        from shift_analysis.models import Shift
+        from shift_analysis.utils import filter_segments_by_shift
+        from zoneinfo import ZoneInfo
+        
+        # Get all active shifts for the channel
+        active_shifts = Shift.objects.filter(
+            channel_id=channel_id,
+            is_active=True
+        )
+        
+        # Get GeneralTopic names if we need to filter
+        if show_all_topics:
+            generaltopic_names = None
+        else:
+            # Only count topics that are in GeneralTopic model
+            generaltopic_names = TopicService._get_all_generaltopic_names()
+        
+        # Convert to UTC for shift filtering
+        if start_dt.tzinfo is None:
+            start_dt = timezone.make_aware(start_dt)
+        if end_dt.tzinfo is None:
+            end_dt = timezone.make_aware(end_dt)
+        
+        utc_start = start_dt.astimezone(ZoneInfo("UTC"))
+        utc_end = end_dt.astimezone(ZoneInfo("UTC"))
+        
+        # Dictionary to store results: {shift_id: {shift_name: str, topics: {topic_name: count}}}
+        shift_results = {}
+        
+        # Process each shift
+        for shift in active_shifts:
+            try:
+                # Get audio segments for this shift
+                filtered_segments = filter_segments_by_shift(shift.id, utc_start, utc_end)
+                
+                # Further filter by channel and date range
+                shift_segments = filtered_segments.filter(
+                    channel_id=channel_id,
+                    is_delete=False,
+                    is_active=True
+                ).select_related(
+                    'transcription_detail',
+                    'transcription_detail__analysis'
+                )
+                
+                # Convert queryset to list to ensure related data is loaded
+                # This is needed for both sentiment calculation and getting segment IDs
+                segments_list = list(shift_segments)
+                segment_ids = [seg.id for seg in segments_list]
+                
+                # Calculate average sentiment for this shift
+                from dashboard.v2.service.DashboardSummary import SummaryService
+                average_sentiment = SummaryService.get_average_sentiment(segments_list)
+                
+                if not segment_ids:
+                    # No segments for this shift, add empty result
+                    shift_results[shift.id] = {
+                        'shift_id': shift.id,
+                        'shift_name': shift.name,
+                        'topics': {},
+                        'average_sentiment': average_sentiment
+                    }
+                    continue
+                
+                # Get transcription analyses for these segments (for topic counting)
+                analyses = TranscriptionAnalysis.objects.filter(
+                    transcription_detail__audio_segment_id__in=segment_ids,
+                    general_topics__isnull=False
+                ).exclude(
+                    general_topics=''
+                ).exclude(
+                    general_topics__iexact='undefined'
+                ).select_related(
+                    'transcription_detail__audio_segment'
+                )
+                
+                # Count topics for this shift
+                topic_counts = defaultdict(int)
+                
+                for analysis in analyses:
+                    if not analysis.general_topics:
+                        continue
+                    
+                    # Parse topics
+                    topics = TopicService._parse_topics_from_text(analysis.general_topics)
+                    
+                    # Filter topics based on show_all_topics flag
+                    if show_all_topics:
+                        # Show all topics (no filtering)
+                        filtered_topics = topics
+                    else:
+                        # Only count topics that are in GeneralTopic model
+                        filtered_topics = [topic for topic in topics if topic.lower() in generaltopic_names]
+                    
+                    # Count each topic
+                    for topic in filtered_topics:
+                        topic_counts[topic] += 1
+                
+                # Store results for this shift
+                shift_results[shift.id] = {
+                    'shift_id': shift.id,
+                    'shift_name': shift.name,
+                    'topics': dict(topic_counts),
+                    'average_sentiment': average_sentiment
+                }
+                
+            except Exception as e:
+                # If shift filtering fails, add empty result
+                shift_results[shift.id] = {
+                    'shift_id': shift.id,
+                    'shift_name': shift.name,
+                    'topics': {},
+                    'average_sentiment': None,
+                    'error': str(e)
+                }
+        
+        # Format response
+        shifts_data = []
+        for shift_id, shift_data in shift_results.items():
+            # Convert topics dict to list of objects
+            topics_list = [
+                {
+                    'topic_name': topic_name,
+                    'count': count
+                }
+                for topic_name, count in sorted(shift_data['topics'].items(), key=lambda x: x[1], reverse=True)
+            ]
+            
+            shift_result = {
+                'shift_id': shift_data['shift_id'],
+                'shift_name': shift_data['shift_name'],
+                'topics': topics_list,
+                'total_topics': len(topics_list),
+                'total_count': sum(shift_data['topics'].values()),
+                'average_sentiment': shift_data.get('average_sentiment')
+            }
+            
+            if 'error' in shift_data:
+                shift_result['error'] = shift_data['error']
+            
+            shifts_data.append(shift_result)
+        
+        return {
+            'shifts': shifts_data,
+            'total_shifts': len(shifts_data),
+            'filters': {
+                'start_datetime': start_dt.isoformat(),
+                'end_datetime': end_dt.isoformat(),
+                'channel_id': channel_id,
+                'show_all_topics': show_all_topics
+            }
+        }
+
 
