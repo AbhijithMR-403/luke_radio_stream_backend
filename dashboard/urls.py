@@ -1,6 +1,6 @@
 from django.urls import path
 from dashboard.v1.views import DashboardStatsView, ShiftAnalyticsView, ShiftAnalyticsV2View, TopicAudioSegmentsView, GeneralTopicsManagementView
-from dashboard.v2.views import SummaryView, BucketCountView, CategoryBucketCountView
+from dashboard.v2.views import SummaryView, BucketCountView, CategoryBucketCountView, TopTopicsView
 
 app_name = 'dashboard'
 
@@ -19,5 +19,7 @@ urlpatterns = [
     path('v2/dashboard/bucket-count/', BucketCountView.as_view(), name='bucket_count'),
     # Category Bucket Count API
     path('v2/dashboard/category-bucket-count/', CategoryBucketCountView.as_view(), name='category_bucket_count'),
+    # Top Topics API (supports both count and duration via sort_by parameter)
+    path('v2/dashboard/topics/', TopTopicsView.as_view(), name='top_topics'),
 
 ]
