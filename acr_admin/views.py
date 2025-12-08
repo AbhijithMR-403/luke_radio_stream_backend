@@ -197,8 +197,9 @@ class ChannelCRUDView(View):
             channel_id = data.get('id')
             if not channel_id:
                 return JsonResponse({'success': False, 'error': 'channel id required'}, status=400)
-            channel = Channel.objects.get(id=channel_id)
-            channel.delete()
+            channel = Channel.objects.get(id=channel_id, is_deleted=False)
+            channel.is_deleted = True
+            channel.save()
             return JsonResponse({'success': True})
         except Channel.DoesNotExist:
             return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
