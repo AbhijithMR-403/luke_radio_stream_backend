@@ -217,12 +217,12 @@ class TranscriptionAnalyzer:
             content_type_definitions = settings.content_type_prompt or ""
             if content_type_definitions and content_type_definitions.strip():
                 content_type_instruction = (
-                    "This is a transcript of a radio station, using you knowledge of radio station production "
+                    "This is a transcript of a radio station, using your knowledge of radio station production "
                     "I would like you to determine with 0.8% or greater accuracy which one of the following "
                     "typical radio station segments this content is: "
-                    f"{content_type_definitions} "
+                    f"{content_type_definitions}.\n"
                     "Output a comma-separated value of the segment type only and the percentage confidence measured "
-                    "in whole percenatges i.e. 75%, include the % please. Where you cannot identify any decipherable "
+                    "in whole percentages i.e. 75%, include the % please. Where you cannot identify any decipherable "
                     "text just return an empty result"
                 )
                 content_type_resp = client.chat.completions.create(

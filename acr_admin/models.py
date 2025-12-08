@@ -101,6 +101,7 @@ class GeneralSetting(models.Model):
         help_text="Prompt for determining general content type from transcript.",
         null=True, blank=True
     )
+    # Remove later
     radio_segment_types = models.TextField(
         help_text="Comma-separated list of radio segment/content types.",
         null=True, blank=True
