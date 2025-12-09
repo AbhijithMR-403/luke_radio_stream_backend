@@ -50,7 +50,6 @@ INSTALLED_APPS = [
     "dashboard",
     "segmentor",
     "shift_analysis",
-    "support",
     "logger",
     "audio_policy"
 ]
