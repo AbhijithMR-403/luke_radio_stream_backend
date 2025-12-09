@@ -3,22 +3,66 @@ from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
 
 from acr_admin.models import Channel
+from accounts.models import UserChannelAssignment
 from data_analysis.models import AudioSegments as AudioSegmentsModel, ReportFolder, SavedAudioSegment, AudioSegmentInsight
 
 
-@method_decorator(csrf_exempt, name='dispatch')
-class ReportFolderManagementView(View):
+class ReportFolderManagementView(APIView):
     """API to manage report folders (create, list, update, delete)"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def _user_has_channel_access(self, user, channel):
+        """Check if user has access to the channel"""
+        # Admin users have access to all channels
+        if user.is_admin:
+            return True
+        # Regular users need to have the channel assigned
+        return UserChannelAssignment.objects.filter(user=user, channel=channel).exists()
     
     def get(self, request, *args, **kwargs):
-        """Get all report folders with their saved segments count"""
+        """Get all report folders with their saved segments count, optionally filtered by channel_id"""
         try:
             folders = ReportFolder.objects.select_related('channel').prefetch_related('saved_segments').all()
             
-            folders_data = []
+            # Filter by channel_id if provided
+            channel_id = request.query_params.get('channel_id')
+            if channel_id:
+                try:
+                    channel_id = int(channel_id)
+                    folders = folders.filter(channel_id=channel_id)
+                    
+                    # Validate user has access to this channel
+                    try:
+                        channel = Channel.objects.get(id=channel_id, is_deleted=False)
+                        if not self._user_has_channel_access(request.user, channel):
+                            return Response(
+                                {'success': False, 'error': 'You do not have access to this channel'}, 
+                                status=status.HTTP_403_FORBIDDEN
+                            )
+                    except Channel.DoesNotExist:
+                        return Response(
+                            {'success': False, 'error': 'Channel not found'}, 
+                            status=status.HTTP_404_NOT_FOUND
+                        )
+                except ValueError:
+                    return Response(
+                        {'success': False, 'error': 'channel_id must be a valid integer'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Filter folders to only show channels the user has access to
+            accessible_folders = []
             for folder in folders:
+                if self._user_has_channel_access(request.user, folder.channel):
+                    accessible_folders.append(folder)
+            
+            folders_data = []
+            for folder in accessible_folders:
                 folders_data.append({
                     'id': folder.id,
                     'name': folder.name,
@@ -36,7 +80,7 @@ class ReportFolderManagementView(View):
                     'updated_at': folder.updated_at.isoformat()
                 })
             
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'data': {
                     'folders': folders_data,
@@ -45,12 +89,12 @@ class ReportFolderManagementView(View):
             })
             
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def post(self, request, *args, **kwargs):
         """Create a new report folder"""
         try:
-            data = json.loads(request.body)
+            data = request.data
             
             name = data.get('name')
             description = data.get('description', '')
@@ -59,17 +103,24 @@ class ReportFolderManagementView(View):
             channel_id = data.get('channel_id')
             
             if not name:
-                return JsonResponse({'success': False, 'error': 'name is required'}, status=400)
+                return Response({'success': False, 'error': 'name is required'}, status=status.HTTP_400_BAD_REQUEST)
             if not channel_id:
-                return JsonResponse({'success': False, 'error': 'channel_id is required'}, status=400)
+                return Response({'success': False, 'error': 'channel_id is required'}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 channel = Channel.objects.get(id=channel_id, is_deleted=False)
             except Channel.DoesNotExist:
-                return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
+                return Response({'success': False, 'error': 'Channel not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if user has access to this channel
+            if not self._user_has_channel_access(request.user, channel):
+                return Response(
+                    {'success': False, 'error': 'You do not have access to this channel'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
             
             # Validate color format
             if not color.startswith('#') or len(color) != 7:
-                return JsonResponse({'success': False, 'error': 'color must be a valid hex color (e.g., #3B82F6)'}, status=400)
+                return Response({'success': False, 'error': 'color must be a valid hex color (e.g., #3B82F6)'}, status=status.HTTP_400_BAD_REQUEST)
             
             folder = ReportFolder.objects.create(
                 channel=channel,
@@ -79,7 +130,7 @@ class ReportFolderManagementView(View):
                 is_public=is_public
             )
             
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'message': 'Report folder created successfully',
                 'data': {
@@ -98,22 +149,27 @@ class ReportFolderManagementView(View):
                     'created_at': folder.created_at.isoformat(),
                     'updated_at': folder.updated_at.isoformat()
                 }
-            })
+            }, status=status.HTTP_201_CREATED)
             
-        except json.JSONDecodeError:
-            return JsonResponse({'success': False, 'error': 'Invalid JSON data'}, status=400)
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def put(self, request, folder_id, *args, **kwargs):
         """Update an existing report folder"""
         try:
-            data = json.loads(request.body)
+            data = request.data
             
             try:
                 folder = ReportFolder.objects.get(id=folder_id)
             except ReportFolder.DoesNotExist:
-                return JsonResponse({'success': False, 'error': 'Report folder not found'}, status=404)
+                return Response({'success': False, 'error': 'Report folder not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if user has access to the folder's current channel
+            if not self._user_has_channel_access(request.user, folder.channel):
+                return Response(
+                    {'success': False, 'error': 'You do not have access to this report folder'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
             
             # Update fields if provided
             if 'name' in data:
@@ -123,7 +179,7 @@ class ReportFolderManagementView(View):
             if 'color' in data:
                 color = data['color']
                 if not color.startswith('#') or len(color) != 7:
-                    return JsonResponse({'success': False, 'error': 'color must be a valid hex color (e.g., #3B82F6)'}, status=400)
+                    return Response({'success': False, 'error': 'color must be a valid hex color (e.g., #3B82F6)'}, status=status.HTTP_400_BAD_REQUEST)
                 folder.color = color
             if 'is_public' in data:
                 folder.is_public = data['is_public']
@@ -131,12 +187,19 @@ class ReportFolderManagementView(View):
                 try:
                     channel = Channel.objects.get(id=data['channel_id'], is_deleted=False)
                 except Channel.DoesNotExist:
-                    return JsonResponse({'success': False, 'error': 'Channel not found'}, status=404)
+                    return Response({'success': False, 'error': 'Channel not found'}, status=status.HTTP_404_NOT_FOUND)
+                
+                # Check if user has access to the new channel
+                if not self._user_has_channel_access(request.user, channel):
+                    return Response(
+                        {'success': False, 'error': 'You do not have access to this channel'}, 
+                        status=status.HTTP_403_FORBIDDEN
+                    )
                 folder.channel = channel
             
             folder.save()
             
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'message': 'Report folder updated successfully',
                 'data': {
@@ -157,10 +220,8 @@ class ReportFolderManagementView(View):
                 }
             })
             
-        except json.JSONDecodeError:
-            return JsonResponse({'success': False, 'error': 'Invalid JSON data'}, status=400)
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def delete(self, request, folder_id, *args, **kwargs):
         """Delete a report folder and all its saved segments"""
@@ -168,18 +229,25 @@ class ReportFolderManagementView(View):
             try:
                 folder = ReportFolder.objects.get(id=folder_id)
             except ReportFolder.DoesNotExist:
-                return JsonResponse({'success': False, 'error': 'Report folder not found'}, status=404)
+                return Response({'success': False, 'error': 'Report folder not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if user has access to the folder's channel
+            if not self._user_has_channel_access(request.user, folder.channel):
+                return Response(
+                    {'success': False, 'error': 'You do not have access to this report folder'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
             
             folder_name = folder.name
             folder.delete()
             
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'message': f'Report folder "{folder_name}" deleted successfully'
             })
             
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @method_decorator(csrf_exempt, name='dispatch')
