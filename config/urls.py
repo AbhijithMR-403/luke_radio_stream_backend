@@ -30,7 +30,6 @@ urlpatterns = [
     path('api/accounts/', include('accounts.urls')), 
     path('api/segmentor/', include('segmentor.urls')),
     path('api/shift-analysis/', include('shift_analysis.urls')),
-    path('api/', include('support.urls')),
     path('api/', include('logger.urls')),
 ]
 
