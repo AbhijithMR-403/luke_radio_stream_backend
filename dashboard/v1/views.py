@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import JSONParser
+from django.db import IntegrityError
 from data_analysis.models import GeneralTopic
 from acr_admin.models import Channel
 from .serializer import get_dashboard_stats, DashboardStatsSerializer, get_topic_audio_segments
@@ -389,13 +390,26 @@ class GeneralTopicsManagementView(APIView):
                     updated_count += 1
                 else:
                     # Create new topic
-                    existing_topic = GeneralTopic.objects.create(
-                        topic_name=topic_name,
-                        is_active=is_active,
-                        channel=channel
-                    )
-                    action = 'created'
-                    created_count += 1
+                    try:
+                        existing_topic = GeneralTopic.objects.create(
+                            topic_name=topic_name,
+                            is_active=is_active,
+                            channel=channel
+                        )
+                        action = 'created'
+                        created_count += 1
+                    except IntegrityError:
+                        # Handle race condition: topic might have been created between check and create
+                        # Try to fetch it again
+                        existing_topic = GeneralTopic.objects.filter(topic_name__iexact=topic_name, channel=channel).first()
+                        if existing_topic:
+                            # Update existing topic
+                            existing_topic.is_active = is_active
+                            existing_topic.save()
+                            action = 'updated'
+                            updated_count += 1
+                        else:
+                            return Response({'success': False, 'error': f'Failed to create topic at index {i}: topic with this name already exists for this channel'}, status=status.HTTP_400_BAD_REQUEST)
                 
                 result_dict = {
                     'id': existing_topic.id,

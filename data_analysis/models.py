@@ -123,7 +123,7 @@ class TranscriptionAnalysis(models.Model):
     
 class GeneralTopic(models.Model):
     """Model to store all general topics with their active/inactive status"""
-    topic_name = models.CharField(max_length=255, unique=True, help_text="Name of the general topic")
+    topic_name = models.CharField(max_length=255, help_text="Name of the general topic")
     is_active = models.BooleanField(default=True, help_text="Whether this topic should be included in results (True) or ignored (False)")
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='general_topics', help_text="Channel associated with this topic")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -135,6 +135,9 @@ class GeneralTopic(models.Model):
     
     class Meta:
         ordering = ['topic_name']
+        constraints = [
+            models.UniqueConstraint(fields=['topic_name', 'channel'], name='unique_topic_per_channel')
+        ]
         indexes = [
             models.Index(fields=['is_active']),
             models.Index(fields=['topic_name']),
