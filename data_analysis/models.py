@@ -125,18 +125,20 @@ class GeneralTopic(models.Model):
     """Model to store all general topics with their active/inactive status"""
     topic_name = models.CharField(max_length=255, unique=True, help_text="Name of the general topic")
     is_active = models.BooleanField(default=True, help_text="Whether this topic should be included in results (True) or ignored (False)")
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='general_topics', help_text="Channel associated with this topic")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
         status = "Active" if self.is_active else "Inactive"
-        return f"{self.topic_name} ({status})"
+        return f"{self.topic_name} ({status}) - {self.channel}"
     
     class Meta:
         ordering = ['topic_name']
         indexes = [
             models.Index(fields=['is_active']),
             models.Index(fields=['topic_name']),
+            models.Index(fields=['channel']),
         ]
     
 class AudioSegments(models.Model):

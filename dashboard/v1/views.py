@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import JSONParser
 from data_analysis.models import GeneralTopic
+from acr_admin.models import Channel
 from .serializer import get_dashboard_stats, DashboardStatsSerializer, get_topic_audio_segments
 
 # Create your views here.
@@ -279,6 +280,7 @@ class GeneralTopicsManagementView(APIView):
         try:
             # Get query parameters
             status_filter = request.query_params.get('status')  # 'active', 'inactive', or None for all
+            channel_id = request.query_params.get('channel_id')  # Filter by channel ID
             
             # Build query with optimized filtering
             topics_query = GeneralTopic.objects.all()
@@ -287,25 +289,45 @@ class GeneralTopicsManagementView(APIView):
             elif status_filter == 'inactive':
                 topics_query = topics_query.filter(is_active=False)
             
+            # Filter by channel if provided
+            if channel_id:
+                try:
+                    channel_id = int(channel_id)
+                    topics_query = topics_query.filter(channel_id=channel_id)
+                except ValueError:
+                    return Response({'success': False, 'error': 'channel_id must be a valid integer'}, status=status.HTTP_400_BAD_REQUEST)
+            
             topics = topics_query.order_by('topic_name')
             
             topics_data = []
             for topic in topics:
-                topics_data.append({
+                topic_dict = {
                     'id': topic.id,
                     'topic_name': topic.topic_name,
                     'is_active': topic.is_active,
                     'created_at': topic.created_at.isoformat(),
-                    'updated_at': topic.updated_at.isoformat()
-                })
+                    'updated_at': topic.updated_at.isoformat(),
+                    'channel': {
+                        'id': topic.channel.id,
+                        'name': topic.channel.name,
+                        'channel_id': topic.channel.channel_id,
+                        'project_id': topic.channel.project_id
+                    }
+                }
+                topics_data.append(topic_dict)
+            
+            # Build base query for counts
+            count_query = GeneralTopic.objects.all()
+            if channel_id:
+                count_query = count_query.filter(channel_id=channel_id)
             
             return Response({
                 'success': True,
                 'data': {
                     'topics': topics_data,
                     'total_count': len(topics_data),
-                    'active_count': GeneralTopic.objects.filter(is_active=True).count(),
-                    'inactive_count': GeneralTopic.objects.filter(is_active=False).count()
+                    'active_count': count_query.filter(is_active=True).count(),
+                    'inactive_count': count_query.filter(is_active=False).count()
                 }
             })
             
@@ -340,12 +362,23 @@ class GeneralTopicsManagementView(APIView):
                 
                 topic_name = topic_data.get('topic_name')
                 is_active = topic_data.get('is_active', True)
+                channel_id = topic_data.get('channel_id')
                 
                 if not topic_name:
                     return Response({'success': False, 'error': 'topic_name is required for each topic'}, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Check if topic already exists
-                existing_topic = GeneralTopic.objects.filter(topic_name__iexact=topic_name).first()
+                if not channel_id:
+                    return Response({'success': False, 'error': 'channel_id is required for each topic'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Validate and get channel
+                try:
+                    channel_id = int(channel_id)
+                    channel = Channel.objects.get(id=channel_id)
+                except (ValueError, Channel.DoesNotExist):
+                    return Response({'success': False, 'error': f'Invalid channel_id at index {i}: channel not found'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Check if topic already exists for this channel
+                existing_topic = GeneralTopic.objects.filter(topic_name__iexact=topic_name, channel=channel).first()
                 
                 if existing_topic:
                     # Update existing topic
@@ -358,19 +391,28 @@ class GeneralTopicsManagementView(APIView):
                     # Create new topic
                     existing_topic = GeneralTopic.objects.create(
                         topic_name=topic_name,
-                        is_active=is_active
+                        is_active=is_active,
+                        channel=channel
                     )
                     action = 'created'
                     created_count += 1
                 
-                results.append({
+                result_dict = {
                     'id': existing_topic.id,
                     'topic_name': existing_topic.topic_name,
                     'is_active': existing_topic.is_active,
                     'created_at': existing_topic.created_at.isoformat(),
                     'updated_at': existing_topic.updated_at.isoformat(),
-                    'action': action
-                })
+                    'action': action,
+                    'channel': {
+                        'id': existing_topic.channel.id,
+                        'name': existing_topic.channel.name,
+                        'channel_id': existing_topic.channel.channel_id,
+                        'project_id': existing_topic.channel.project_id
+                    }
+                }
+                
+                results.append(result_dict)
             
             return Response({
                 'success': True,
@@ -384,9 +426,7 @@ class GeneralTopicsManagementView(APIView):
             })
             
         except Exception as e:
-            import traceback
             print(f"Error in post method: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def delete(self, request, *args, **kwargs):
