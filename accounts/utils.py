@@ -1,4 +1,3 @@
-from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
 from .models import MagicLink
@@ -6,46 +5,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def send_magic_link_email(user, magic_link):
-    """
-    Send magic link to user's email
-    """
-    try:
-        # Create the magic link URL
-        magic_link_url = f"{settings.FRONTEND_URL}/create-password?token={magic_link.token}"
-        
-        subject = 'Set Your Password - Radio Stream'
-        message = f"""
-        Hello {user.name},
-        
-        Click the link below to set your password:
-        
-        {magic_link_url}
-        
-        This link will expire in 24 hours.
-        
-        If you didn't request this, please ignore this email.
-        
-        Best regards,
-        Radio Stream Team
-        """
-        print(message)
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
-        logger.info(f"Magic link email sent to {user.email}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send magic link email to {user.email}: {str(e)}")
-        return False
+try:
+    from ghl.services.contact_service import create_or_update_contact
+except ImportError:
+    # GHL service not available, create_or_update_contact will be None
+    create_or_update_contact = None
 
 def generate_and_send_magic_link(user):
     """
-    Generate a new magic link for user and send it via email
+    Generate a new magic link for user and create/update contact in GHL with the magic link URL
     """
     # Check for existing active magic links and deactivate them
     existing_links = MagicLink.objects.filter(
@@ -61,12 +29,20 @@ def generate_and_send_magic_link(user):
     # Create new magic link
     magic_link = MagicLink.objects.create(user=user)
     
-    # Send magic link via email
-    success = send_magic_link_email(user, magic_link)
+    # Create the magic link URL
+    magic_link_url = f"{settings.FRONTEND_URL}/create-password?token={magic_link.token}"
     
-    if success:
-        return magic_link
-    else:
-        # If email sending fails, delete the magic link
-        magic_link.delete()
-        return None
+    # Create or update contact in GHL with the magic link URL
+    if create_or_update_contact:
+        try:
+            create_or_update_contact(
+                email=user.email,
+                link=magic_link_url,
+                name=user.name
+            )
+            logger.info(f"GHL contact created/updated for {user.email}")
+        except Exception as e:
+            # Log error but don't fail the whole process if GHL fails
+            logger.error(f"Failed to create/update GHL contact for {user.email}: {str(e)}")
+    
+    return magic_link

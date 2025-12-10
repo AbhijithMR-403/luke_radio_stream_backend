@@ -175,16 +175,13 @@ CELERY_TASK_IGNORE_RESULT = False
 # CORS configuration
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="").split(",") if config("CORS_ALLOWED_ORIGINS", default="") else []
 
-# Email configuration
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
-EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
-EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
-EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
-
 # Frontend URL for magic links
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
+
+# GHL API configuration
+GHL_API_KEY = config('GHL_API_KEY', default='')
+GHL_LOCATION_ID = config('GHL_LOCATION_ID', default='')
+GHL_CUSTOM_FIELD_SET_URL = config('GHL_CUSTOM_FIELD_SET_URL', default='')
 
 # REST Framework configuration
 REST_FRAMEWORK = {
