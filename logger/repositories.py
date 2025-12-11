@@ -1,9 +1,11 @@
 from typing import Optional, List, Dict, Any
-from django.db.models import QuerySet
+from django.db.models import QuerySet, Sum, Q
 from django.core.exceptions import ValidationError
+from datetime import datetime
 
 from logger.models import AudioSegmentEditLog
-from data_analysis.models import AudioSegments
+from data_analysis.models import AudioSegments, RevTranscriptionJob
+from acr_admin.models import Channel
 
 
 class AudioSegmentEditLogDAO:
@@ -101,4 +103,172 @@ class AudioSegmentEditLogDAO:
             created_at__gte=start_date,
             created_at__lte=end_date
         )
+
+
+class RevTranscriptionJobLogDAO:
+    """Data Access Object for RevTranscriptionJob statistics"""
+    
+    @staticmethod
+    def get_duration_totals_by_channel(
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        channel_ids: Optional[List[int]] = None,
+        audio_segment_start_time: Optional[datetime] = None,
+        audio_segment_end_time: Optional[datetime] = None,
+        rev_transcription_job_ids: Optional[List[int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get total duration_seconds for each channel from RevTranscriptionJob.
+        
+        Args:
+            start_time: Optional start time filter (for job's created_on)
+            end_time: Optional end time filter (for job's created_on)
+            channel_ids: Optional list of channel IDs to filter by
+            audio_segment_start_time: Optional start time filter for audio_segment's start_time
+            audio_segment_end_time: Optional end time filter for audio_segment's start_time
+            rev_transcription_job_ids: Optional list of RevTranscriptionJob IDs to filter by
+        
+        Returns:
+            List of dictionaries with channel_id, channel_name, and total_duration_seconds
+        """
+        queryset = RevTranscriptionJob.objects.all()
+        
+        # Filter out jobs without audio_segment (they don't have a channel)
+        queryset = queryset.filter(audio_segment__isnull=False)
+        
+        # Apply job time filters if provided
+        if start_time:
+            queryset = queryset.filter(created_on__gte=start_time)
+        if end_time:
+            queryset = queryset.filter(created_on__lte=end_time)
+        
+        # Apply channel filter if provided
+        if channel_ids:
+            queryset = queryset.filter(audio_segment__channel_id__in=channel_ids)
+        
+        # Apply audio segment start_time filter if provided
+        if audio_segment_start_time:
+            queryset = queryset.filter(audio_segment__start_time__gte=audio_segment_start_time)
+        if audio_segment_end_time:
+            queryset = queryset.filter(audio_segment__start_time__lte=audio_segment_end_time)
+        
+        # Apply RevTranscriptionJob filter if provided
+        if rev_transcription_job_ids:
+            queryset = queryset.filter(id__in=rev_transcription_job_ids)
+        
+        # Aggregate by channel
+        results = queryset.values(
+            'audio_segment__channel_id', 
+            'audio_segment__channel__name'
+        ).annotate(
+            total_duration_seconds=Sum('duration_seconds')
+        ).order_by('audio_segment__channel_id')
+        
+        return [
+            {
+                'channel_id': item['audio_segment__channel_id'],
+                'channel_name': item['audio_segment__channel__name'],
+                'total_duration_seconds': item['total_duration_seconds'] or 0.0,
+            }
+            for item in results
+        ]
+    
+    @staticmethod
+    def get_grand_total_duration(
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        channel_ids: Optional[List[int]] = None,
+        audio_segment_start_time: Optional[datetime] = None,
+        audio_segment_end_time: Optional[datetime] = None,
+        rev_transcription_job_ids: Optional[List[int]] = None,
+    ) -> float:
+        """
+        Get grand total duration_seconds across all channels from RevTranscriptionJob.
+        
+        Args:
+            start_time: Optional start time filter (for job's created_on)
+            end_time: Optional end time filter (for job's created_on)
+            channel_ids: Optional list of channel IDs to filter by
+            audio_segment_start_time: Optional start time filter for audio_segment's start_time
+            audio_segment_end_time: Optional end time filter for audio_segment's start_time
+            rev_transcription_job_ids: Optional list of RevTranscriptionJob IDs to filter by
+        
+        Returns:
+            Total duration in seconds (float)
+        """
+        queryset = RevTranscriptionJob.objects.all()
+        
+        # Filter out jobs without audio_segment (they don't have a channel)
+        queryset = queryset.filter(audio_segment__isnull=False)
+        
+        # Apply job time filters if provided
+        if start_time:
+            queryset = queryset.filter(created_on__gte=start_time)
+        if end_time:
+            queryset = queryset.filter(created_on__lte=end_time)
+        
+        # Apply channel filter if provided
+        if channel_ids:
+            queryset = queryset.filter(audio_segment__channel_id__in=channel_ids)
+        
+        # Apply audio segment start_time filter if provided
+        if audio_segment_start_time:
+            queryset = queryset.filter(audio_segment__start_time__gte=audio_segment_start_time)
+        if audio_segment_end_time:
+            queryset = queryset.filter(audio_segment__start_time__lte=audio_segment_end_time)
+        
+        # Apply RevTranscriptionJob filter if provided
+        if rev_transcription_job_ids:
+            queryset = queryset.filter(id__in=rev_transcription_job_ids)
+        
+        # Get total sum
+        result = queryset.aggregate(total=Sum('duration_seconds'))
+        return result['total'] or 0.0
+    
+    @staticmethod
+    def get_duration_statistics(
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        channel_ids: Optional[List[int]] = None,
+        audio_segment_start_time: Optional[datetime] = None,
+        audio_segment_end_time: Optional[datetime] = None,
+        rev_transcription_job_ids: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get complete duration statistics including per-channel totals and grand total from RevTranscriptionJob.
+        
+        Args:
+            start_time: Optional start time filter (for job's created_on)
+            end_time: Optional end time filter (for job's created_on)
+            channel_ids: Optional list of channel IDs to filter by
+            audio_segment_start_time: Optional start time filter for audio_segment's start_time
+            audio_segment_end_time: Optional end time filter for audio_segment's start_time
+            rev_transcription_job_ids: Optional list of RevTranscriptionJob IDs to filter by
+        
+        Returns:
+            Dictionary with:
+            - channels: List of per-channel totals
+            - grand_total: Total across all channels
+        """
+        channels = RevTranscriptionJobLogDAO.get_duration_totals_by_channel(
+            start_time=start_time,
+            end_time=end_time,
+            channel_ids=channel_ids,
+            audio_segment_start_time=audio_segment_start_time,
+            audio_segment_end_time=audio_segment_end_time,
+            rev_transcription_job_ids=rev_transcription_job_ids
+        )
+        grand_total = RevTranscriptionJobLogDAO.get_grand_total_duration(
+            start_time=start_time,
+            end_time=end_time,
+            channel_ids=channel_ids,
+            audio_segment_start_time=audio_segment_start_time,
+            audio_segment_end_time=audio_segment_end_time,
+            rev_transcription_job_ids=rev_transcription_job_ids
+        )
+        
+        return {
+            'channels': channels,
+            'grand_total': grand_total,
+        }
 

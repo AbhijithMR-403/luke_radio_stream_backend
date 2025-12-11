@@ -339,11 +339,7 @@ class GeneralTopicsManagementView(APIView):
         """Add or update topics (upsert functionality) - accepts list of topics"""
         try:
             data = request.data
-            
-            # Debug: Print the data type and content
-            print(f"Data type: {type(data)}")
-            print(f"Data content: {data}")
-            
+                        
             # Check if data is a list
             if not isinstance(data, list):
                 return Response({'success': False, 'error': 'Request body must be a list of topics'}, status=status.HTTP_400_BAD_REQUEST)

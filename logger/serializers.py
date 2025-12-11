@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
-from data_analysis.models import AudioSegments
+from data_analysis.models import AudioSegments, RevTranscriptionJob
+from acr_admin.models import Channel
 from logger.models import AudioSegmentEditLog
 
 
@@ -52,4 +53,44 @@ class AudioSegmentEditLogSerializer(serializers.ModelSerializer):
             "email": obj.user.email,
             "name": getattr(obj.user, "name", None),
         }
+
+
+class RevTranscriptionJobReferenceSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for related Rev transcription job."""
+    
+    class Meta:
+        model = RevTranscriptionJob
+        fields = [
+            "id",
+            "job_id",
+            "job_name",
+            "status",
+            "duration_seconds",
+            "created_on",
+            "completed_on",
+        ]
+
+
+class ChannelReferenceSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for related channel."""
+    
+    class Meta:
+        model = Channel
+        fields = [
+            "id",
+            "name",
+        ]
+
+
+class ChannelDurationStatSerializer(serializers.Serializer):
+    """Serializer for channel duration statistics."""
+    channel_id = serializers.IntegerField()
+    channel_name = serializers.CharField()
+    total_duration_seconds = serializers.FloatField()
+
+
+class DurationStatisticsSerializer(serializers.Serializer):
+    """Serializer for duration statistics response."""
+    channels = ChannelDurationStatSerializer(many=True)
+    grand_total = serializers.FloatField()
 
