@@ -37,13 +37,6 @@ class FlagConditionRepository:
             qs = qs.filter(is_active=True)
         return qs
 
-    @staticmethod
-    def get_by_name(name: str) -> Optional[FlagCondition]:
-        try:
-            return FlagCondition.objects.get(name=name)
-        except FlagCondition.DoesNotExist:
-            return None
-
     # ------------------------------------------------------------------ #
     # Mutations
     # ------------------------------------------------------------------ #

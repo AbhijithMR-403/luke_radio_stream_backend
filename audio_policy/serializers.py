@@ -14,12 +14,14 @@ class FlagConditionSerializer(serializers.ModelSerializer):
         model = FlagCondition
         fields = [
             "id",
-            "name",
             "channel",
             "transcription_keywords",
             "summary_keywords",
-            "sentiment_min",
-            "sentiment_max",
+            "sentiment_min_lower",
+            "sentiment_min_upper",
+            "sentiment_max_lower",
+            "sentiment_max_upper",
+            "target_sentiments",
             "iab_topics",
             "bucket_prompt",
             "general_topics",
@@ -33,29 +35,52 @@ class FlagConditionSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """
         Validate sentiment values:
-        - sentiment_min and sentiment_max must be between 0 and 100 (inclusive) if provided
-        - sentiment_min must be less than or equal to sentiment_max when both are provided
+        - All sentiment fields must be between 0 and 100 (inclusive) if provided
+        - sentiment_min_lower <= sentiment_min_upper (when both are provided)
+        - sentiment_max_lower <= sentiment_max_upper (when both are provided)
         """
-        sentiment_min = attrs.get("sentiment_min")
-        sentiment_max = attrs.get("sentiment_max")
+        min_lower = attrs.get("sentiment_min_lower")
+        min_upper = attrs.get("sentiment_min_upper")
+        max_lower = attrs.get("sentiment_max_lower")
+        max_upper = attrs.get("sentiment_max_upper")
         
-        if sentiment_min is not None:
-            if sentiment_min < 0 or sentiment_min > 100:
+        # Validate each field is in range 0-100 if provided
+        for field_name, value in [
+            ("sentiment_min_lower", min_lower),
+            ("sentiment_min_upper", min_upper),
+            ("sentiment_max_lower", max_lower),
+            ("sentiment_max_upper", max_upper),
+        ]:
+            if value is not None:
+                if value < 0 or value > 100:
+                    raise serializers.ValidationError({
+                        field_name: f"{field_name.replace('_', ' ').title()} must be between 0 and 100 (inclusive)."
+                    })
+        
+        # Validate min_lower <= min_upper (when both are provided)
+        if min_lower is not None and min_upper is not None:
+            if min_lower > min_upper:
                 raise serializers.ValidationError({
-                    "sentiment_min": "Sentiment minimum must be between 0 and 100 (inclusive)."
+                    "sentiment_min_lower": "Sentiment min lower must be less than or equal to sentiment min upper."
                 })
         
-        if sentiment_max is not None:
-            if sentiment_max < 0 or sentiment_max > 100:
+        # Validate max_lower <= max_upper (when both are provided)
+        if max_lower is not None and max_upper is not None:
+            if max_lower > max_upper:
                 raise serializers.ValidationError({
-                    "sentiment_max": "Sentiment maximum must be between 0 and 100 (inclusive)."
+                    "sentiment_max_lower": "Sentiment max lower must be less than or equal to sentiment max upper."
                 })
         
-        # Validate that sentiment_min <= sentiment_max when both are provided
-        if sentiment_min is not None and sentiment_max is not None:
-            if sentiment_min > sentiment_max:
+        # Validate target_sentiments if provided
+        target_sentiments = attrs.get("target_sentiments")
+        if target_sentiments is not None:
+            if not isinstance(target_sentiments, int):
                 raise serializers.ValidationError({
-                    "sentiment_min": "Sentiment minimum must be less than or equal to sentiment maximum."
+                    "target_sentiments": "Target sentiments must be an integer."
+                })
+            if target_sentiments < 0 or target_sentiments > 100:
+                raise serializers.ValidationError({
+                    "target_sentiments": "Target sentiments must be between 0 and 100 (inclusive)."
                 })
         
         return attrs

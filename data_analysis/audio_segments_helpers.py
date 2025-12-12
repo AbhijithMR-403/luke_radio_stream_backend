@@ -778,43 +778,87 @@ def check_flag_conditions(segment, flag_condition):
             flags['summary_keywords'] = build_flag_entry(False, '')
     
     # Check sentiment range (flag when sentiment is WITHIN the configured range)
-    if flag_condition.sentiment_min is not None or flag_condition.sentiment_max is not None:
-        sentiment_str = analysis.get('sentiment') or ''
-        sentiment_value = None
+    sentiment_str = analysis.get('sentiment') or ''
+    sentiment_value = None
+    
+    # Try to parse sentiment as float
+    try:
+        sentiment_value = float(sentiment_str)
+    except (ValueError, TypeError):
+        # If not a number, try to extract number from string
+        import re
+        numbers = re.findall(r'-?\d+\.?\d*', sentiment_str)
+        if numbers:
+            try:
+                sentiment_value = float(numbers[0])
+            except (ValueError, TypeError):
+                pass
+    
+    triggered = False
+    message = ''
+    
+    if sentiment_value is not None:
+        # Check if sentiment matches target sentiment
+        matches_target = False
+        if flag_condition.target_sentiments is not None:
+            matches_target = sentiment_value == flag_condition.target_sentiments
         
-        # Try to parse sentiment as float
-        try:
-            sentiment_value = float(sentiment_str)
-        except (ValueError, TypeError):
-            # If not a number, try to extract number from string
-            import re
-            numbers = re.findall(r'-?\d+\.?\d*', sentiment_str)
-            if numbers:
-                try:
-                    sentiment_value = float(numbers[0])
-                except (ValueError, TypeError):
-                    pass
+        # Check if value is within the overall bounds defined by min_lower and max_upper
+        # Only check range if at least one bound is set
+        has_range_config = any([
+            flag_condition.sentiment_min_lower is not None,
+            flag_condition.sentiment_min_upper is not None,
+            flag_condition.sentiment_max_lower is not None,
+            flag_condition.sentiment_max_upper is not None,
+        ])
         
-        triggered = False
-        message = ''
+        in_range = False
+        if has_range_config:
+            meets_min_lower = flag_condition.sentiment_min_lower is None or sentiment_value >= flag_condition.sentiment_min_lower
+            meets_max_upper = flag_condition.sentiment_max_upper is None or sentiment_value <= flag_condition.sentiment_max_upper
+            
+            # Basic range check: value must be >= min_lower (if set) and <= max_upper (if set)
+            in_range = meets_min_lower and meets_max_upper
+            
+            # Check if there's a valid overlapping range with intermediate bounds
+            if in_range and (flag_condition.sentiment_min_upper is not None or flag_condition.sentiment_max_lower is not None):
+                # If both intermediate bounds are set, check if there's a valid overlapping range
+                if (flag_condition.sentiment_min_upper is not None and 
+                    flag_condition.sentiment_max_lower is not None):
+                    # Value should be in the overlap region or within outer bounds
+                    # Overlap exists if min_upper <= max_lower
+                    if flag_condition.sentiment_min_upper <= flag_condition.sentiment_max_lower:
+                        # Value is valid if it's in the overlap or within the outer bounds
+                        in_overlap = (sentiment_value >= flag_condition.sentiment_min_upper and 
+                                     sentiment_value <= flag_condition.sentiment_max_lower)
+                        in_range = in_overlap or (meets_min_lower and meets_max_upper)
+                    else:
+                        # No valid range if min_upper > max_lower
+                        in_range = False
         
-        if sentiment_value is not None:
-            meets_min = flag_condition.sentiment_min is None or sentiment_value >= flag_condition.sentiment_min
-            meets_max = flag_condition.sentiment_max is None or sentiment_value <= flag_condition.sentiment_max
-            triggered = meets_min and meets_max
-            if triggered:
+        # Trigger if matches target sentiments OR is within range
+        triggered = matches_target or in_range
+        
+        # Build message
+        if triggered:
+            msg_parts = []
+            if matches_target:
+                msg_parts.append("matches target sentiment value")
+            if in_range:
                 range_msg = []
-                if flag_condition.sentiment_min is not None:
-                    range_msg.append(f">= {flag_condition.sentiment_min}")
-                if flag_condition.sentiment_max is not None:
-                    range_msg.append(f"<= {flag_condition.sentiment_max}")
-                message = f"Sentiment {sentiment_value} is within configured range ({' and '.join(range_msg)})"
-            else:
-                message = f"Sentiment {sentiment_value} is outside configured range"
-        elif sentiment_str:
-            message = f"Sentiment '{sentiment_str}' cannot be compared to numeric range"
-        
-        flags['sentiment'] = build_flag_entry(triggered, message)
+                if flag_condition.sentiment_min_lower is not None:
+                    range_msg.append(f">= {flag_condition.sentiment_min_lower}")
+                if flag_condition.sentiment_max_upper is not None:
+                    range_msg.append(f"<= {flag_condition.sentiment_max_upper}")
+                if range_msg:
+                    msg_parts.append(f"within configured range ({' and '.join(range_msg)})")
+            message = f"Sentiment {sentiment_value} {' and '.join(msg_parts)}"
+        else:
+            message = f"Sentiment {sentiment_value} does not match target sentiments or configured range"
+    elif sentiment_str:
+        message = f"Sentiment '{sentiment_str}' cannot be compared to numeric range"
+    
+    flags['sentiment'] = build_flag_entry(triggered, message)
     
     # Check IAB topics
     if flag_condition.iab_topics:

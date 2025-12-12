@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 # Create your models here.
 
@@ -7,7 +8,6 @@ class FlagCondition(models.Model):
     """
     Model to define conditions for flagging audio segments.
     """
-    name = models.CharField(max_length=255, unique=True, help_text="Name of the flag condition")
     channel = models.OneToOneField(
         'acr_admin.Channel',
         on_delete=models.CASCADE,
@@ -21,9 +21,37 @@ class FlagCondition(models.Model):
     transcription_keywords = models.JSONField(default=list, blank=True, help_text="List of keyword groups to match in transcription")
     summary_keywords = models.JSONField(default=list, blank=True, help_text="List of keyword groups to match in summary")
     
-    # Sentiment range
-    sentiment_min = models.FloatField(null=True, blank=True, help_text="Minimum sentiment score")
-    sentiment_max = models.FloatField(null=True, blank=True, help_text="Maximum sentiment score")
+    # Sentiment range - supports flexible range matching with lower and upper bounds
+    sentiment_min_lower = models.FloatField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Lower bound for minimum sentiment value (0-100)"
+    )
+    sentiment_min_upper = models.FloatField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Upper bound for minimum sentiment value (0-100)"
+    )
+    sentiment_max_lower = models.FloatField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Lower bound for maximum sentiment value (0-100)"
+    )
+    sentiment_max_upper = models.FloatField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Upper bound for maximum sentiment value (0-100)"
+    )
+    target_sentiments = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Target sentiment integer value to match (0-100)"
+    )
     
     # Topic matching
     iab_topics = models.JSONField(default=list, blank=True, help_text="List of IAB topics to match")
@@ -37,7 +65,7 @@ class FlagCondition(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return self.name
+        return f"Flag Condition for {self.channel.name}"
 
     class Meta:
         ordering = ['-created_at']
