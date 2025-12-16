@@ -266,13 +266,147 @@ class AudioSegments:
         if isinstance(segment, dict):
             return segment.get(key)
         return getattr(segment, key, None)
+    @staticmethod
+    def _find_adjacent_unrecognized_segments(segments_list, start_index, processed_for_merge, max_segments=10):
+        """
+        Find adjacent unrecognized segments to merge with, expanding in one direction at a time.
+        Expands backward first (previous segments), then forward (next segments).
+        Stops when hitting a recognized segment, custom_file segment, or reaching max_segments.
+        
+        Args:
+            segments_list: List of AudioSegments model instances (sorted by start_time)
+            start_index: Index of the current segment (the recognized segment < 20s to merge)
+            processed_for_merge: Set of indices already processed (to avoid duplicates)
+            max_segments: Maximum number of segments to include in merge (default 10)
+            
+        Returns:
+            tuple: (segments_to_merge, merge_indices) where:
+                - segments_to_merge: List of segments to merge (includes current segment)
+                - merge_indices: List of indices in segments_list for these segments
+        """
+        current_segment = segments_list[start_index]
+        segments_to_merge = [current_segment]
+        merge_indices = [start_index]
+        
+        # Helper to check if segment should stop expansion
+        def should_stop_expansion(segment):
+            """Check if we should stop expanding when hitting this segment."""
+            # Stop if segment is already merged or deleted
+            if segment.source == 'merged' or segment.is_delete or segment.source == 'user':
+                return True
+            
+            # Stop if segment is recognized AND (>= 20s OR not music OR is custom_file)
+            if segment.is_recognized:
+                # Allow recognized segments < 20s with music metadata to be included
+                if segment.duration_seconds < 20:
+                    seg_metadata = segment.metadata_json if segment.metadata_json and isinstance(segment.metadata_json, dict) else {}
+                    seg_source = seg_metadata.get("source")
+                    # Stop if it's custom_file, otherwise allow it (it's a short music segment)
+                    if seg_source == "custom_file":
+                        return True
+                    # Allow short music segments to be included in the merge
+                    return False
+                # Stop at recognized segments >= 20s
+                return True
+            
+            # Stop if segment has custom_file metadata
+            if segment.metadata_json and isinstance(segment.metadata_json, dict):
+                if segment.metadata_json.get("source") == "custom_file":
+                    return True
+            
+            return False
+        
+        # Helper to check if segments are adjacent
+        def are_adjacent(seg1, seg2):
+            """Check if two segments are adjacent (within 1 second gap)."""
+            # seg1 should end before seg2 starts
+            if seg1.end_time > seg2.start_time:
+                # Overlapping segments
+                return True
+            time_diff = abs((seg2.start_time - seg1.end_time).total_seconds())
+            return time_diff <= 1.0
+        
+        # Expand backward (previous segments) first
+        prev_index = start_index - 1
+        while (prev_index >= 0 and 
+               len(segments_to_merge) < max_segments and
+               prev_index not in processed_for_merge):
+            
+            prev_segment = segments_list[prev_index]
+            
+            # Check if we should stop expanding backward
+            if should_stop_expansion(prev_segment):
+                break
+            
+            # Allow unrecognized segments OR short recognized music segments (< 20s)
+            if prev_segment.is_recognized:
+                # Check if it's a short music segment that should be included
+                if prev_segment.duration_seconds >= 20:
+                    break
+                seg_metadata = prev_segment.metadata_json if prev_segment.metadata_json and isinstance(prev_segment.metadata_json, dict) else {}
+                seg_source = seg_metadata.get("source")
+                # Only include if it's music (not custom_file)
+                if seg_source != "music":
+                    break
+            
+            # Check if adjacent to the first segment in our merge list
+            first_segment = segments_to_merge[0]
+            if not are_adjacent(prev_segment, first_segment):
+                break
+            
+            # Add to merge list (at the beginning)
+            segments_to_merge.insert(0, prev_segment)
+            merge_indices.insert(0, prev_index)
+            prev_index -= 1
+        
+        # Expand forward (next segments)
+        next_index = start_index + 1
+        while (next_index < len(segments_list) and
+               len(segments_to_merge) < max_segments and
+               next_index not in processed_for_merge):
+            
+            next_segment = segments_list[next_index]
+            
+            # Check if we should stop expanding forward
+            if should_stop_expansion(next_segment):
+                break
+            
+            # Allow unrecognized segments OR short recognized music segments (< 20s)
+            if next_segment.is_recognized:
+                # Check if it's a short music segment that should be included
+                if next_segment.duration_seconds >= 20:
+                    break
+                seg_metadata = next_segment.metadata_json if next_segment.metadata_json and isinstance(next_segment.metadata_json, dict) else {}
+                seg_source = seg_metadata.get("source")
+                # Only include if it's music (not custom_file)
+                if seg_source != "music":
+                    break
+            
+            # Check if adjacent to the last segment in our merge list
+            last_segment = segments_to_merge[-1]
+            if not are_adjacent(last_segment, next_segment):
+                break
+            
+            # Add to merge list (at the end)
+            segments_to_merge.append(next_segment)
+            merge_indices.append(next_index)
+            next_index += 1
+        
+        return segments_to_merge, merge_indices
     
     @staticmethod
     def _merge_short_recognized_segments(segments, channel):
         """
-        Merge recognized segments below 20 seconds with adjacent segments (above and below).
+        Merge recognized music segments below 20 seconds with adjacent unrecognized segments.
         Creates merged segments in database, marks original segments as deleted, and logs operations.
         Only merges segments that are actually adjacent (no gaps between them).
+        
+        Merge Criteria:
+        - Only merges recognized segments with metadata_json.source == "music" and duration < 20s
+        - Only merges with adjacent segments where is_recognized == false
+        - Skips segments with metadata_json.source == "custom_file" completely
+        - Stops expanding when hitting recognized segments or custom_file segments
+        - Maximum 10 segments per merge
         
         Args:
             segments: List of AudioSegments model instances or dictionaries (will be sorted by start_time)
@@ -328,65 +462,51 @@ class AudioSegments:
                 current_segment.is_delete):
                 continue
             
-            # Check if current segment is recognized and below 20 seconds
-            if (current_segment.is_recognized and 
-                current_segment.duration_seconds < 20 and
-                i not in processed_for_merge):
+            # Check if current segment is recognized, below 20 seconds, and has music metadata
+            # Only merge segments with metadata_json.source == "music"
+            # Skip segments with metadata_json.source == "custom_file" or missing metadata
+            metadata_source = None
+            if current_segment.metadata_json and isinstance(current_segment.metadata_json, dict):
+                metadata_source = current_segment.metadata_json.get("source")
+            
+            # Skip if not recognized, >= 20 seconds, already processed, or not music
+            if not (current_segment.is_recognized and 
+                    current_segment.duration_seconds < 20 and
+                    metadata_source == "music" and
+                    i not in processed_for_merge):
+                continue
+            
+            # Skip custom_file segments completely
+            if metadata_source == "custom_file":
+                continue
+            
+            # Find adjacent unrecognized segments to merge with
+            # This expands in one direction at a time (backward first, then forward)
+            # Only includes unrecognized segments, stops at recognized or custom_file segments
+            segments_to_merge, merge_indices = AudioSegments._find_adjacent_unrecognized_segments(
+                segments_list, i, processed_for_merge, max_segments=10
+            )
+            
+            # Only create merged segment if we have at least 2 segments to merge
+            # (current recognized segment + at least one unrecognized adjacent segment)
+            if len(segments_to_merge) >= 2:
+                # Create merged segment in database and handle logging
+                merged_segment_model = AudioSegments._create_and_save_merged_segment(
+                    segments_to_merge, channel
+                )
                 
-                # Find adjacent segments to merge
-                segments_to_merge = [current_segment]
-                merge_indices = [i]
-                
-                # Get previous segment if exists, not already processed, and is adjacent (no gap)
-                if i > 0 and (i - 1) not in processed_for_merge:
-                    prev_segment = segments_list[i - 1]
-                    # Skip if previous segment is already merged or deleted
-                    if not (prev_segment.source == 'merged' or prev_segment.is_delete):
-                        # Check if segments are adjacent (prev_segment.end_time == current_segment.start_time)
-                        # Allow small tolerance (1 second) for floating point precision issues
-                        time_diff = abs((current_segment.start_time - prev_segment.end_time).total_seconds())
-                        if time_diff <= 1.0:  # Adjacent or overlapping (within 1 second tolerance)
-                            segments_to_merge.insert(0, prev_segment)
-                            merge_indices.insert(0, i - 1)
-                        else:
-                            print(f"Skipping merge with previous segment: gap of {time_diff}s between "
-                                  f"{prev_segment.end_time} and {current_segment.start_time}")
-                
-                # Get next segment if exists, not already processed, and is adjacent (no gap)
-                if i < len(segments_list) - 1 and (i + 1) not in processed_for_merge:
-                    next_segment = segments_list[i + 1]
-                    # Skip if next segment is already merged or deleted
-                    if not (next_segment.source == 'merged' or next_segment.is_delete):
-                        # Check if segments are adjacent (current_segment.end_time == next_segment.start_time)
-                        # Allow small tolerance (1 second) for floating point precision issues
-                        time_diff = abs((next_segment.start_time - current_segment.end_time).total_seconds())
-                        if time_diff <= 1.0:  # Adjacent or overlapping (within 1 second tolerance)
-                            segments_to_merge.append(next_segment)
-                            merge_indices.append(i + 1)
-                        else:
-                            print(f"Skipping merge with next segment: gap of {time_diff}s between "
-                                  f"{current_segment.end_time} and {next_segment.start_time}")
-                
-                # Only create merged segment if we have at least 2 segments to merge
-                # (current + at least one adjacent segment)
-                if len(segments_to_merge) >= 2:
-                    # Create merged segment in database and handle logging
-                    merged_segment_model = AudioSegments._create_and_save_merged_segment(
-                        segments_to_merge, channel
-                    )
+                if merged_segment_model:
+                    merged_segments_created.append(merged_segment_model)
                     
-                    if merged_segment_model:
-                        merged_segments_created.append(merged_segment_model)
-                        
-                        # Mark indices as processed to avoid creating duplicate merges
-                        processed_for_merge.update(merge_indices)
-                        
-                        print(f"Created merged segment ID {merged_segment_model.id} from {len(segments_to_merge)} segments: "
-                              f"{merged_segment_model.start_time} - {merged_segment_model.end_time} "
-                              f"({merged_segment_model.duration_seconds}s).")
-                else:
-                    print(f"Skipping merge for segment at {current_segment.start_time}: "
-                          f"no adjacent segments found (may have gaps)")
+                    # Mark indices as processed to avoid creating duplicate merges
+                    processed_for_merge.update(merge_indices)
+                    
+                    print(f"Created merged segment ID {merged_segment_model.id} from {len(segments_to_merge)} segments: "
+                          f"{merged_segment_model.start_time} - {merged_segment_model.end_time} "
+                          f"({merged_segment_model.duration_seconds}s).")
+            else:
+                print(f"Skipping merge for segment at {current_segment.start_time}: "
+                      f"no adjacent unrecognized segments found (may have gaps or adjacent segments are recognized/custom_file)")
         
         # Return original segments + newly created merged segments
         all_segments = list(segments_list) + merged_segments_created
