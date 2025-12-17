@@ -9,13 +9,15 @@ from dashboard.v2.service.DashboardSummary import SummaryService
 from dashboard.v2.service.BucketCountService import BucketCountService
 from dashboard.v2.service.TopicService import TopicService
 from dashboard.v2.service.CSVExportService import CSVExportService
+from dashboard.v2.service.WordCountService import WordCountService
 from dashboard.v2.serializer import (
     SummaryQuerySerializer, 
     BucketCountQuerySerializer, 
     CategoryBucketCountQuerySerializer, 
     TopicQuerySerializer, 
     GeneralTopicCountByShiftQuerySerializer,
-    CSVExportQuerySerializer
+    CSVExportQuerySerializer,
+    WordCountQuerySerializer
 )
 
 
@@ -403,6 +405,74 @@ class CSVExportView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Failed to generate CSV export: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WordCountView(APIView):
+    """
+    API endpoint to get word counts from transcriptions
+    """
+    parser_classes = [JSONParser]
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get word counts from transcriptions filtered by date range, channel, and optional shift
+        
+        Query Parameters:
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            channel_id (int): Channel ID to filter by (required)
+            shift_id (int): Optional shift ID to filter by (optional)
+        
+        Returns:
+            Dictionary containing:
+            - word_counts: Dictionary mapping words to their counts (sorted by count descending)
+            - total_words: Total number of words found
+            - unique_words: Number of unique words
+            - filters: Applied filter parameters
+        """
+        try:
+            # Validate query parameters
+            serializer = WordCountQuerySerializer(data=request.query_params)
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get validated data
+            validated_data = serializer.validated_data
+            start_dt = validated_data['start_datetime']
+            end_dt = validated_data['end_datetime']
+            channel_id = validated_data['channel_id']
+            shift_id = validated_data.get('shift_id')
+            
+            # Get word counts from service
+            word_count_data = WordCountService.get_word_counts(
+                start_dt=start_dt,
+                end_dt=end_dt,
+                channel_id=channel_id,
+                shift_id=shift_id
+            )
+            
+            # Build response
+            response_data = {
+                **word_count_data,
+                'filters': {
+                    'start_datetime': request.query_params.get('start_datetime'),
+                    'end_datetime': request.query_params.get('end_datetime'),
+                    'channel_id': channel_id,
+                    'shift_id': shift_id
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch word counts: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

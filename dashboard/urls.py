@@ -1,6 +1,6 @@
 from django.urls import path
 from dashboard.v1.views import DashboardStatsView, ShiftAnalyticsView, ShiftAnalyticsV2View, TopicAudioSegmentsView, GeneralTopicsManagementView
-from dashboard.v2.views import SummaryView, BucketCountView, CategoryBucketCountView, TopTopicsView, GeneralTopicCountByShiftView, CSVExportView
+from dashboard.v2.views import SummaryView, BucketCountView, CategoryBucketCountView, TopTopicsView, GeneralTopicCountByShiftView, CSVExportView, WordCountView
 
 app_name = 'dashboard'
 
@@ -25,5 +25,7 @@ urlpatterns = [
     path('v2/dashboard/general-topic-count-by-shift/', GeneralTopicCountByShiftView.as_view(), name='general_topic_count_by_shift'),
     # CSV Export API
     path('v2/dashboard/csv-export/', CSVExportView.as_view(), name='csv_export'),
+    # Word Count API
+    path('v2/dashboard/word-count/', WordCountView.as_view(), name='word_count'),
 
 ]
