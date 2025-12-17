@@ -6,7 +6,7 @@ from django.db.models import QuerySet, Q
 
 from data_analysis.models import AudioSegments
 from data_analysis.repositories import AudioSegmentDAO
-from dashboard.models import UserSentimentPreference
+from audio_policy.models import FlagCondition
 from shift_analysis.models import Shift
 
 
@@ -89,18 +89,24 @@ class SummaryService:
     @staticmethod
     def get_low_sentiment_percentage(
         audio_segments: Iterable[AudioSegments],
-        threshold: int = 20,
+        min_lower: Optional[float] = None,
+        min_upper: Optional[float] = None,
     ) -> Optional[float]:
         """
-        Calculate percentage of segments with low sentiment (below threshold).
+        Calculate percentage of segments with low sentiment (within range).
         
         Args:
             audio_segments: List of AudioSegments with transcription_detail and analysis loaded
-            threshold: Sentiment threshold (default: 70)
+            min_lower: Lower bound of low sentiment range (inclusive)
+            min_upper: Upper bound of low sentiment range (inclusive)
         
         Returns:
             Percentage of low sentiment segments (rounded to 2 decimal places) or None if no data
         """
+        # If no range is provided, return None
+        if min_lower is None and min_upper is None:
+            return None
+        
         low_sentiment_weighted_duration = 0
         total_duration = 0
         
@@ -126,7 +132,10 @@ class SummaryService:
             
             if duration_seconds > 0:
                 total_duration += duration_seconds
-                if score < threshold:
+                # Check if score is within the low sentiment range
+                meets_min_lower = min_lower is None or score >= min_lower
+                meets_min_upper = min_upper is None or score <= min_upper
+                if meets_min_lower and meets_min_upper:
                     low_sentiment_weighted_duration += duration_seconds
         
         if total_duration > 0:
@@ -138,18 +147,24 @@ class SummaryService:
     @staticmethod
     def get_high_sentiment_percentage(
         audio_segments: Iterable[AudioSegments],
-        threshold: int = 80,
+        max_lower: Optional[float] = None,
+        max_upper: Optional[float] = None,
     ) -> Optional[float]:
         """
-        Calculate percentage of segments with high sentiment (above threshold).
+        Calculate percentage of segments with high sentiment (within range).
         
         Args:
             audio_segments: List of AudioSegments with transcription_detail and analysis loaded
-            threshold: Sentiment threshold (default: 90)
+            max_lower: Lower bound of high sentiment range (inclusive)
+            max_upper: Upper bound of high sentiment range (inclusive)
         
         Returns:
             Percentage of high sentiment segments (rounded to 2 decimal places) or None if no data
         """
+        # If no range is provided, return None
+        if max_lower is None and max_upper is None:
+            return None
+        
         high_sentiment_weighted_duration = 0
         total_duration = 0
         
@@ -175,7 +190,10 @@ class SummaryService:
             
             if duration_seconds > 0:
                 total_duration += duration_seconds
-                if score > threshold:
+                # Check if score is within the high sentiment range
+                meets_max_lower = max_lower is None or score >= max_lower
+                meets_max_upper = max_upper is None or score <= max_upper
+                if meets_max_lower and meets_max_upper:
                     high_sentiment_weighted_duration += duration_seconds
         
         if total_duration > 0:
@@ -311,16 +329,46 @@ class SummaryService:
                     has_content=True
                 )
                 total_talk_break = total_talk_break_query.count()
+                # Get default sentiment ranges from FlagCondition
+                # Default values: low sentiment 0-20, high sentiment 80-100
+                target_sentiment_score = 75
+                sentiment_min_lower = 0.0
+                sentiment_min_upper = 20.0
+                sentiment_max_lower = 80.0
+                sentiment_max_upper = 100.0
+                
+                try:
+                    flag_condition = FlagCondition.objects.get(channel_id=channel_id)
+                    if flag_condition.target_sentiments is not None:
+                        target_sentiment_score = flag_condition.target_sentiments
+                    if flag_condition.sentiment_min_lower is not None:
+                        sentiment_min_lower = flag_condition.sentiment_min_lower
+                    if flag_condition.sentiment_min_upper is not None:
+                        sentiment_min_upper = flag_condition.sentiment_min_upper
+                    if flag_condition.sentiment_max_lower is not None:
+                        sentiment_max_lower = flag_condition.sentiment_max_lower
+                    if flag_condition.sentiment_max_upper is not None:
+                        sentiment_max_upper = flag_condition.sentiment_max_upper
+                except FlagCondition.DoesNotExist:
+                    # If no flag condition exists, use default values
+                    pass
+                
                 return {
                     'average_sentiment': None,
-                    'target_sentiment_score': 75,
+                    'target_sentiment_score': target_sentiment_score,
                     'low_sentiment': None,
                     'high_sentiment': None,
                     'per_day_average_sentiments': [],
                     'thresholds': {
-                        'target_sentiment_score': 75,
-                        'low_sentiment_threshold': 20,
-                        'high_sentiment_threshold': 80
+                        'target_sentiment_score': target_sentiment_score,
+                        'low_sentiment_range': {
+                            'min_lower': sentiment_min_lower,
+                            'min_upper': sentiment_min_upper
+                        },
+                        'high_sentiment_range': {
+                            'max_lower': sentiment_max_lower,
+                            'max_upper': sentiment_max_upper
+                        }
                     },
                     'segment_count': 0,
                     'total_talk_break': total_talk_break
@@ -355,30 +403,41 @@ class SummaryService:
         )
         total_talk_break = total_talk_break_query.count()
         
-        # Get sentiment preferences from UserSentimentPreference
-        # Default values if no preference exists
+        # Get sentiment range from FlagCondition
+        # Default values: low sentiment 0-20, high sentiment 80-100
         target_sentiment_score = 75
-        low_sentiment_threshold = 20
-        high_sentiment_threshold = 80
+        sentiment_min_lower = 0.0
+        sentiment_min_upper = 20.0
+        sentiment_max_lower = 80.0
+        sentiment_max_upper = 100.0
         
         try:
-            sentiment_preference = UserSentimentPreference.objects.get(user=user)
-            target_sentiment_score = sentiment_preference.target_sentiment_score
-            low_sentiment_threshold = sentiment_preference.low_sentiment_score
-            high_sentiment_threshold = sentiment_preference.high_sentiment_score
-        except UserSentimentPreference.DoesNotExist:
-            # If no preference exists, use default values
+            flag_condition = FlagCondition.objects.get(channel_id=channel_id)
+            if flag_condition.target_sentiments is not None:
+                target_sentiment_score = flag_condition.target_sentiments
+            if flag_condition.sentiment_min_lower is not None:
+                sentiment_min_lower = flag_condition.sentiment_min_lower
+            if flag_condition.sentiment_min_upper is not None:
+                sentiment_min_upper = flag_condition.sentiment_min_upper
+            if flag_condition.sentiment_max_lower is not None:
+                sentiment_max_lower = flag_condition.sentiment_max_lower
+            if flag_condition.sentiment_max_upper is not None:
+                sentiment_max_upper = flag_condition.sentiment_max_upper
+        except FlagCondition.DoesNotExist:
+            # If no flag condition exists, use default values
             pass
         
         # Calculate all sentiment metrics
         average_sentiment = SummaryService.get_average_sentiment(audio_segments)
         low_sentiment_percentage = SummaryService.get_low_sentiment_percentage(
             audio_segments,
-            threshold=low_sentiment_threshold
+            min_lower=sentiment_min_lower,
+            min_upper=sentiment_min_upper
         )
         high_sentiment_percentage = SummaryService.get_high_sentiment_percentage(
             audio_segments,
-            threshold=high_sentiment_threshold
+            max_lower=sentiment_max_lower,
+            max_upper=sentiment_max_upper
         )
         per_day_average_sentiments = SummaryService.get_per_day_average_sentiments(
             audio_segments
@@ -393,8 +452,14 @@ class SummaryService:
             'per_day_average_sentiments': per_day_average_sentiments,
             'thresholds': {
                 'target_sentiment_score': target_sentiment_score,
-                'low_sentiment_threshold': low_sentiment_threshold,
-                'high_sentiment_threshold': high_sentiment_threshold
+                'low_sentiment_range': {
+                    'min_lower': sentiment_min_lower,
+                    'min_upper': sentiment_min_upper
+                },
+                'high_sentiment_range': {
+                    'max_lower': sentiment_max_lower,
+                    'max_upper': sentiment_max_upper
+                }
             },
             'segment_count': len(audio_segments),
             'total_talk_break': total_talk_break
