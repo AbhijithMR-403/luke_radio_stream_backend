@@ -3,11 +3,20 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import JSONParser
 from rest_framework import permissions
+from django.http import HttpResponse
 
 from dashboard.v2.service.DashboardSummary import SummaryService
 from dashboard.v2.service.BucketCountService import BucketCountService
 from dashboard.v2.service.TopicService import TopicService
-from dashboard.v2.serializer import SummaryQuerySerializer, BucketCountQuerySerializer, CategoryBucketCountQuerySerializer, TopicQuerySerializer, GeneralTopicCountByShiftQuerySerializer
+from dashboard.v2.service.CSVExportService import CSVExportService
+from dashboard.v2.serializer import (
+    SummaryQuerySerializer, 
+    BucketCountQuerySerializer, 
+    CategoryBucketCountQuerySerializer, 
+    TopicQuerySerializer, 
+    GeneralTopicCountByShiftQuerySerializer,
+    CSVExportQuerySerializer
+)
 
 
 class SummaryView(APIView):
@@ -150,6 +159,7 @@ class CategoryBucketCountView(APIView):
             end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             category_name (str): Category name to filter by - one of: personal, community, spiritual (required)
             channel_id (int): Channel ID to filter by (required)
+            shift_id (int): Optional shift ID to filter by (optional)
         """
         try:
             # Validate query parameters
@@ -166,13 +176,15 @@ class CategoryBucketCountView(APIView):
             end_dt = validated_data['end_datetime']
             category_name = validated_data['category_name']
             channel_id = validated_data['channel_id']
+            shift_id = validated_data.get('shift_id')
             
             # Get bucket counts from service
             bucket_data = BucketCountService.get_category_bucket_counts(
                 start_dt=start_dt,
                 end_dt=end_dt,
                 category_name=category_name,
-                channel_id=channel_id
+                channel_id=channel_id,
+                shift_id=shift_id
             )
             
             # Build response
@@ -182,7 +194,8 @@ class CategoryBucketCountView(APIView):
                     'start_datetime': request.query_params.get('start_datetime'),
                     'end_datetime': request.query_params.get('end_datetime'),
                     'category_name': category_name,
-                    'channel_id': channel_id
+                    'channel_id': channel_id,
+                    'shift_id': shift_id
                 }
             }
             
@@ -337,6 +350,59 @@ class GeneralTopicCountByShiftView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Failed to fetch general topic counts by shift: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CSVExportView(APIView):
+    """
+    API endpoint to download transcription and analysis data as CSV
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Download transcription and analysis data as CSV file
+        
+        Query Parameters:
+            start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
+            channel_id (int): Channel ID to filter by (required)
+            shift_id (int): Optional shift ID to filter by (optional)
+        """
+        try:
+            # Validate query parameters
+            serializer = CSVExportQuerySerializer(data=request.query_params)
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get validated data
+            validated_data = serializer.validated_data
+            start_dt = validated_data['start_datetime']
+            end_dt = validated_data['end_datetime']
+            channel_id = validated_data['channel_id']
+            shift_id = validated_data.get('shift_id')
+            
+            # Get CSV export data from service
+            csv_data = CSVExportService.export_to_csv(
+                start_dt=start_dt,
+                end_dt=end_dt,
+                channel_id=channel_id,
+                shift_id=shift_id
+            )
+            
+            # Create HTTP response with CSV
+            response = HttpResponse(csv_data['content'], content_type='text/csv')
+            response['Content-Disposition'] = f'attachment; filename="{csv_data["filename"]}"'
+            
+            return response
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate CSV export: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

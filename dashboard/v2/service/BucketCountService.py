@@ -529,7 +529,8 @@ class BucketCountService:
         start_dt: datetime,
         end_dt: datetime,
         category_name: str,
-        channel_id: int
+        channel_id: int,
+        shift_id: Optional[int] = None
     ) -> Dict[str, any]:
         """
         Get count and percentage of each bucket within a specific category.
@@ -539,6 +540,7 @@ class BucketCountService:
             end_dt: End datetime (timezone-aware)
             category_name: Category to filter by (personal, community, spiritual)
             channel_id: Channel ID to filter by
+            shift_id: Optional shift ID to filter by
         
         Returns:
             Dictionary containing:
@@ -567,6 +569,29 @@ class BucketCountService:
             transcription_detail__audio_segment__channel_id=channel_id,
             bucket_prompt__isnull=False
         )
+        
+        # Apply shift filtering if shift_id is provided
+        if shift_id is not None:
+            try:
+                shift = Shift.objects.get(id=shift_id, channel_id=channel_id)
+                # Get Q object from shift's get_datetime_filter method
+                # This returns Q object for AudioSegments, so we need to prefix with relationship path
+                shift_q = shift.get_datetime_filter(utc_start=start_dt, utc_end=end_dt)
+                # Convert Q object to work with TranscriptionAnalysis by prefixing field paths
+                shift_q_modified = BucketCountService._convert_shift_q_for_transcription_analysis(shift_q)
+                # Combine with base query
+                base_q = base_q & shift_q_modified
+            except Shift.DoesNotExist:
+                # If shift doesn't exist, return empty result
+                return {
+                    'buckets': {},
+                    'total': 0,
+                    'category': category_name,
+                    'total_time_period_seconds': (end_dt - start_dt).total_seconds(),
+                    'total_time_period_hours': round((end_dt - start_dt).total_seconds() / 3600, 2),
+                    'total_filtered_duration_seconds': 0,
+                    'total_filtered_duration_hours': 0
+                }
         
         # Get all TranscriptionAnalysis records with bucket_prompt in the date range
         analyses = TranscriptionAnalysis.objects.filter(
