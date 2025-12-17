@@ -161,11 +161,23 @@ class TopicService:
         # Get GeneralTopic names (only if we need to filter them out)
         generaltopic_names = None if show_all_topics else TopicService._get_all_generaltopic_names()
         
+        # Ensure datetimes are timezone-aware in UTC for shift filtering
+        from zoneinfo import ZoneInfo
+        
+        if start_dt.tzinfo is None:
+            start_dt = timezone.make_aware(start_dt)
+        if end_dt.tzinfo is None:
+            end_dt = timezone.make_aware(end_dt)
+        
+        # Convert to UTC if not already
+        utc_start = start_dt.astimezone(ZoneInfo("UTC"))
+        utc_end = end_dt.astimezone(ZoneInfo("UTC"))
+        
         # Build query for TranscriptionAnalysis
         query = Q(
             transcription_detail__audio_segment__channel_id=channel_id,
-            transcription_detail__audio_segment__start_time__gte=start_dt,
-            transcription_detail__audio_segment__start_time__lt=end_dt,
+            transcription_detail__audio_segment__start_time__gte=utc_start,
+            transcription_detail__audio_segment__start_time__lt=utc_end,
             transcription_detail__audio_segment__is_delete=False
         )
         
@@ -173,10 +185,13 @@ class TopicService:
             from shift_analysis.models import Shift
             try:
                 shift = Shift.objects.get(id=shift_id)
-                query &= Q(
-                    transcription_detail__audio_segment__start_time__gte=shift.start_time,
-                    transcription_detail__audio_segment__start_time__lt=shift.end_time
-                )
+                # Use the shift's get_datetime_filter method to properly filter by shift time windows
+                shift_filter = shift.get_datetime_filter(utc_start, utc_end)
+                # Apply shift filter to audio segments
+                query &= Q(transcription_detail__audio_segment__in=AudioSegments.objects.filter(
+                    shift_filter,
+                    channel_id=channel_id
+                ))
             except Shift.DoesNotExist:
                 pass
         
