@@ -12,6 +12,32 @@ class WordCountService:
     """
     Service class for counting word occurrences in transcriptions
     """
+    
+    # Common stop words to ignore when counting
+    STOP_WORDS = {
+        'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'by', 'for', 'from', "it's",
+        'has', 'he', 'in', 'is', 'it', 'its', 'just', 'like', 'of', 'on', 'or', "yeah",
+        'that', 'the', 'this', 'to', 'was', 'we', 'were', 'what', 'when', 'where', "one",
+        'which', 'who', 'will', 'with', 'would', 'you', 'your', 'yours', 'yourself', "if",
+        'yourselves', 'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', "oh", "uh", "i'm",
+        'they', 'them', 'their', 'theirs', 'themselves', 'she', 'her', 'hers', "we're", "us", "i've"
+        'herself', 'he', 'him', 'his', 'himself', 'it', 'its', 'itself', 'have', "you've",
+        'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'am', 'is', 'are',
+        'was', 'were', 'been', 'being', 'can', 'could', 'may', 'might', 'must', "we've", 
+        'shall', 'should', 'will', 'would', 'about', 'above', 'across', 'after', "they're",
+        'against', 'along', 'among', 'around', 'before', 'behind', 'below', 'beneath', "that's",
+        'beside', 'between', 'beyond', 'but', 'by', 'concerning', 'considering',
+        'despite', 'down', 'during', 'except', 'for', 'from', 'in', 'inside', 'into',
+        'like', 'near', 'of', 'off', 'on', 'onto', 'out', 'outside', 'over', 'past',
+        'regarding', 'round', 'since', 'through', 'throughout', 'till', 'to', 'toward',
+        'under', 'underneath', 'until', 'unto', 'up', 'upon', 'with', 'within',
+        'without', 'all', 'both', 'each', 'few', 'more', 'most', 'other', 'some',
+        'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too',
+        'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now', 'd', 'll',
+        'm', 'o', 're', 've', 'y', 'ain', 'aren', 'couldn', 'didn', 'doesn', 'hadn',
+        'hasn', 'haven', 'isn', 'ma', 'mightn', 'mustn', 'needn', 'shan', 'shouldn',
+        'wasn', 'weren', 'won', 'wouldn'
+    }
 
     @staticmethod
     def _convert_shift_q_for_transcription_detail(q_obj: Q) -> Q:
@@ -98,13 +124,13 @@ class WordCountService:
     @staticmethod
     def extract_words_from_text(text: str) -> List[str]:
         """
-        Extract words from text, ignoring newline characters and other whitespace.
+        Extract words from text, ignoring newline characters, numbers, and stop words.
         
         Args:
             text: Text to extract words from
         
         Returns:
-            List of words (lowercased)
+            List of words (lowercased, filtered)
         """
         if not text:
             return []
@@ -120,7 +146,21 @@ class WordCountService:
         # Convert to lowercase for consistent counting
         words = [word.lower() for word in words]
         
-        return words
+        # Filter out numbers (words that are purely numeric) and stop words
+        filtered_words = []
+        for word in words:
+            # Skip if word is purely numeric
+            if word.isdigit():
+                continue
+            # Skip if word is a stop word
+            if word in WordCountService.STOP_WORDS:
+                continue
+            # Skip if word contains only numbers and apostrophes (like '123')
+            if re.match(r"^[\d']+$", word):
+                continue
+            filtered_words.append(word)
+        
+        return filtered_words
 
     @staticmethod
     def count_words(transcriptions: List[TranscriptionDetail]) -> Dict[str, int]:
