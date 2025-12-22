@@ -13,4 +13,5 @@ urlpatterns = [
     path('transcribe_and_analyze', views.AudioTranscriptionAndAnalysisView.as_view(), name='transcribe_and_analyze'),
     # V2 API endpoints
     path('v2/audio-segments/', v2_views.ListAudioSegmentsV2View.as_view(), name='v2_audio_segments'),
+    path('v2/content-type-prompt/', v2_views.ContentTypePromptView.as_view(), name='v2_content_type_prompt'),
 ]

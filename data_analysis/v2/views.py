@@ -6,6 +6,9 @@ from django.views import View
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
 
 from data_analysis.v2.service import (
     validate_v2_parameters,
@@ -21,6 +24,7 @@ from data_analysis.audio_segments_helpers import (
 )
 from data_analysis.serializers import AudioSegmentsSerializer
 from data_analysis.repositories import AudioSegmentDAO
+from acr_admin.models import GeneralSetting
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -191,4 +195,85 @@ class ListAudioSegmentsV2View(View):
                 'error': str(e),
                 'traceback': traceback.format_exc() if __debug__ else None
             }, status=500)
+
+
+class ContentTypePromptView(APIView):
+    """
+    V2 API endpoint for getting content_type_prompt from GeneralSetting.
+    
+    Returns:
+    - content_type_prompt: The prompt text from GeneralSetting
+    - search_in: List of search_in options with their labels
+    
+    Example URL:
+    - /api/v2/content-type-prompt/
+    """
+    
+    def get(self, request, *args, **kwargs):
+        try:
+            # Get GeneralSetting object
+            settings_obj = GeneralSetting.objects.first()
+            
+            if not settings_obj:
+                return Response({
+                    'success': False,
+                    'error': 'GeneralSetting not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Define search_in options with labels as mentioned in views.py line 439-440
+            search_in = [
+                {
+                    'value': 'transcription',
+                    'label': 'Transcription'
+                },
+                {
+                    'value': 'general_topics',
+                    'label': 'General Topics'
+                },
+                {
+                    'value': 'iab_topics',
+                    'label': 'IAB Topics'
+                },
+                {
+                    'value': 'bucket_prompt',
+                    'label': 'Bucket Prompt'
+                },
+                {
+                    'value': 'summary',
+                    'label': 'Summary'
+                },
+                {
+                    'value': 'content_type_prompt',
+                    'label': 'Content Type Prompt'
+                },
+                {
+                    'value': 'title',
+                    'label': 'Title'
+                }
+            ]
+            
+            # Convert comma-separated content_type_prompt to a list
+            content_type_prompt_list = []
+            if settings_obj.content_type_prompt:
+                content_type_prompt_list = [
+                    item.strip() 
+                    for item in settings_obj.content_type_prompt.split(',') 
+                    if item.strip()
+                ]
+            
+            return Response({
+                'success': True,
+                'data': {
+                    'content_type_prompt': content_type_prompt_list,
+                    'search_in': search_in
+                }
+            })
+            
+        except Exception as e:
+            import traceback
+            return Response({
+                'success': False,
+                'error': str(e),
+                'traceback': traceback.format_exc() if __debug__ else None
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
