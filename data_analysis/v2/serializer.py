@@ -31,6 +31,18 @@ class ListAudioSegmentsV2QuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(default=1, min_value=1, help_text="Page number")
     page_size = serializers.IntegerField(default=1, min_value=1, help_text="Hours per page")
     
+    # Search parameters
+    search_text = serializers.CharField(required=False, allow_null=True, allow_blank=True, help_text="Text to search for")
+    search_in = serializers.ChoiceField(
+        choices=['transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'content_type_prompt', 'title'],
+        required=False,
+        allow_null=True,
+        help_text="Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'content_type_prompt', 'title'"
+    )
+    
+    # Flag-related parameters
+    show_flagged_only = serializers.BooleanField(required=False, default=False, help_text="When set to 'true', returns only segments that have triggered flag thresholds")
+    
     def validate(self, attrs):
         """
         Validate the combined attributes.
@@ -76,6 +88,26 @@ class ListAudioSegmentsV2QuerySerializer(serializers.Serializer):
             attrs['status'] = False
         else:  # 'both'
             attrs['status'] = None
+        
+        # Validate search parameters
+        search_text = attrs.get('search_text')
+        search_in = attrs.get('search_in')
+        
+        if search_text and not search_in:
+            raise serializers.ValidationError({
+                'search_in': ['search_in parameter is required when search_text is provided']
+            })
+        
+        if search_in and not search_text:
+            raise serializers.ValidationError({
+                'search_text': ['search_text parameter is required when search_in is provided']
+            })
+        
+        # Normalize search_text - convert empty string to None
+        if search_text == '':
+            attrs['search_text'] = None
+        if search_in == '':
+            attrs['search_in'] = None
         
         return attrs
     

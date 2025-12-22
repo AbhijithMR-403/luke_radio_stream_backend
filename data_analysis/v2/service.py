@@ -70,6 +70,72 @@ def apply_content_type_filter(query, content_type_list: List[str]):
     return query.distinct()
 
 
+def apply_search_filters(base_query, search_text, search_in):
+    """
+    Apply search filters to the query.
+    
+    Args:
+        base_query: Django QuerySet of AudioSegments
+        search_text: Text to search for
+        search_in: Field to search in - must be one of: 'transcription', 'general_topics', 
+                   'iab_topics', 'bucket_prompt', 'summary', 'content_type_prompt', 'title'
+    
+    Returns:
+        Filtered QuerySet with distinct() applied if filter was applied
+    """
+    if not search_text or not search_in:
+        return base_query
+    filter_applied = False
+    
+    if search_in == 'transcription':
+        # Search in transcription text
+        base_query = base_query.filter(
+            transcription_detail__transcript__icontains=search_text
+        )
+        filter_applied = True
+    elif search_in == 'general_topics':
+        # Search in general topics
+        base_query = base_query.filter(
+            transcription_detail__analysis__general_topics__icontains=search_text
+        )
+        filter_applied = True
+    elif search_in == 'iab_topics':
+        # Search in IAB topics
+        base_query = base_query.filter(
+            transcription_detail__analysis__iab_topics__icontains=search_text
+        )
+        filter_applied = True
+    elif search_in == 'bucket_prompt':
+        # Search in bucket prompt
+        base_query = base_query.filter(
+            transcription_detail__analysis__bucket_prompt__icontains=search_text
+        )
+        filter_applied = True
+    elif search_in == 'summary':
+        # Search in summary
+        base_query = base_query.filter(
+            transcription_detail__analysis__summary__icontains=search_text
+        )
+        filter_applied = True
+    elif search_in == 'content_type_prompt':
+        # Search in content type prompt
+        base_query = base_query.filter(
+            transcription_detail__analysis__content_type_prompt__icontains=search_text
+        )
+        filter_applied = True
+    elif search_in == 'title':
+        # Search in title
+        base_query = base_query.filter(
+            title__icontains=search_text
+        )
+        filter_applied = True
+    
+    # Ensure no duplicate rows from JOINs when counting or listing
+    if filter_applied:
+        base_query = base_query.distinct()
+    return base_query
+
+
 def validate_v2_parameters(request):
     """
     Validate and extract parameters for v2 audio segments API using serializer.
@@ -130,13 +196,16 @@ def validate_v2_parameters(request):
         'status': validated_data.get('status'),  # Already converted to True/False/None
         'content_type': validated_data.get('content_type', []),  # List of strings
         'base_start_dt': validated_data['base_start_dt'],
-        'base_end_dt': validated_data['base_end_dt']
+        'base_end_dt': validated_data['base_end_dt'],
+        'search_text': validated_data.get('search_text'),
+        'search_in': validated_data.get('search_in'),
+        'show_flagged_only': validated_data.get('show_flagged_only', False)
     }
     
     return params, None
 
 
-def build_pagination_info_v2(base_start_dt, base_end_dt, page, page_size, channel, valid_windows=None, status=None, content_type_list=None):
+def build_pagination_info_v2(base_start_dt, base_end_dt, page, page_size, channel, valid_windows=None, status=None, content_type_list=None, search_text=None, search_in=None):
     """
     Build pagination information for v2 API with content_type filtering support.
     
@@ -239,6 +308,10 @@ def build_pagination_info_v2(base_start_dt, base_end_dt, page, page_size, channe
         # Apply content_type filtering if provided
         if content_type_list:
             page_query = apply_content_type_filter(page_query, content_type_list)
+        
+        # Apply search filters if provided
+        if search_text and search_in:
+            page_query = apply_search_filters(page_query, search_text, search_in)
         
         # Count distinct segments to avoid duplicates due to JOINs
         segment_count = page_query.distinct().count()
