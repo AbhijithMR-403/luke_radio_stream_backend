@@ -1,11 +1,37 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Iterator
 from datetime import datetime
 from django.db.models import Q
 import re
 from collections import Counter
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.tag import pos_tag
 
 from data_analysis.models import TranscriptionDetail
 from shift_analysis.models import Shift
+
+# Download required NLTK resources if not already downloaded (idempotent)
+# Each resource is checked and downloaded separately to prevent LookupError in minimal environments
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords', quiet=True)
+
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+
+try:
+    nltk.data.find('taggers/averaged_perceptron_tagger')
+except LookupError:
+    nltk.download('averaged_perceptron_tagger', quiet=True)
+
+try:
+    nltk.data.find('taggers/universal_tagset')
+except LookupError:
+    nltk.download('universal_tagset', quiet=True)
 
 
 class WordCountService:
@@ -13,31 +39,24 @@ class WordCountService:
     Service class for counting word occurrences in transcriptions
     """
     
-    # Common stop words to ignore when counting
-    STOP_WORDS = {
-        'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'by', 'for', 'from', "it's",
-        'has', 'he', 'in', 'is', 'it', 'its', 'just', 'like', 'of', 'on', 'or', "yeah",
-        'that', 'the', 'this', 'to', 'was', 'we', 'were', 'what', 'when', 'where', "one",
-        'which', 'who', 'will', 'with', 'would', 'you', 'your', 'yours', 'yourself', "if",
-        'yourselves', 'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', "oh", "uh", "i'm",
-        'they', 'them', 'their', 'theirs', 'themselves', 'she', 'her', 'hers', "we're", "us", "i've"
-        'herself', 'he', 'him', 'his', 'himself', 'it', 'its', 'itself', 'have', "you've",
-        'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'am', 'is', 'are',
-        'was', 'were', 'been', 'being', 'can', 'could', 'may', 'might', 'must', "we've", 
-        'shall', 'should', 'will', 'would', 'about', 'above', 'across', 'after', "they're",
-        'against', 'along', 'among', 'around', 'before', 'behind', 'below', 'beneath', "that's",
-        'beside', 'between', 'beyond', 'but', 'by', 'concerning', 'considering',
-        'despite', 'down', 'during', 'except', 'for', 'from', 'in', 'inside', 'into',
-        'like', 'near', 'of', 'off', 'on', 'onto', 'out', 'outside', 'over', 'past',
-        'regarding', 'round', 'since', 'through', 'throughout', 'till', 'to', 'toward',
-        'under', 'underneath', 'until', 'unto', 'up', 'upon', 'with', 'within',
-        'without', 'all', 'both', 'each', 'few', 'more', 'most', 'other', 'some',
-        'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too',
-        'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now', 'd', 'll',
-        'm', 'o', 're', 've', 'y', 'ain', 'aren', 'couldn', 'didn', 'doesn', 'hadn',
-        'hasn', 'haven', 'isn', 'ma', 'mightn', 'mustn', 'needn', 'shan', 'shouldn',
-        'wasn', 'weren', 'won', 'wouldn'
-    }
+    # Use NLTK's comprehensive English stop words, plus additional filters for transcriptions
+    STOP_WORDS = set(stopwords.words('english'))
+    # Add transcription artifacts
+    STOP_WORDS.update({
+        'speaker', 'inaudible', 'crosstalk', 'silence', 'applause', 'music', 
+        'laugh', 'laughter', 'unknown', 'unidentified'
+    })
+    # Add conversational fillers and common spoken language patterns
+    STOP_WORDS.update({
+        'yeah', 'oh', 'uh', 'um', 'hmm', 'ah', 'er', 'well', 'like', 'you know',
+        'okay', 'right', 'really', 'actually', 'basically', 'gonna', 'wanna', 'gotta', 'dunno'
+    })
+    # Add common contractions
+    STOP_WORDS.update({
+        "i'm", "you're", "we're", "they're", "it's", "that's", "i've", "you've", "we've",
+        "don't", "won't", "can't", "wouldn't", "shouldn't", "couldn't", "isn't", "aren't",
+        "wasn't", "weren't", "hasn't", "haven't", "hadn't", "doesn't", "didn't"
+    })
 
     @staticmethod
     def _convert_shift_q_for_transcription_detail(q_obj: Q) -> Q:
@@ -72,14 +91,15 @@ class WordCountService:
         return Q(*converted_children, _connector=q_obj.connector, _negated=q_obj.negated)
 
     @staticmethod
-    def get_transcriptions_for_word_count(
+    def get_transcription_texts(
         start_dt: datetime,
         end_dt: datetime,
         channel_id: int,
         shift_id: Optional[int] = None
-    ) -> List[TranscriptionDetail]:
+    ) -> Iterator[str]:
         """
-        Get TranscriptionDetail records filtered by date range, channel, and optional shift.
+        Get transcription text strings filtered by date range, channel, and optional shift.
+        Returns an iterator for memory-efficient processing.
         
         Args:
             start_dt: Start datetime (timezone-aware)
@@ -88,13 +108,13 @@ class WordCountService:
             shift_id: Optional shift ID to filter by
         
         Returns:
-            QuerySet of TranscriptionDetail records
+            Iterator of transcription text strings
         """
         # Build Q object for filtering by date range and channel
         base_q = Q(
             audio_segment__start_time__gte=start_dt,
             audio_segment__start_time__lte=end_dt,
-            audio_segment__channel_id=channel_id
+            audio_segment__channel_id=channel_id,
         )
         
         # Apply shift filtering if shift_id is provided
@@ -108,77 +128,100 @@ class WordCountService:
                 # Combine with base query
                 base_q = base_q & shift_q_modified
             except Shift.DoesNotExist:
-                # If shift doesn't exist, return empty queryset
-                return TranscriptionDetail.objects.none()
+                # If shift doesn't exist, return empty iterator
+                return iter([])
         
-        # Get all TranscriptionDetail records with related data
-        transcriptions = TranscriptionDetail.objects.filter(
+        # Get transcription texts as an iterator (memory-efficient)
+        transcription_texts = TranscriptionDetail.objects.filter(
             base_q
-        ).select_related(
-            'audio_segment',
-            'audio_segment__channel'
-        ).order_by('audio_segment__start_time')
+        ).values_list('transcript', flat=True).iterator()
         
-        return transcriptions
+        return transcription_texts
 
     @staticmethod
     def extract_words_from_text(text: str) -> List[str]:
         """
-        Extract words from text, ignoring newline characters, numbers, and stop words.
+        Extract meaningful words from text using NLTK POS tagging.
+        Only keeps nouns and adjectives to focus on content words.
         
         Args:
             text: Text to extract words from
         
         Returns:
-            List of words (lowercased, filtered)
+            List of words (lowercased, filtered to nouns and adjectives only)
         """
         if not text:
             return []
         
-        # Replace newline characters with spaces
-        text = text.replace('\n', ' ')
-        text = text.replace('\r', ' ')
+        # Tokenize the text using NLTK
+        tokens = word_tokenize(text)
         
-        # Use regex to extract words (alphanumeric characters and apostrophes)
-        # This handles contractions like "don't", "it's", etc.
-        words = re.findall(r"\b[a-zA-Z0-9']+\b", text)
+        # Tag tokens with POS tags using universal tagset
+        tagged_tokens = pos_tag(tokens, tagset='universal')
         
-        # Convert to lowercase for consistent counting
-        words = [word.lower() for word in words]
-        
-        # Filter out numbers (words that are purely numeric) and stop words
+        # Filter words: only keep nouns and adjectives
         filtered_words = []
-        for word in words:
+        for word, tag in tagged_tokens:
+            # Only keep nouns (NOUN) and adjectives (ADJ)
+            if tag not in ('NOUN', 'ADJ'):
+                continue
+            
+            # Convert to lowercase for consistent counting
+            word = word.lower()
+            
+            # Skip words with fewer than 3 characters
+            if len(word) < 3:
+                continue
+            
             # Skip if word is purely numeric
             if word.isdigit():
                 continue
-            # Skip if word is a stop word
+            
+            # Skip if word is in stop words
             if word in WordCountService.STOP_WORDS:
                 continue
+            
             # Skip if word contains only numbers and apostrophes (like '123')
             if re.match(r"^[\d']+$", word):
                 continue
+            
             filtered_words.append(word)
         
         return filtered_words
 
     @staticmethod
-    def count_words(transcriptions: List[TranscriptionDetail]) -> Dict[str, int]:
+    def count_words(transcription_texts: Iterator[str]) -> Dict[str, int]:
         """
-        Count word occurrences across all transcriptions.
+        Count word occurrences across all transcription texts.
+        Processes transcriptions in batches of 100 for efficiency.
         
         Args:
-            transcriptions: List or QuerySet of TranscriptionDetail records
+            transcription_texts: Iterator of transcription text strings
         
         Returns:
             Dictionary mapping words to their counts, sorted by count (descending)
         """
         word_counter = Counter()
+        batch = []
+        batch_size = 100
         
-        for transcription in transcriptions:
-            if transcription.transcript:
-                words = WordCountService.extract_words_from_text(transcription.transcript)
+        for text in transcription_texts:
+            if text:
+                batch.append(text)
+            
+            # Process batch when it reaches 10 transcriptions
+            if len(batch) >= batch_size:
+                # Combine batch texts with space separator
+                combined_text = ' '.join(batch)
+                words = WordCountService.extract_words_from_text(combined_text)
                 word_counter.update(words)
+                batch = []  # Reset batch
+        
+        # Process remaining transcriptions (if any)
+        if batch:
+            combined_text = ' '.join(batch)
+            words = WordCountService.extract_words_from_text(combined_text)
+            word_counter.update(words)
         
         # Convert to regular dict and sort by count (descending)
         word_counts = dict(word_counter)
@@ -212,8 +255,8 @@ class WordCountService:
             - 'total_words': Total number of words found
             - 'unique_words': Number of unique words
         """
-        # Get transcriptions
-        transcriptions = WordCountService.get_transcriptions_for_word_count(
+        # Get transcription texts
+        transcription_texts = WordCountService.get_transcription_texts(
             start_dt=start_dt,
             end_dt=end_dt,
             channel_id=channel_id,
@@ -221,8 +264,8 @@ class WordCountService:
         )
         
         # Count words
-        word_counts = WordCountService.count_words(transcriptions)
-        
+        word_counts = WordCountService.count_words(transcription_texts)
+
         # Calculate statistics
         total_words = sum(word_counts.values())
         unique_words = len(word_counts)
