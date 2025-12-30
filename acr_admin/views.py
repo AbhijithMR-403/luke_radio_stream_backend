@@ -1,6 +1,3 @@
-from urllib.parse import urlparse
-from django.shortcuts import render
-from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.core.exceptions import ValidationError
@@ -16,12 +13,11 @@ from .serializer import (
     wellness_bucket_to_dict,
     SettingsAndBucketsSerializer
 )
+from .service import SettingsAndBucketsService
 from config.validation import ValidationUtils
 import json
 from django.views import View
 from django.utils.decorators import method_decorator
-from django.conf import settings
-from urllib.parse import unquote
 
 
 class SettingsAndBucketsView(APIView):
@@ -36,7 +32,12 @@ class SettingsAndBucketsView(APIView):
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def put(self, request, *args, **kwargs):
-        # Validate request payload using serializer FIRST - all validation happens here
+        """
+        Update settings and buckets.
+        All validation is handled by SettingsAndBucketsSerializer.
+        Business logic is handled by SettingsAndBucketsService.
+        """
+        # Step 1: Validate request payload using serializer - ALL field validation happens here
         serializer = SettingsAndBucketsSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(
@@ -44,69 +45,25 @@ class SettingsAndBucketsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Only proceed if validation passes - use validated_data exclusively
+        # Step 2: Use service layer to handle business logic with validated data
         try:
             validated_data = serializer.validated_data
-            settings_data = validated_data.get('settings') or {}
-            buckets = validated_data.get('buckets', [])
-
-            # Get or create settings object
-            settings_id = settings_data.get('id', 1)
-            settings_obj, _ = GeneralSetting.objects.get_or_create(id=settings_id)
-
-            # Update settings fields from validated data only
-            # List of all fields in GeneralSetting
-            general_setting_fields = [
-                'openai_api_key', 'openai_org_id', 'acr_cloud_api_key', 'revai_access_token',
-                'summarize_transcript_prompt', 'sentiment_analysis_prompt', 'general_topics_prompt', 'iab_topics_prompt',
-                'bucket_definition_error_rate', 'chatgpt_model', 'chatgpt_max_tokens',
-                'chatgpt_temperature', 'chatgpt_top_p', 'chatgpt_frequency_penalty', 'chatgpt_presence_penalty',
-                'determine_radio_content_type_prompt', 'content_type_prompt', 'radio_segment_types', 'radio_segment_error_rate'
-            ]
-            for field in general_setting_fields:
-                if field in settings_data:
-                    setattr(settings_obj, field, settings_data[field])
-            settings_obj.save()
-
-            # Process buckets from validated data only
-            bucket_ids_in_payload = set()
-            for bucket in buckets:
-                bucket_id = bucket.get('id')
-                if bucket_id:
-                    # Update existing bucket
-                    try:
-                        wb = WellnessBucket.objects.get(id=bucket_id)
-                    except WellnessBucket.DoesNotExist:
-                        return Response(
-                            {'success': False, 'error': f'Bucket with id {bucket_id} not found'}, 
-                            status=status.HTTP_404_NOT_FOUND
-                        )
-                else:
-                    # Create new bucket
-                    wb = WellnessBucket()
-                
-                # Use validated data only - all fields are already validated
-                wb.title = bucket.get('title', '')
-                wb.description = bucket.get('description', '')
-                wb.category = bucket.get('category')  # Required and validated by serializer
-                wb.save()
-                bucket_ids_in_payload.add(wb.id)
-
-            # Delete buckets that are not present in the payload
-            existing_bucket_ids = set(WellnessBucket.objects.values_list('id', flat=True))
-            buckets_to_delete = existing_bucket_ids - bucket_ids_in_payload
-            if buckets_to_delete:
-                WellnessBucket.objects.filter(id__in=buckets_to_delete).delete()
-
-            buckets_data = [wellness_bucket_to_dict(b) for b in WellnessBucket.objects.all()]
+            result = SettingsAndBucketsService.update_settings_and_buckets(validated_data)
+            
             return Response({
-                'success': True, 
-                'settings': general_setting_to_dict(settings_obj), 
-                'buckets': buckets_data
+                'success': True,
+                'settings': result['settings'],
+                'buckets': result['buckets']
             })
+        except ValidationError as ve:
+            # Handle validation errors from service layer
+            return Response(
+                {'success': False, 'error': str(ve)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
             return Response(
-                {'success': False, 'error': str(e)}, 
+                {'success': False, 'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 

@@ -1,6 +1,6 @@
 from data_analysis.services.transcription_analyzer import TranscriptionAnalyzer
-from .models import Channel, GeneralSetting, WellnessBucket
-from .utils import OpenAIUtils, ACRCloudUtils
+from .models import WellnessBucket
+from .utils import OpenAIUtils, ACRCloudUtils, RevAIUtils
 from rest_framework import serializers
 
 def channel_to_dict(channel):
@@ -75,12 +75,16 @@ class GeneralSettingSerializer(serializers.Serializer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._openai_email = None
+        self._validation_error_occurred = False
 
     def validate_openai_api_key(self, value):
         """Validate OpenAI API key if provided and extract email for openai_org_id"""
+        if self._validation_error_occurred:
+            return value
         if value and value.strip():
             is_valid, error_message, email = OpenAIUtils.validate_api_key(value)
             if not is_valid:
+                self._validation_error_occurred = True
                 raise serializers.ValidationError(error_message or 'Invalid OpenAI API key')
             # Store email in instance variable for later use in validate method
             if email:
@@ -89,10 +93,24 @@ class GeneralSettingSerializer(serializers.Serializer):
     
     def validate_acr_cloud_api_key(self, value):
         """Validate ACR Cloud API key if provided"""
+        if self._validation_error_occurred:
+            return value
         if value and value.strip():
             is_valid, error_message = ACRCloudUtils.validate_api_key(value)
             if not is_valid:
+                self._validation_error_occurred = True
                 raise serializers.ValidationError(error_message or 'Invalid ACR Cloud API key')
+        return value
+    
+    def validate_revai_access_token(self, value):
+        """Validate Rev.ai access token if provided"""
+        if self._validation_error_occurred:
+            return value
+        if value and value.strip():
+            is_valid, error_message = RevAIUtils.validate_api_key(value)
+            if not is_valid:
+                self._validation_error_occurred = True
+                raise serializers.ValidationError(error_message or 'Invalid Rev.ai access token')
         return value
     
     def validate(self, attrs):

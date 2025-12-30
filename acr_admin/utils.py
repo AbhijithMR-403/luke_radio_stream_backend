@@ -73,6 +73,41 @@ class ACRCloudUtils:
                 return False, f"Unexpected response from ACR Cloud API: {response.status_code}"
         except requests.exceptions.RequestException as e:
             return False, f"Failed to validate API key: {str(e)}"
+
+
+class RevAIUtils:
+    @staticmethod
+    def validate_api_key(access_token: str):
+        """
+        Validates Rev.ai access token by calling the /speechtotext/v1/vocabularies endpoint.
+        Returns (is_valid: bool, error_message: str or None)
+        """
+        if not access_token or not access_token.strip():
+            return False, "Rev.ai access token cannot be empty"
+        
+        url = "https://api.rev.ai/speechtotext/v1/vocabularies?limit=0"
+        headers = {
+            "Authorization": f"Bearer {access_token.strip()}"
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                return True, None
+            elif response.status_code == 401 or response.status_code == 403:
+                try:
+                    error_data = response.json()
+                    error_message = error_data.get('error', {}).get('message', 'Invalid access token')
+                    if not error_message:
+                        error_message = error_data.get('message', 'Invalid access token')
+                    return False, error_message or 'Invalid Rev.ai access token'
+                except:
+                    return False, "Invalid Rev.ai access token provided"
+            else:
+                return False, f"Unexpected response from Rev.ai API: {response.status_code}"
+        except requests.exceptions.RequestException as e:
+            return False, f"Failed to validate access token: {str(e)}"
     
     @staticmethod
     def get_channel_name_by_id(pid: int, channel_id, access_token: str = None):

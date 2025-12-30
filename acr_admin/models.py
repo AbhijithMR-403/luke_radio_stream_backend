@@ -115,6 +115,11 @@ class GeneralSetting(models.Model):
     def __str__(self):
         return "General Settings"
 
+    class Meta:
+        db_table = 'general_setting'
+        verbose_name = 'General Setting'
+        verbose_name_plural = 'General Settings'
+
 
 class WellnessBucket(models.Model):
     CATEGORY_CHOICES = [
@@ -133,4 +138,9 @@ class WellnessBucket(models.Model):
 
     def __str__(self):
         return f"Bucket {self.id} - {self.title}"
+
+    class Meta:
+        db_table = 'wellness_bucket'
+        verbose_name = 'Wellness Bucket'
+        verbose_name_plural = 'Wellness Buckets'
 
