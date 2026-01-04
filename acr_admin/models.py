@@ -1,7 +1,6 @@
-from datetime import datetime, timedelta
 from django.db import models
 from django.core.exceptions import ValidationError
-from django.core.validators import RegexValidator
+from django.conf import settings
 from encrypted_model_fields.fields import EncryptedTextField
 from zoneinfo import ZoneInfo
 
@@ -50,8 +49,6 @@ class GeneralSetting(models.Model):
     iab_topics_prompt = models.TextField()
 
 
-    updated_at = models.DateTimeField(auto_now=True)
-
     # --- Added fields for bucket and radio segment classification ---
     bucket_prompt = models.TextField(
         help_text="Prompt describing the definitions and classification rules for wellness buckets.",
@@ -83,16 +80,6 @@ class GeneralSetting(models.Model):
         help_text="ChatGPT top_p parameter.",
         null=True, blank=True
     )
-    chatgpt_frequency_penalty = models.FloatField(
-        default=0.0,
-        help_text="ChatGPT frequency penalty parameter.",
-        null=True, blank=True
-    )
-    chatgpt_presence_penalty = models.FloatField(
-        default=0.0,
-        help_text="ChatGPT presence penalty parameter.",
-        null=True, blank=True
-    )
     determine_radio_content_type_prompt = models.TextField(
         help_text="Prompt for determining radio content type from transcript.",
         null=True, blank=True
@@ -101,24 +88,61 @@ class GeneralSetting(models.Model):
         help_text="Prompt for determining general content type from transcript.",
         null=True, blank=True
     )
-    # Remove later
-    radio_segment_types = models.TextField(
-        help_text="Comma-separated list of radio segment/content types.",
-        null=True, blank=True
-    )
     radio_segment_error_rate = models.PositiveIntegerField(
         default=80,
         help_text="Minimum accuracy percentage required for radio segment classification (e.g., 80).",
         null=True, blank=True
     )
 
+    # Versioning fields
+    version = models.PositiveIntegerField(
+        default=1,
+        help_text="Version number for this settings configuration."
+    )
+    is_active = models.BooleanField(
+        default=False,
+        help_text="Whether this version is currently active. Only one version can be active at a time."
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='general_settings_created',
+        help_text="User who created this version."
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Timestamp when this version was created."
+    )
+    change_reason = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Optional reason for creating this version."
+    )
+    parent_version = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='child_versions',
+        help_text="Previous version that this version was created from."
+    )
+
     def __str__(self):
-        return "General Settings"
+        return f"General Settings v{self.version}"
 
     class Meta:
         db_table = 'general_setting'
         verbose_name = 'General Setting'
         verbose_name_plural = 'General Settings'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['is_active'],
+                condition=models.Q(is_active=True),
+                name='only_one_active_general_setting'
+            )
+        ]
 
 
 class WellnessBucket(models.Model):
@@ -135,6 +159,29 @@ class WellnessBucket(models.Model):
         choices=CATEGORY_CHOICES,
         help_text="Category for dashboard classification"
     )
+    
+    general_setting = models.ForeignKey(
+        GeneralSetting,
+        on_delete=models.CASCADE,
+        related_name='wellness_buckets',
+        help_text="General settings version this bucket belongs to."
+    )
+    source_bucket_id = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='cloned_buckets',
+        help_text="Original bucket ID when this bucket was cloned."
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Timestamp when this bucket was created."
+    )
+    is_deleted = models.BooleanField(
+        default=False,
+        help_text="Soft delete flag for this bucket."
+    )
 
     def __str__(self):
         return f"Bucket {self.id} - {self.title}"
@@ -143,4 +190,11 @@ class WellnessBucket(models.Model):
         db_table = 'wellness_bucket'
         verbose_name = 'Wellness Bucket'
         verbose_name_plural = 'Wellness Buckets'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['general_setting', 'title'],
+                condition=models.Q(is_deleted=False),
+                name='unique_bucket_title_per_version'
+            )
+        ]
 

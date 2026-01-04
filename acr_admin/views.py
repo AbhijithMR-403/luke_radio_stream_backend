@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAdminUser
 
 from .models import Channel, GeneralSetting, WellnessBucket
 from .utils import ACRCloudUtils
@@ -11,9 +12,11 @@ from .serializer import (
     channel_to_dict, 
     general_setting_to_dict, 
     wellness_bucket_to_dict,
-    SettingsAndBucketsSerializer
+    SettingsAndBucketsSerializer,
+    SettingsAndBucketsResponseSerializer
 )
 from .service import SettingsAndBucketsService
+from .repositories import GeneralSettingService
 from config.validation import ValidationUtils
 import json
 from django.views import View
@@ -21,13 +24,26 @@ from django.utils.decorators import method_decorator
 
 
 class SettingsAndBucketsView(APIView):
+    permission_classes = [IsAdminUser]
     def get(self, request, *args, **kwargs):
         try:
-            settings_obj = GeneralSetting.objects.first()
-            settings_data = general_setting_to_dict(settings_obj) if settings_obj else None
-            buckets = WellnessBucket.objects.all()
-            buckets_data = [wellness_bucket_to_dict(b) for b in buckets]
-            return Response({'success': True, 'settings': settings_data, 'buckets': buckets_data})
+            # Get the active settings version
+            settings_obj = GeneralSetting.objects.filter(is_active=True).first()
+            
+            # Get buckets for the active settings (non-deleted only)
+            if settings_obj:
+                buckets = settings_obj.wellness_buckets.filter(is_deleted=False)
+            else:
+                buckets = WellnessBucket.objects.none()
+            
+            # Use serializer for response
+            response_data = {
+                'settings': settings_obj,
+                'buckets': buckets
+            }
+            serializer = SettingsAndBucketsResponseSerializer(response_data)
+            
+            return Response({'success': True, **serializer.data})
         except Exception as e:
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -55,6 +71,57 @@ class SettingsAndBucketsView(APIView):
                 'settings': result['settings'],
                 'buckets': result['buckets']
             })
+        except ValidationError as ve:
+            # Handle validation errors from service layer
+            return Response(
+                {'success': False, 'error': str(ve)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def post(self, request, *args, **kwargs):
+        """
+        Create a new version of settings and buckets.
+        All validation is handled by SettingsAndBucketsSerializer.
+        Business logic is handled by GeneralSettingService.create_new_version.
+        """
+        # Step 1: Validate request payload using serializer - ALL field validation happens here
+        serializer = SettingsAndBucketsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'success': False, 'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Step 2: Use repository service to create new version with validated data
+        try:
+            validated_data = serializer.validated_data
+            settings_data = validated_data.get('settings') or {}
+            buckets_data = validated_data.get('buckets', [])
+            change_reason = validated_data.get('change_reason')
+            user = request.user if request.user.is_authenticated else None
+            
+            # Create new version using repository method
+            new_setting = GeneralSettingService.create_new_version(
+                settings_data=settings_data,
+                buckets_data=buckets_data,
+                user=user,
+                change_reason=change_reason
+            )
+            
+            # Get buckets for the new version
+            buckets = new_setting.wellness_buckets.filter(is_deleted=False)
+            buckets_data = [wellness_bucket_to_dict(b) for b in buckets]
+            
+            return Response({
+                'success': True,
+                'settings': general_setting_to_dict(new_setting),
+                'buckets': buckets_data
+            }, status=status.HTTP_201_CREATED)
         except ValidationError as ve:
             # Handle validation errors from service layer
             return Response(

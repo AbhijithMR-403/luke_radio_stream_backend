@@ -38,6 +38,47 @@ class OpenAIUtils:
                 return False, f"Unexpected response from OpenAI API: {response.status_code}", None
         except requests.exceptions.RequestException as e:
             return False, f"Failed to validate API key: {str(e)}", None
+    
+    @staticmethod
+    def validate_model(model: str, api_key: str):
+        """
+        Validates OpenAI model by calling the /v1/models/{model} endpoint.
+        Returns (is_valid: bool, error_message: str or None)
+        """
+        if not model or not model.strip():
+            return False, "Model name cannot be empty"
+        
+        if not api_key or not api_key.strip():
+            return False, "OpenAI API key is required to validate the model"
+        
+        url = f"https://api.openai.com/v1/models/{model.strip()}"
+        headers = {
+            "Authorization": f"Bearer {api_key.strip()}"
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                return True, None
+            elif response.status_code == 401:
+                try:
+                    error_data = response.json()
+                    error_message = error_data.get('error', {}).get('message', 'Invalid API key')
+                    return False, error_message
+                except:
+                    return False, "Invalid API key provided"
+            elif response.status_code == 404:
+                return False, f"Model '{model}' not found or not available with this API key"
+            else:
+                try:
+                    error_data = response.json()
+                    error_message = error_data.get('error', {}).get('message', f"Unexpected response: {response.status_code}")
+                    return False, error_message
+                except:
+                    return False, f"Unexpected response from OpenAI API: {response.status_code}"
+        except requests.exceptions.RequestException as e:
+            return False, f"Failed to validate model: {str(e)}"
 
 
 class ACRCloudUtils:
@@ -98,9 +139,9 @@ class RevAIUtils:
             elif response.status_code == 401 or response.status_code == 403:
                 try:
                     error_data = response.json()
-                    error_message = error_data.get('error', {}).get('message', 'Invalid access token')
+                    error_message = error_data.get('error', {}).get('message', 'Invalid Rev.ai access token')
                     if not error_message:
-                        error_message = error_data.get('message', 'Invalid access token')
+                        error_message = error_data.get('message', 'Invalid Rev.ai access token')
                     return False, error_message or 'Invalid Rev.ai access token'
                 except:
                     return False, "Invalid Rev.ai access token provided"
