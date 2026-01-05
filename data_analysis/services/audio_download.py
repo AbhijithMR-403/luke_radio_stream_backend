@@ -2,7 +2,7 @@ import os
 import requests
 from datetime import datetime
 from django.core.exceptions import ValidationError
-from acr_admin.models import GeneralSetting
+from acr_admin.repositories import GeneralSettingService
 from data_analysis.models import AudioSegments
 
 
@@ -84,7 +84,7 @@ class ACRCloudAudioDownloader:
             return media_url
         
         # No existing file found, proceed with download
-        settings = GeneralSetting.objects.first()
+        settings = GeneralSettingService.get_active_setting(include_buckets=False)
         if not settings or not settings.acr_cloud_api_key:
             raise ValueError("ACRCloud API key not configured")
         token = settings.acr_cloud_api_key

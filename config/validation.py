@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError
-from acr_admin.models import GeneralSetting, Channel
+from acr_admin.models import Channel
+from acr_admin.repositories import GeneralSettingService
 from zoneinfo import ZoneInfo
 from datetime import datetime
 
@@ -18,7 +19,7 @@ class ValidationUtils:
     @staticmethod
     def validate_settings_exist():
         """Validate that GeneralSetting exists"""
-        settings = GeneralSetting.objects.first()
+        settings = GeneralSettingService.get_active_setting(include_buckets=False)
         if not settings:
             raise ValidationError("GeneralSetting not found. Please configure the application settings.")
         return settings

@@ -25,7 +25,7 @@ from data_analysis.audio_segments_helpers import (
 )
 from data_analysis.serializers import AudioSegmentsSerializer
 from data_analysis.repositories import AudioSegmentDAO
-from acr_admin.models import GeneralSetting
+from acr_admin.repositories import GeneralSettingService
 
 
 class ListAudioSegmentsV2View(APIView):
@@ -378,7 +378,7 @@ class ContentTypePromptView(APIView):
     def get(self, request, *args, **kwargs):
         try:
             # Get GeneralSetting object
-            settings_obj = GeneralSetting.objects.first()
+            settings_obj = GeneralSettingService.get_active_setting(include_buckets=False)
             
             if not settings_obj:
                 return Response({

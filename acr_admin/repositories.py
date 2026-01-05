@@ -1,11 +1,43 @@
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Prefetch, Q
 from django.core.exceptions import ValidationError
 
 from .models import GeneralSetting, WellnessBucket
 
 
 class GeneralSettingService:
+
+    @staticmethod
+    def get_active_setting(
+        include_buckets: bool = True,
+        exclude_deleted_buckets: bool = True,
+    ):
+        """
+        Internal method to fetch the active GeneralSetting row with optional bucket prefetching.
+        
+        Args:
+            include_buckets: If True, prefetches related wellness_buckets. Defaults to True.
+            exclude_deleted_buckets: If True, excludes deleted buckets (is_deleted=True).
+                                    Only applies when include_buckets=True. Defaults to True.
+        
+        Returns:
+            GeneralSetting instance if found, None otherwise.
+            If include_buckets=True, buckets are accessible via instance.wellness_buckets.all()
+        """
+        queryset = GeneralSetting.objects.filter(is_active=True)
+        
+        # Prefetch buckets with optional filtering
+        if include_buckets:
+            bucket_queryset = WellnessBucket.objects.all()
+            
+            if exclude_deleted_buckets:
+                bucket_queryset = bucket_queryset.filter(is_deleted=False)
+            
+            queryset = queryset.prefetch_related(
+                Prefetch('wellness_buckets', queryset=bucket_queryset)
+            )
+        
+        return queryset.first()
 
     @staticmethod
     @transaction.atomic
@@ -147,3 +179,5 @@ class GeneralSettingService:
         new_setting.save(update_fields=["is_active"])
 
         return new_setting
+
+
