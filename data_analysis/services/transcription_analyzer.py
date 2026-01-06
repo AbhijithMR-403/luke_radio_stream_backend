@@ -4,7 +4,8 @@ from typing import Optional
 import os
 from django.utils import timezone
 from decouple import config
-from acr_admin.models import GeneralSetting, Channel, WellnessBucket
+from acr_admin.models import Channel, WellnessBucket
+from acr_admin.repositories import GeneralSettingService
 from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
@@ -16,15 +17,25 @@ class TranscriptionAnalyzer:
     @staticmethod
     def get_bucket_prompt():
         """
-        Fetches all wellness buckets and constructs a prompt string.
+        Fetches wellness buckets from the active GeneralSetting and constructs a prompt string.
         Returns the constructed prompt or None if no buckets are found.
         """
         try:
-            # Fetch all wellness buckets
-            buckets = WellnessBucket.objects.all()
+            # Fetch active GeneralSetting with buckets
+            active_setting = GeneralSettingService.get_active_setting(
+                include_buckets=True,
+                exclude_deleted_buckets=True
+            )
             
-            if not buckets.exists():
-                print("No wellness buckets found")
+            if not active_setting:
+                print("No active GeneralSetting found")
+                return None
+            
+            # Get buckets from the active setting
+            buckets = active_setting.wellness_buckets.all()
+            
+            if not buckets:
+                print("No wellness buckets found in active setting")
                 return None
             
             prompt_intro = "Where"
