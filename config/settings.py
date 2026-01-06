@@ -51,7 +51,8 @@ INSTALLED_APPS = [
     "segmentor",
     "shift_analysis",
     "logger",
-    "audio_policy"
+    "audio_policy",
+    "acr_cloud"
 ]
 
 MIDDLEWARE = [
