@@ -176,7 +176,7 @@ class TranscriptionAnalyzer:
 
         def chat_params(prompt, transcript, max_tokens):
             return {
-                "model": settings.chatgpt_model or "gpt-3.5-turbo",
+                "model": settings.chatgpt_model,
                 "messages": [
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": transcript}
@@ -184,8 +184,6 @@ class TranscriptionAnalyzer:
                 "max_tokens": max_tokens if max_tokens > 0 else None,
                 "temperature": settings.chatgpt_temperature,
                 "top_p": settings.chatgpt_top_p,
-                "frequency_penalty": settings.chatgpt_frequency_penalty,
-                "presence_penalty": settings.chatgpt_presence_penalty,
             }
 
         # Summary
