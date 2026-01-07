@@ -803,38 +803,72 @@ def check_flag_conditions(segment, flag_condition):
         if flag_condition.target_sentiments is not None:
             matches_target = sentiment_value == flag_condition.target_sentiments
         
-        # Check if value is within the overall bounds defined by min_lower and max_upper
-        # Only check range if at least one bound is set
-        has_range_config = any([
-            flag_condition.sentiment_min_lower is not None,
-            flag_condition.sentiment_min_upper is not None,
-            flag_condition.sentiment_max_lower is not None,
-            flag_condition.sentiment_max_upper is not None,
-        ])
-        
+        # Check if value is within configured ranges
+        # The fields define two potential ranges:
+        # - min_range: [sentiment_min_lower, sentiment_min_upper]
+        # - max_range: [sentiment_max_lower, sentiment_max_upper]
+        # Flag if sentiment falls within either range
         in_range = False
-        if has_range_config:
-            meets_min_lower = flag_condition.sentiment_min_lower is None or sentiment_value >= flag_condition.sentiment_min_lower
-            meets_max_upper = flag_condition.sentiment_max_upper is None or sentiment_value <= flag_condition.sentiment_max_upper
-            
-            # Basic range check: value must be >= min_lower (if set) and <= max_upper (if set)
-            in_range = meets_min_lower and meets_max_upper
-            
-            # Check if there's a valid overlapping range with intermediate bounds
-            if in_range and (flag_condition.sentiment_min_upper is not None or flag_condition.sentiment_max_lower is not None):
-                # If both intermediate bounds are set, check if there's a valid overlapping range
-                if (flag_condition.sentiment_min_upper is not None and 
-                    flag_condition.sentiment_max_lower is not None):
-                    # Value should be in the overlap region or within outer bounds
-                    # Overlap exists if min_upper <= max_lower
-                    if flag_condition.sentiment_min_upper <= flag_condition.sentiment_max_lower:
-                        # Value is valid if it's in the overlap or within the outer bounds
-                        in_overlap = (sentiment_value >= flag_condition.sentiment_min_upper and 
-                                     sentiment_value <= flag_condition.sentiment_max_lower)
-                        in_range = in_overlap or (meets_min_lower and meets_max_upper)
-                    else:
-                        # No valid range if min_upper > max_lower
-                        in_range = False
+        matched_ranges = []
+        
+        # Check min range: [sentiment_min_lower, sentiment_min_upper]
+        if (flag_condition.sentiment_min_lower is not None and 
+            flag_condition.sentiment_min_upper is not None):
+            # Only flag if range is meaningful (not 0-100 which would match everything)
+            if not (flag_condition.sentiment_min_lower == 0.0 and flag_condition.sentiment_min_upper == 100.0):
+                if (sentiment_value >= flag_condition.sentiment_min_lower and 
+                    sentiment_value <= flag_condition.sentiment_min_upper):
+                    in_range = True
+                    matched_ranges.append(f"[{flag_condition.sentiment_min_lower}, {flag_condition.sentiment_min_upper}]")
+        elif flag_condition.sentiment_min_lower is not None:
+            # Only lower bound set - check if value >= lower bound
+            # Only flag if it's not 0 (which would match everything)
+            if flag_condition.sentiment_min_lower > 0.0:
+                if sentiment_value >= flag_condition.sentiment_min_lower:
+                    in_range = True
+                    matched_ranges.append(f">= {flag_condition.sentiment_min_lower}")
+        elif flag_condition.sentiment_min_upper is not None:
+            # Only upper bound set - check if value <= upper bound
+            # Only flag if it's not 100 (which would match everything)
+            if flag_condition.sentiment_min_upper < 100.0:
+                if sentiment_value <= flag_condition.sentiment_min_upper:
+                    in_range = True
+                    matched_ranges.append(f"<= {flag_condition.sentiment_min_upper}")
+        
+        # Check max range: [sentiment_max_lower, sentiment_max_upper]
+        if (flag_condition.sentiment_max_lower is not None and 
+            flag_condition.sentiment_max_upper is not None):
+            # Only flag if range is meaningful (not 0-100 which would match everything)
+            if not (flag_condition.sentiment_max_lower == 0.0 and flag_condition.sentiment_max_upper == 100.0):
+                if (sentiment_value >= flag_condition.sentiment_max_lower and 
+                    sentiment_value <= flag_condition.sentiment_max_upper):
+                    in_range = True
+                    matched_ranges.append(f"[{flag_condition.sentiment_max_lower}, {flag_condition.sentiment_max_upper}]")
+        elif flag_condition.sentiment_max_lower is not None:
+            # Only lower bound set - check if value >= lower bound
+            # Only flag if it's not 0 (which would match everything)
+            if flag_condition.sentiment_max_lower > 0.0:
+                if sentiment_value >= flag_condition.sentiment_max_lower:
+                    in_range = True
+                    matched_ranges.append(f">= {flag_condition.sentiment_max_lower}")
+        elif flag_condition.sentiment_max_upper is not None:
+            # Only upper bound set - check if value <= upper bound
+            # Only flag if it's not 100 (which would match everything)
+            if flag_condition.sentiment_max_upper < 100.0:
+                if sentiment_value <= flag_condition.sentiment_max_upper:
+                    in_range = True
+                    matched_ranges.append(f"<= {flag_condition.sentiment_max_upper}")
+        
+        # Special case: if only outer bounds are set (min_lower and max_upper)
+        # Only flag if they don't span the full 0-100 range
+        if (not in_range and 
+            flag_condition.sentiment_min_lower is not None and 
+            flag_condition.sentiment_max_upper is not None and
+            not (flag_condition.sentiment_min_lower == 0.0 and flag_condition.sentiment_max_upper == 100.0)):
+            if (sentiment_value >= flag_condition.sentiment_min_lower and 
+                sentiment_value <= flag_condition.sentiment_max_upper):
+                in_range = True
+                matched_ranges.append(f"[{flag_condition.sentiment_min_lower}, {flag_condition.sentiment_max_upper}]")
         
         # Trigger if matches target sentiments OR is within range
         triggered = matches_target or in_range
@@ -844,14 +878,8 @@ def check_flag_conditions(segment, flag_condition):
             msg_parts = []
             if matches_target:
                 msg_parts.append("matches target sentiment value")
-            if in_range:
-                range_msg = []
-                if flag_condition.sentiment_min_lower is not None:
-                    range_msg.append(f">= {flag_condition.sentiment_min_lower}")
-                if flag_condition.sentiment_max_upper is not None:
-                    range_msg.append(f"<= {flag_condition.sentiment_max_upper}")
-                if range_msg:
-                    msg_parts.append(f"within configured range ({' and '.join(range_msg)})")
+            if in_range and matched_ranges:
+                msg_parts.append(f"within configured range ({', '.join(matched_ranges)})")
             message = f"Sentiment {sentiment_value} {' and '.join(msg_parts)}"
         else:
             message = f"Sentiment {sentiment_value} does not match target sentiments or configured range"
