@@ -413,7 +413,6 @@ class WordCountView(APIView):
     """
     API endpoint to get word counts from transcriptions
     """
-    parser_classes = [JSONParser]
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):

@@ -1,15 +1,16 @@
 from typing import List, Dict, Optional, Iterator
 from datetime import datetime
 from django.db.models import Q
-import re
 from collections import Counter
+import re
 import nltk
 from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.tag import pos_tag
 
 from data_analysis.models import TranscriptionDetail
 from shift_analysis.models import Shift
+
+# Regex pattern for extracting words (3+ alphabetic characters)
+WORD_RE = re.compile(r"[a-zA-Z]{4,}")
 
 # Download required NLTK resources if not already downloaded (idempotent)
 # Each resource is checked and downloaded separately to prevent LookupError in minimal environments
@@ -18,26 +19,24 @@ try:
 except LookupError:
     nltk.download('stopwords', quiet=True)
 
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
-
-try:
-    nltk.data.find('taggers/averaged_perceptron_tagger')
-except LookupError:
-    nltk.download('averaged_perceptron_tagger', quiet=True)
-
-try:
-    nltk.data.find('taggers/universal_tagset')
-except LookupError:
-    nltk.download('universal_tagset', quiet=True)
-
 
 class WordCountService:
     """
     Service class for counting word occurrences in transcriptions
     """
+    
+    # Low-information words to filter out
+    LOW_INFORMATION_WORDS = {
+        'also', 'still', 'another', 'else', 'since', 'yet', 'instead',
+        'based', 'recently', 'personally', 'alone', 'along', 'across',
+        'toward', 'started', 'giving', 'gets', 'tried', 'taken', 'played',
+        'helped', 'helping', 'released', 'joining', 'looked', 'seeing',
+        'learned', 'realize', 'happened', 'moved', 'sitting', 'flying', 'going', 'need', 'said',
+        'know', 'think', 'would', 'could', 'look', 'says',
+        'even', 'maybe', 'kind', 'cause', 'thank', 'ever', 'mean',
+        'something', 'everything', 'someone', 'anything', 'nothing',
+        'stuff', 'sort', 'probably', 'though', 'whatever'
+    }
     
     # Use NLTK's comprehensive English stop words, plus additional filters for transcriptions
     STOP_WORDS = set(stopwords.words('english'))
@@ -57,6 +56,8 @@ class WordCountService:
         "don't", "won't", "can't", "wouldn't", "shouldn't", "couldn't", "isn't", "aren't",
         "wasn't", "weren't", "hasn't", "haven't", "hadn't", "doesn't", "didn't"
     })
+    # Add low-information words
+    STOP_WORDS.update(LOW_INFORMATION_WORDS)
 
     @staticmethod
     def _convert_shift_q_for_transcription_detail(q_obj: Q) -> Q:
@@ -141,51 +142,22 @@ class WordCountService:
     @staticmethod
     def extract_words_from_text(text: str) -> List[str]:
         """
-        Extract meaningful words from text using NLTK POS tagging.
-        Only keeps nouns and adjectives to focus on content words.
+        Extract meaningful words from text using regex tokenization.
         
         Args:
             text: Text to extract words from
         
         Returns:
-            List of words (lowercased, filtered to nouns and adjectives only)
+            List of words (lowercased, filtered)
         """
         if not text:
             return []
         
-        # Tokenize the text using NLTK
-        tokens = word_tokenize(text)
+        # Extract words using regex (already lowercased, 3+ alphabetic characters)
+        tokens = WORD_RE.findall(text.lower())
         
-        # Tag tokens with POS tags using universal tagset
-        tagged_tokens = pos_tag(tokens, tagset='universal')
-        
-        # Filter words: only keep nouns and adjectives
-        filtered_words = []
-        for word, tag in tagged_tokens:
-            # Only keep nouns (NOUN) and adjectives (ADJ)
-            if tag not in ('NOUN', 'ADJ'):
-                continue
-            
-            # Convert to lowercase for consistent counting
-            word = word.lower()
-            
-            # Skip words with fewer than 3 characters
-            if len(word) < 3:
-                continue
-            
-            # Skip if word is purely numeric
-            if word.isdigit():
-                continue
-            
-            # Skip if word is in stop words
-            if word in WordCountService.STOP_WORDS:
-                continue
-            
-            # Skip if word contains only numbers and apostrophes (like '123')
-            if re.match(r"^[\d']+$", word):
-                continue
-            
-            filtered_words.append(word)
+        # Filter out stop words
+        filtered_words = [word for word in tokens if word not in WordCountService.STOP_WORDS]
         
         return filtered_words
 
