@@ -49,6 +49,7 @@ class ListAudioSegmentsV2View(APIView):
     - page_size (optional): Hours per page (default: 1)
     - search_text (optional): Text to search for
     - search_in (optional): Field to search in - must be one of: 'transcription', 'general_topics', 'iab_topics', 'bucket_prompt', 'summary', 'content_type_prompt', 'title'
+      Note: When both search_text and search_in are provided, pagination is skipped and all matching segments are returned
     - show_flagged_only (optional): When set to 'true', returns only segments that have triggered flag thresholds
     
     Flagging:
@@ -249,6 +250,79 @@ class ListAudioSegmentsV2View(APIView):
                                 flagged_segments.append(seg)
                                 break
                     all_segments = flagged_segments
+                
+                # Build response without pagination
+                response_data = AudioSegmentsSerializer.build_response(all_segments, channel)
+                from config.validation import TimezoneUtils
+                response_data['pagination'] = {
+                    'current_page': 1,
+                    'page_size': params['page_size'],
+                    'available_pages': [],
+                    'total_pages': 0,
+                    'time_range': {
+                        'start': TimezoneUtils.convert_to_channel_tz(params['base_start_dt'], channel.timezone),
+                        'end': TimezoneUtils.convert_to_channel_tz(params['base_end_dt'], channel.timezone)
+                    }
+                }
+                response_data['has_data'] = len(all_segments) > 0
+                
+                return Response(response_data)
+            
+            # Step 3.6: Handle search mode - skip pagination when both search_in and search_text are present
+            if params.get('search_text') and params.get('search_in'):
+                # Use full time range (no pagination)
+                current_page_start = params['base_start_dt']
+                current_page_end = params['base_end_dt']
+                is_last_page = True
+                
+                # Build base query for entire time range
+                base_query = build_base_query(
+                    channel, 
+                    current_page_start, 
+                    current_page_end, 
+                    valid_windows, 
+                    is_last_page, 
+                    None,  # duration (not used in v2)
+                    params.get('status'), 
+                    None,  # recognition_status (not used in v2)
+                    None   # has_content (not used in v2)
+                )
+                
+                # Apply search filters
+                base_query = apply_search_filters(base_query, params['search_text'], params['search_in'])
+                
+                # Apply content_type filtering if provided
+                if params.get('content_type'):
+                    base_query = apply_content_type_filter(base_query, params['content_type'])
+                
+                # Execute the query
+                db_segments = base_query.order_by('start_time')
+                
+                # Serialize segments
+                all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments, channel.timezone)
+                
+                # Add flags to all segments (duration and FlagCondition)
+                threshold = None
+                if shift and getattr(shift, 'flag_seconds', None) is not None:
+                    try:
+                        threshold = int(shift.flag_seconds)
+                    except Exception:
+                        threshold = None
+                
+                # Apply duration flags if threshold is set
+                if threshold is not None:
+                    for seg in all_segments:
+                        duration = seg.get('duration_seconds') or 0
+                        exceeded = bool(duration > threshold)
+                        message = f"Duration exceeded limit by {int(duration - threshold)} seconds" if exceeded else ""
+                        seg.setdefault('flag', {})
+                        seg['flag']['duration'] = {
+                            'flagged': exceeded,
+                            'message': message
+                        }
+                
+                # Apply FlagCondition flags
+                all_segments = apply_flag_conditions_to_segments(all_segments, channel)
                 
                 # Build response without pagination
                 response_data = AudioSegmentsSerializer.build_response(all_segments, channel)
