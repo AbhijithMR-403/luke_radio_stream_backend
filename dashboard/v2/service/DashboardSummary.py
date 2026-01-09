@@ -19,68 +19,56 @@ class SummaryService:
     """
 
     @staticmethod
-    def _parse_sentiment_score(sentiment_value: str) -> Optional[int]:
-        """
-        Parse sentiment value from string to integer.
-        
-        Args:
-            sentiment_value: Sentiment value as string
-        
-        Returns:
-            Integer sentiment score or None if parsing fails
-        """
+    def _parse_sentiment_score(sentiment_value: Any) -> Optional[float]:
         if not sentiment_value:
             return None
         
         try:
+            if isinstance(sentiment_value, (int, float)):
+                return float(sentiment_value)
             if isinstance(sentiment_value, str):
                 sentiment_value = sentiment_value.strip()
-            return int(sentiment_value)
+                if not sentiment_value:
+                    return None
+                return float(sentiment_value)
         except (ValueError, TypeError):
-            return None
+            import re
+            numbers = re.findall(r'-?\d+\.?\d*', str(sentiment_value))
+            if numbers:
+                try:
+                    return float(numbers[0])
+                except (ValueError, TypeError):
+                    pass
+        return None
 
     @staticmethod
     def get_average_sentiment(
         audio_segments: Iterable[AudioSegments],
     ) -> Optional[float]:
-        """
-        Calculate average sentiment using duration-weighted formula.
-        Formula: Average Sentiment = Sum of (Score × Duration) / Total Duration
-        
-        Args:
-            audio_segments: List of AudioSegments with transcription_detail and analysis loaded
-        
-        Returns:
-            Average sentiment score (rounded to 3 decimal places) or None if no data
-        """
-        total_weighted_sentiment = 0
-        total_duration = 0
+        total_weighted_sentiment = 0.0
+        total_duration = 0.0
         
         for segment in audio_segments:
-            # Check if segment has transcription_detail and analysis
-            if not hasattr(segment, 'transcription_detail') or not segment.transcription_detail:
+            try:
+                transcription_detail = segment.transcription_detail
+                if not transcription_detail:
+                    continue
+                
+                analysis = transcription_detail.analysis
+                if not analysis or not analysis.sentiment:
+                    continue
+                
+                score = SummaryService._parse_sentiment_score(analysis.sentiment)
+                if score is None:
+                    continue
+                
+                duration_seconds = float(segment.duration_seconds) if segment.duration_seconds else 0.0
+                if duration_seconds > 0:
+                    total_weighted_sentiment += score * duration_seconds
+                    total_duration += duration_seconds
+            except (AttributeError, TypeError, ValueError):
                 continue
-            
-            transcription_detail = segment.transcription_detail
-            if not hasattr(transcription_detail, 'analysis') or not transcription_detail.analysis:
-                continue
-            
-            analysis = transcription_detail.analysis
-            if not analysis.sentiment:
-                continue
-            
-            score = SummaryService._parse_sentiment_score(analysis.sentiment)
-            if score is None:
-                continue
-            
-            # Get duration from audio segment
-            duration_seconds = segment.duration_seconds or 0
-            
-            if duration_seconds > 0:
-                # Calculate weighted sentiment: sentiment_score * duration
-                total_weighted_sentiment += score * duration_seconds
-                total_duration += duration_seconds
-        
+        print(total_weighted_sentiment, total_duration)
         if total_duration > 0:
             return round(total_weighted_sentiment / total_duration, 3)
         
@@ -461,7 +449,7 @@ class SummaryService:
                     'max_upper': sentiment_max_upper
                 }
             },
-            'segment_count': len(audio_segments),
+            'analyzed_segment_count': len(audio_segments),
             'total_talk_break': total_talk_break
         }
 

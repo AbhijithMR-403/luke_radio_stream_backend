@@ -22,7 +22,7 @@ class CSVExportService:
         shift_id: Optional[int] = None
     ) -> List[TranscriptionAnalysis]:
         """
-        Get TranscriptionAnalysis records filtered by date range, channel, and optional shift.
+        Get TranscriptionAnalysis records filtered by date range, channel, active status, and optional shift.
         
         Args:
             start_dt: Start datetime (timezone-aware)
@@ -31,13 +31,14 @@ class CSVExportService:
             shift_id: Optional shift ID to filter by
         
         Returns:
-            QuerySet of TranscriptionAnalysis records ordered by start_time
+            QuerySet of TranscriptionAnalysis records with active audio segments, ordered by start_time
         """
-        # Build Q object for filtering by date range and channel
+        # Build Q object for filtering by date range, channel, and active status
         base_q = Q(
             transcription_detail__audio_segment__start_time__gte=start_dt,
             transcription_detail__audio_segment__start_time__lte=end_dt,
-            transcription_detail__audio_segment__channel_id=channel_id
+            transcription_detail__audio_segment__channel_id=channel_id,
+            transcription_detail__audio_segment__is_active=True
         )
         
         # Apply shift filtering if shift_id is provided
