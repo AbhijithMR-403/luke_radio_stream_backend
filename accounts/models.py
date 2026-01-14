@@ -6,7 +6,7 @@ from django.utils import timezone
 from datetime import timedelta
 import random
 import string
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from config.settings import AUTH_USER_MODEL
 
 class RadioUserManager(BaseUserManager):

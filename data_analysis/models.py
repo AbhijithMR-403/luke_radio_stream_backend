@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 import json
 
-from acr_admin.models import Channel
+from core_admin.models import Channel
 
 # Create your models here.
 

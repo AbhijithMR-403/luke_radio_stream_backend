@@ -3,7 +3,7 @@ from datetime import datetime
 from django.utils import timezone
 from decouple import config
 
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from data_analysis.models import AudioSegments as AudioSegmentsModel, RevTranscriptionJob, TranscriptionQueue
 from data_analysis.services.transcription_service import RevAISpeechToText
 

@@ -1,6 +1,6 @@
 from django.core.exceptions import ValidationError
-from acr_admin.models import Channel
-from acr_admin.repositories import GeneralSettingService
+from core_admin.models import Channel
+from core_admin.repositories import GeneralSettingService
 from zoneinfo import ZoneInfo
 from datetime import datetime
 

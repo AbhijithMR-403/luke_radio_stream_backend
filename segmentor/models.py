@@ -1,5 +1,5 @@
 from django.db import models
-from acr_admin.models import Channel
+from core_admin.models import Channel
 
 # Create your models here.
 

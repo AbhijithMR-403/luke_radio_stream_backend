@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db import IntegrityError, transaction
 from .models import Shift, PredefinedFilter, FilterSchedule
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from accounts.models import RadioUser
 
 

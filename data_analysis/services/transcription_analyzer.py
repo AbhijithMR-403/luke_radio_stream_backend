@@ -4,8 +4,8 @@ from typing import Optional
 import os
 from django.utils import timezone
 from decouple import config
-from acr_admin.models import Channel, WellnessBucket
-from acr_admin.repositories import GeneralSettingService
+from core_admin.models import Channel, WellnessBucket
+from core_admin.repositories import GeneralSettingService
 from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils

@@ -9,7 +9,7 @@ from logger.serializers import (
     DurationStatisticsSerializer,
 )
 from data_analysis.models import AudioSegments as AudioSegmentsModel, RevTranscriptionJob
-from acr_admin.models import Channel
+from core_admin.models import Channel
 
 
 class AudioSegmentEditLogListView(generics.ListAPIView):

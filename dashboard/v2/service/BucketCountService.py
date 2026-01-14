@@ -5,7 +5,7 @@ from django.utils import timezone
 from collections import defaultdict
 
 from data_analysis.models import TranscriptionAnalysis
-from acr_admin.models import WellnessBucket
+from core_admin.models import WellnessBucket
 from shift_analysis.models import Shift
 
 

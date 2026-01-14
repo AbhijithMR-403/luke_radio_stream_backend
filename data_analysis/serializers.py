@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from data_analysis.models import AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionAnalysis
-from acr_admin.models import Channel
+from core_admin.models import Channel
 
 
 class TranscriptionAnalysisSerializer(serializers.Serializer):

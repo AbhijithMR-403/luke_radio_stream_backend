@@ -15,7 +15,7 @@ from .serializer import (
     CustomTokenObtainPairSerializer, ChannelSerializer
 )
 from .utils import generate_and_send_magic_link
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from django.contrib.auth import get_user_model
 
 User = get_user_model()

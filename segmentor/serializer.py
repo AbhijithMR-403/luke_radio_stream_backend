@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from acr_admin.models import Channel
+from core_admin.models import Channel
 
 from .models import AudioUnrecognizedCategory, TitleMappingRule
 

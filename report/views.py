@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from accounts.models import UserChannelAssignment
 from data_analysis.models import AudioSegments as AudioSegmentsModel, ReportFolder, SavedAudioSegment, AudioSegmentInsight
 

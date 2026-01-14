@@ -16,7 +16,7 @@ from rest_framework.permissions import IsAdminUser
 from django.conf import settings
 import re
 
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionQueue
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.tasks import analyze_transcription_task
@@ -768,10 +768,7 @@ class AudioTranscriptionAndAnalysisView(View):
                         'seconds_remaining': 120 - int(time_since_queued.total_seconds()),
                         'status': 'recently_queued'
                     }, status=400)
-                else:
-                    # More than 120 seconds have passed, allow calling transcription again
-                    print(f"More than 120 seconds passed since last queue. Allowing transcription call again for segment {segment_id}")
-                    # Continue with the transcription process below
+                # If >= 120 seconds have passed, continue with transcription process below
                     
             except TranscriptionQueue.DoesNotExist:
                 pass  # Continue with queuing
@@ -804,9 +801,7 @@ class AudioTranscriptionAndAnalysisView(View):
                     segment.is_audio_downloaded = True
                     segment.is_manually_processed = True
                     segment.save()
-                    
-                    print(f"Successfully downloaded audio for segment {segment_id} to {segment.file_path}")
-                    
+                                        
                 except Exception as download_error:
                     return JsonResponse({
                         'success': False, 
@@ -825,7 +820,6 @@ class AudioTranscriptionAndAnalysisView(View):
                     existing_queue.completed_at = None
                     existing_queue.save()
                     queue_entry = existing_queue
-                    print(f"Updated existing TranscriptionQueue entry: {queue_entry.id}")
                 else:
                     # Create new queue entry
                     queue_entry = TranscriptionQueue.objects.create(
@@ -833,9 +827,7 @@ class AudioTranscriptionAndAnalysisView(View):
                         is_transcribed=False,
                         is_analyzed=False
                     )
-                    print(f"Successfully created TranscriptionQueue entry: {queue_entry.id}")
             except Exception as db_error:
-                print(f"Database error creating/updating TranscriptionQueue: {str(db_error)}")
                 return JsonResponse({
                     'success': False, 
                     'error': f'Failed to create/update transcription queue entry: {str(db_error)}'
@@ -862,7 +854,6 @@ class AudioTranscriptionAndAnalysisView(View):
                         'error': 'Invalid file path format'
                     }, status=400)
                 
-                print(f"Calling transcription service with media_path: {media_path}")
                 
                 # Call the transcription service
                 transcription_job = RevAISpeechToText.create_transcription_job(media_path)
@@ -886,10 +877,8 @@ class AudioTranscriptionAndAnalysisView(View):
                     audio_segment=segment
                 )
                 
-                print(f"Successfully created RevTranscriptionJob: {rev_job.job_id}")
                 
             except Exception as transcription_error:
-                print(f"Transcription service error: {str(transcription_error)}")
                 # Delete the queue entry if transcription fails
                 queue_entry.delete()
                 return JsonResponse({
@@ -958,14 +947,12 @@ class RevCallbackView(View):
         
 
         action = 'created' if created else 'updated'
-        print(f'RevTranscriptionJob {action}: {job.job_id} - {job.status}')
 
         if job.status == 'transcribed':
             try:
                 parsed_url = urlparse(job_data.get('media_url'))
                 analyze_transcription_task.delay(job.pk, parsed_url.path)
             except Exception as e:
-                print(e)
                 return JsonResponse({'success': False, 'error': str(e)}, status=400)
         return JsonResponse({'success': True, 'action': action, 'job_id': job.job_id})
 

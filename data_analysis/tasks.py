@@ -9,7 +9,7 @@ from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.services.audio_segments import AudioSegments
 from data_analysis.services.audio_download import ACRCloudAudioDownloader
 from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel 
-from acr_admin.models import Channel
+from core_admin.models import Channel
 
 # Latest update download audio task
 @shared_task
@@ -81,7 +81,7 @@ def process_today_audio_data():
     """
     try:
         # Fetch all channels
-        channels = Channel.objects.filter(is_deleted=False)
+        channels = Channel.objects.filter(is_deleted=False, is_active=True, channel_type='broadcast')
         
         if not channels:
             print("No active channels found")
@@ -243,7 +243,7 @@ def process_previous_day_audio_data():
     """
     try:
         # Fetch all channels
-        channels = Channel.objects.filter(is_deleted=False)
+        channels = Channel.objects.filter(is_deleted=False, is_active=True, channel_type='broadcast')
         
         if not channels:
             print("No active channels found")
@@ -299,7 +299,7 @@ def process_previous_day_audio_data():
                         'segments': 0
                     })
                     continue
-                print(f"Processed segments: {processed_segments}")
+                print(f"Processed segments: {len(processed_segments)}")
                 # Step 3: Insert audio segments into database
                 inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
                 

@@ -2,7 +2,7 @@ import os
 import requests
 from datetime import datetime
 from django.core.exceptions import ValidationError
-from acr_admin.repositories import GeneralSettingService
+from core_admin.repositories import GeneralSettingService
 from data_analysis.models import AudioSegments
 
 
@@ -79,7 +79,6 @@ class ACRCloudAudioDownloader:
         
         # Check if file already exists
         if os.path.exists(file_path):
-            print(f"Found existing exact audio file: {filename}")
             media_url = f"/api/media/{filename}"
             return media_url
         
@@ -134,7 +133,6 @@ class ACRCloudAudioDownloader:
         
         # Process each segment
         for segment in audio_segments:
-            print(segment)
             try:
                 # Skip if already downloaded
                 if segment.is_audio_downloaded:
@@ -155,7 +153,6 @@ class ACRCloudAudioDownloader:
                 
                 # Check if file_name and file_path are present
                 if not segment.file_name or not segment.file_path:
-                    print(f"Skipping segment {segment.id}: Missing file_name or file_path")
                     results['skipped'].append({
                         'segment_id': segment.id,
                         'file_name': segment.file_name,
@@ -179,7 +176,6 @@ class ACRCloudAudioDownloader:
                         'status': 'File already existed, marked as downloaded'
                     })
                     continue
-                print("-----------------")
                 # Download the audio
                 media_url = ACRCloudAudioDownloader.download_audio(
                     project_id=project_id,
@@ -188,7 +184,6 @@ class ACRCloudAudioDownloader:
                     duration_seconds=segment.duration_seconds,
                     filepath=file_path
                 )
-                print(media_url)
                 # Update the segment
                 segment.is_audio_downloaded = True
                 segment.save()

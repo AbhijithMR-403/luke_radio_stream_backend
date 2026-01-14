@@ -5,7 +5,7 @@ import os
 import copy
 from django.utils import timezone
 from decouple import config
-from acr_admin.models import GeneralSetting, Channel
+from core_admin.models import GeneralSetting, Channel
 from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils

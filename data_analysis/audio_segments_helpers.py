@@ -6,7 +6,7 @@ This module contains all the helper functions for the AudioSegments API to keep 
 from django.http import JsonResponse
 from django.utils import timezone
 from datetime import datetime
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from data_analysis.models import AudioSegments as AudioSegmentsModel
 from data_analysis.serializers import AudioSegmentsSerializer
 from data_analysis.repositories import AudioSegmentDAO

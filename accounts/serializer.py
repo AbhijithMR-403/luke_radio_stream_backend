@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import RadioUser, UserChannelAssignment, MagicLink
-from acr_admin.models import Channel
+from core_admin.models import Channel
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:

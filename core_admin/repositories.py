@@ -62,18 +62,15 @@ class GeneralSettingService:
             .filter(is_active=True)
             .first()
         )
-        print(active_setting.version, active_setting.is_active)
 
         # Lock all rows to prevent concurrent version creation
         GeneralSetting.objects.select_for_update().values("id")
-        print(active_setting.version, active_setting.is_active)
 
         max_version = GeneralSetting.objects.aggregate(
             max_version=Max("version")
         )["max_version"] or 0
 
         next_version = max_version + 1
-        print(active_setting.version, active_setting.is_active)
 
         # Exclude fields that shouldn't be set during creation
         # These are either auto-generated or explicitly set below
@@ -85,7 +82,6 @@ class GeneralSettingService:
             k: v for k, v in settings_data.items() 
             if k not in excluded_fields
         }
-        print(active_setting.version, active_setting.is_active)
 
         # Create new settings version (inactive for now)
         new_setting = GeneralSetting.objects.create(
@@ -96,7 +92,6 @@ class GeneralSettingService:
             change_reason=change_reason,
             parent_version=active_setting,
         )
-        print(active_setting.version, active_setting.is_active)
 
         # ---- Clone buckets from active version ----
         if active_setting:

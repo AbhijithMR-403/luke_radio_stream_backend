@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAdminUser
 from django.core.exceptions import ValidationError
 
 from ..models import GeneralSetting, WellnessBucket
-from acr_admin.serializers.settings import (
+from core_admin.serializers.settings import (
     SettingsAndBucketsSerializer,
     SettingsAndBucketsResponseSerializer,
 )

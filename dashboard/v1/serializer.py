@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from data_analysis.models import TranscriptionDetail, TranscriptionAnalysis, AudioSegments, GeneralTopic
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from datetime import timedelta, datetime
@@ -987,12 +987,10 @@ def get_topic_audio_segments(topic_name, start_date_or_datetime=None, end_date_o
         dict: Audio segments data for the topic
     """
     # Build date/datetime filter if provided
-    print("+++++++++++++++++++++++++++++++")
     date_filter, start_dt, end_dt = _build_date_filter(start_date_or_datetime, end_date_or_datetime)
     
     # Get analyses with the same filtering logic as dashboard stats
     analyses_query = TranscriptionAnalysis.objects.all()
-    print(len(analyses_query))
     
     if date_filter:
         analyses_query = analyses_query.filter(transcription_detail__created_at__range=(start_dt, end_dt))

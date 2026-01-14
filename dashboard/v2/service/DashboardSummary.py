@@ -68,7 +68,6 @@ class SummaryService:
                     total_duration += duration_seconds
             except (AttributeError, TypeError, ValueError):
                 continue
-        print(total_weighted_sentiment, total_duration)
         if total_duration > 0:
             return round(total_weighted_sentiment / total_duration, 3)
         

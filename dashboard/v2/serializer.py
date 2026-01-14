@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.utils import timezone
 from datetime import datetime
-from acr_admin.models import WellnessBucket
+from core_admin.models import WellnessBucket
 
 
 def parse_datetime_string(value, field_name='datetime'):

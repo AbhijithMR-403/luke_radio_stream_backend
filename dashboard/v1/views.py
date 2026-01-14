@@ -4,7 +4,7 @@ from rest_framework import status
 from rest_framework.parsers import JSONParser
 from django.db import IntegrityError
 from data_analysis.models import GeneralTopic
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from .serializer import get_dashboard_stats, DashboardStatsSerializer, get_topic_audio_segments
 
 # Create your views here.
@@ -243,7 +243,6 @@ class TopicAudioSegmentsView(APIView):
                     {'error': 'Both start_datetime and end_datetime must be provided together'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            print(start_datetime)
             # Convert channel_id to int
             try:
                 channel_id = int(channel_id)
@@ -260,7 +259,6 @@ class TopicAudioSegmentsView(APIView):
                 channel_id=channel_id,
                 show_all_topics=show_all_topics
             )
-            print("-------------")
             
             return Response(audio_segments, status=status.HTTP_200_OK)
             
@@ -352,7 +350,6 @@ class GeneralTopicsManagementView(APIView):
             updated_count = 0
             
             for i, topic_data in enumerate(data):
-                print(f"Processing topic {i}: {topic_data}, type: {type(topic_data)}")
                 
                 if not isinstance(topic_data, dict):
                     return Response({'success': False, 'error': f'Topic at index {i} must be an object, got {type(topic_data)}'}, status=status.HTTP_400_BAD_REQUEST)
@@ -436,7 +433,6 @@ class GeneralTopicsManagementView(APIView):
             })
             
         except Exception as e:
-            print(f"Error in post method: {str(e)}")
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def delete(self, request, *args, **kwargs):
@@ -511,7 +507,5 @@ class GeneralTopicsManagementView(APIView):
             
         except Exception as e:
             import traceback
-            print(f"Error in delete method: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

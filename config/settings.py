@@ -41,7 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     'rest_framework_simplejwt',
-    "acr_admin",
+    "core_admin",
     "accounts",
     "corsheaders",
     'encrypted_model_fields',

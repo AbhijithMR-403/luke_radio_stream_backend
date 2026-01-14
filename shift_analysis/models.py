@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 from django.db.models import Q
 from datetime import time, datetime, timedelta
 from zoneinfo import ZoneInfo
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from accounts.models import RadioUser
 
 

@@ -5,7 +5,7 @@ from datetime import datetime
 
 from logger.models import AudioSegmentEditLog
 from data_analysis.models import AudioSegments, RevTranscriptionJob
-from acr_admin.models import Channel
+from core_admin.models import Channel
 
 
 class AudioSegmentEditLogDAO:

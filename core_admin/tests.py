@@ -25,7 +25,6 @@ class SettingsAndBucketsViewTestCase(APITestCase):
     def test_get_settings_and_buckets_success(self):
         """Test GET returns settings and buckets"""
         response = self.client.get(self.url)
-        print(response.data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['success'])
         self.assertIsNotNone(response.data['settings'])

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from data_analysis.models import AudioSegments, RevTranscriptionJob
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from logger.models import AudioSegmentEditLog
 
 

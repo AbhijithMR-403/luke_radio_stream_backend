@@ -25,7 +25,7 @@ from data_analysis.audio_segments_helpers import (
 )
 from data_analysis.serializers import AudioSegmentsSerializer
 from data_analysis.repositories import AudioSegmentDAO
-from acr_admin.repositories import GeneralSettingService
+from core_admin.repositories import GeneralSettingService
 
 
 class ListAudioSegmentsV2View(APIView):

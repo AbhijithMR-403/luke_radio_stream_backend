@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAdminUser
 
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from data_analysis.models import (
     AudioSegments as AudioSegmentsModel,
 )
@@ -271,12 +271,10 @@ class SplitAudioSegmentView(APIView):
                 
                 # Handle segment update if segment_id and is_active are provided
                 if segment_id is not None and is_active is not None:
-                    print(is_active)
                     try:
                         segment = AudioSegmentsModel.objects.get(id=segment_id, channel=channel)
                         segment.is_active = bool(is_active)
                         segment.save()
-                        print(segment.is_active)
                         updated_segments.append({
                             'segment_id': segment.id,
                             'is_active': segment.is_active,
