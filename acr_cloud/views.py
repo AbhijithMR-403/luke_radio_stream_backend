@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from django.db import transaction
 from config.validation import ValidationUtils
 from .models import ACRCloudCustomFileUpload
 
@@ -93,15 +94,17 @@ class ACRCloudFileUploadView(APIView):
             if upload_status == 'failed':
                 error_message = response_data.get('error', response_data.get('message', 'Upload failed'))
             
-            # Save upload details to database
-            ACRCloudCustomFileUpload.objects.create(
-                bucket_id=bucket_id,
-                audio_url=audio_url,
-                title=title,
-                status=upload_status,
-                error_message=error_message,
-                created_by=request.user if request.user.is_authenticated else None
-            )
+            # Save upload details to database in a transaction
+            # This protects against partial writes if ACR Cloud fails
+            with transaction.atomic():
+                ACRCloudCustomFileUpload.objects.create(
+                    bucket_id=bucket_id,
+                    audio_url=audio_url,
+                    title=title,
+                    status=upload_status,
+                    error_message=error_message,
+                    created_by=request.user if request.user.is_authenticated else None
+                )
             
             return Response(
                 response_data,
@@ -111,15 +114,17 @@ class ACRCloudFileUploadView(APIView):
         except requests.exceptions.RequestException as e:
             error_msg = f'Failed to communicate with ACR Cloud API: {str(e)}'
             
-            # Save error details to database
-            ACRCloudCustomFileUpload.objects.create(
-                bucket_id=bucket_id,
-                audio_url=audio_url,
-                title=title,
-                status='error',
-                error_message=error_msg,
-                created_by=request.user if request.user.is_authenticated else None
-            )
+            # Save error details to database in a transaction
+            # This protects against partial writes if ACR Cloud fails
+            with transaction.atomic():
+                ACRCloudCustomFileUpload.objects.create(
+                    bucket_id=bucket_id,
+                    audio_url=audio_url,
+                    title=title,
+                    status='error',
+                    error_message=error_msg,
+                    created_by=request.user if request.user.is_authenticated else None
+                )
             
             return Response(
                 {'error': error_msg},

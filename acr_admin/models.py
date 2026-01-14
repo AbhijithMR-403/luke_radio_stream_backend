@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q
 from django.core.exceptions import ValidationError
 from django.conf import settings
 from encrypted_model_fields.fields import EncryptedTextField
@@ -7,31 +8,109 @@ from zoneinfo import ZoneInfo
 # Create your models here.
 class Channel(models.Model):
     name = models.CharField(max_length=255, blank=True)  # Optional label
-    channel_id = models.PositiveIntegerField()
-    project_id = models.PositiveIntegerField()
+    channel_id = models.PositiveIntegerField(blank=True, null=True)
+    project_id = models.PositiveIntegerField(blank=True, null=True)
     timezone = models.CharField(
         max_length=50,
         default='UTC',
         help_text='Timezone for the channel (e.g., America/New_York, Europe/London, UTC)'
     )
+    rss_url = models.URLField(
+        max_length=500,
+        blank=True,
+        null=True,
+        help_text='RSS feed location URL'
+    )
+    channel_type = models.CharField(
+        max_length=20,
+        choices=[('podcast', 'Podcast'), ('broadcast', 'Broadcast')],
+        db_index=True,
+        help_text='Channel type: Podcast or Broadcast'
+    )
+    rss_start_date = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text='Date and time from which to start processing RSS feed'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Soft on/off toggle for the channel'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)  # To soft delete
 
     def clean(self):
-        """Validate the timezone field"""
+        """Validate the timezone field and channel type requirements"""
         super().clean()
         if self.timezone:
             try:
                 ZoneInfo(self.timezone)
             except Exception:
                 raise ValidationError({'timezone': f'Invalid timezone: {self.timezone}'})
+        
+        # Validate based on channel_type
+        if self.channel_type == 'podcast':
+            # Podcast: rss_url required, channel_id/project_id not allowed
+            if not self.rss_url:
+                raise ValidationError({'rss_url': 'RSS URL is required for Podcast channels'})
+            if self.channel_id is not None or self.project_id is not None:
+                raise ValidationError({
+                    'channel_id': 'channel_id and project_id are not allowed for Podcast channels',
+                    'project_id': 'channel_id and project_id are not allowed for Podcast channels'
+                })
+        elif self.channel_type == 'broadcast':
+            # Broadcast: channel_id/project_id required, RSS fields not allowed
+            if self.channel_id is None or self.project_id is None:
+                raise ValidationError({
+                    'channel_id': 'channel_id and project_id are required for Broadcast channels',
+                    'project_id': 'channel_id and project_id are required for Broadcast channels'
+                })
+            if self.rss_url:
+                raise ValidationError({'rss_url': 'RSS URL is not allowed for Broadcast channels'})
+            if self.rss_start_date:
+                raise ValidationError({'rss_start_date': 'RSS start date is not allowed for Broadcast channels'})
+
+    def save(self, *args, **kwargs):
+        """
+        Override save to run validation by default.
+        """
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"Channel {self.channel_id} in Project {self.project_id}"
+        return f"{self.name or 'Channel'} ({self.channel_type})"
 
     class Meta:
+        db_table = 'media_channel'
+        verbose_name = 'Channel'
+        verbose_name_plural = 'Channels'
+        ordering = ['-created_at']
         constraints = [
-            models.UniqueConstraint(fields=['channel_id', 'project_id'], name='unique_channel_per_project')
+            models.UniqueConstraint(
+                fields=['channel_id', 'project_id'],
+                condition=Q(channel_id__isnull=False, project_id__isnull=False, is_deleted=False),
+                name='unique_channel_per_project'
+            ),
+            models.UniqueConstraint(
+                fields=['rss_url'],
+                condition=Q(rss_url__isnull=False, is_deleted=False),
+                name='unique_rss_url'
+            ),
+            models.CheckConstraint(
+                check=(
+                    Q(channel_type='podcast',
+                      rss_url__isnull=False,
+                      channel_id__isnull=True,
+                      project_id__isnull=True)
+                    |
+                    Q(channel_type='broadcast',
+                      rss_url__isnull=True,
+                      rss_start_date__isnull=True,
+                      channel_id__isnull=False,
+                      project_id__isnull=False)
+                ),
+                name='channel_type_consistency'
+            )
         ]
 
 class GeneralSetting(models.Model):
