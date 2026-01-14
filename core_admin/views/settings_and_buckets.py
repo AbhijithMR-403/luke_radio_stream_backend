@@ -61,8 +61,36 @@ class SettingsAndBucketsAPIView(APIView):
         user = request.user if request.user.is_authenticated else None
 
         try:
+            # Get active setting to merge with incoming settings
+            active_setting = GeneralSetting.objects.filter(is_active=True).first()
+            incoming_settings = validated.get('settings') or {}
+            
+            # Merge incoming settings with active setting values
+            # Missing keys in incoming_settings will use values from active_setting
+            if active_setting:
+                # Get all concrete model fields (excluding versioning fields)
+                excluded_fields = {
+                    'id', 'version', 'is_active', 'created_at', 'created_by', 
+                    'parent_version', 'change_reason'
+                }
+                
+                # Start with active setting values
+                merged_settings = {}
+                # Use concrete_fields to get only actual database columns
+                for field in GeneralSetting._meta.concrete_fields:
+                    field_name = field.name
+                    if field_name not in excluded_fields:
+                        # Get the value from active setting
+                        merged_settings[field_name] = getattr(active_setting, field_name, None)
+                
+                # Override with incoming settings (only provided keys)
+                merged_settings.update(incoming_settings)
+            else:
+                # No active setting, use incoming settings as-is
+                merged_settings = incoming_settings
+            
             new_setting = GeneralSettingService.create_new_version(
-                settings_data=validated.get('settings') or {},
+                settings_data=merged_settings,
                 buckets_data=validated.get('buckets', []),
                 user=user,
                 change_reason=validated.get('change_reason'),
