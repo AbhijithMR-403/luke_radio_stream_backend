@@ -65,16 +65,6 @@ class AudioSegmentDAO:
         return qs
 
     @staticmethod
-    def get_recognized_segments(channel_id: int, *, active_only: bool = True) -> QuerySet[AudioSegments]:
-        qs = AudioSegmentDAO.get_by_channel(channel_id, include_deleted=False, active_only=active_only)
-        return qs.filter(is_recognized=True)
-
-    @staticmethod
-    def get_unrecognized_segments(channel_id: int, *, active_only: bool = True) -> QuerySet[AudioSegments]:
-        qs = AudioSegmentDAO.get_by_channel(channel_id, include_deleted=False, active_only=active_only)
-        return qs.filter(is_recognized=False)
-
-    @staticmethod
     def _build_filtered_queryset(
         *,
         channel_id: Optional[int] = None,
@@ -483,12 +473,3 @@ class AudioSegmentDAO:
     @staticmethod
     def restore(segment_id: int) -> Optional[AudioSegments]:
         return AudioSegmentDAO.update(segment_id, is_delete=False, is_active=True)
-
-    @staticmethod
-    def delete(segment_id: int) -> bool:
-        segment = AudioSegmentDAO.get_by_id(segment_id)
-        if not segment:
-            return False
-        segment.delete()
-        return True
-

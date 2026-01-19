@@ -146,17 +146,79 @@ class GeneralTopic(models.Model):
     
 class AudioSegments(models.Model):
     """Model to store audio segments with recognition status and title relationships"""
+    
+    # -------------------------
+    # Classification
+    # -------------------------
+    SEGMENT_TYPE_CHOICES = (
+        ('broadcast', 'Broadcast'),
+        ('podcast', 'Podcast'),
+        ('custom', 'Custom'),
+    )
+
+    segment_type = models.CharField(
+        max_length=10,
+        choices=SEGMENT_TYPE_CHOICES,
+        default='broadcast',
+        db_index=True
+    )
+    
+    # -------------------------
+    # Time
+    # -------------------------
     start_time = models.DateTimeField(help_text="Start time of the audio segment")
     end_time = models.DateTimeField(help_text="End time of the audio segment")
     duration_seconds = models.PositiveIntegerField(help_text="Duration in seconds")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # -------------------------
+    # Audio location
+    # -------------------------
+    file_name = models.CharField(max_length=255)
+
+    file_path = models.CharField(
+        max_length=512,
+        null=True,
+        blank=True,
+        help_text="Local file path for broadcast/custom uploads"
+    )
+
+    audio_url = models.URLField(
+        null=True,
+        blank=True,
+        help_text="Remote audio URL for podcast or custom URL audio"
+    )
+
+    # -------------------------
+    # Podcast
+    # -------------------------
+    rss_guid = models.CharField(
+        max_length=512,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text="Unique identifier (GUID) from RSS feed for podcast episodes"
+    )
+
+    pub_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Publication date of the audio segment (e.g., podcast episode publish date)"
+    )
+
+    # -------------------------
+    # Recognition / processing
+    # -------------------------
     is_recognized = models.BooleanField(default=False, help_text="Whether the segment was recognized")
     is_active = models.BooleanField(default=True, help_text="Whether the segment is active (not superseded by newer data)")
     is_analysis_completed = models.BooleanField(default=False, help_text="Whether data analysis has been completed for this audio segment")
     is_audio_downloaded = models.BooleanField(default=False, help_text="Whether the audio file has been downloaded")
     is_manually_processed = models.BooleanField(default=False, help_text="Whether the segment was manually transcribed or analyzed")
     is_delete = models.BooleanField(default=False, help_text="Whether the segment is marked for deletion (soft delete)")
-    file_name = models.CharField(max_length=255)  # e.g., "def_channel_20250804_101500"
-    file_path = models.CharField(max_length=512)  # e.g., "/mnt/audio_storage/def_channel_20250804_101500.wav"
+
+    # -------------------------
+    # Titles
+    # -------------------------
     title = models.CharField(
         max_length=500,
         null=True, 
@@ -185,11 +247,11 @@ class AudioSegments(models.Model):
     SOURCE_CHOICES = (
         ('system', 'System'),
         ('user', 'User'),
-        ('merged', 'Merged'),
+        ('system_merge', 'System Merged'),
+        ('user_merged', 'User Merged'),
     )
-    source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='system', help_text="Who added the segment: system or user")
+    source = models.CharField(max_length=15, choices=SOURCE_CHOICES, default='system', help_text="Who added the segment: system or user")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_audio_segments', help_text="User who created the segment if manual")
-    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         status = "ACTIVE" if self.is_active else "INACTIVE"
@@ -229,31 +291,22 @@ class AudioSegments(models.Model):
         if self.metadata_json is not None:
             if not isinstance(self.metadata_json, dict):
                 raise ValidationError("metadata_json must be a dictionary")
+        
+        # Validate that either audio_url or file_path is set, but not both
+        if self.audio_url and self.file_path:
+            raise ValidationError("Cannot have both audio_url and file_path set. Please provide only one.")
+        if not self.audio_url and not self.file_path:
+            raise ValidationError("Either audio_url or file_path must be provided.")
+        
+        # Validate that podcast segments have rss_guid
+        if self.segment_type == 'podcast' and not self.rss_guid:
+            raise ValidationError("Podcast segments must have rss_guid")
 
     class Meta:
         ordering = ['start_time']
         indexes = [
-            # Index for channel filtering (most common query)
-            models.Index(fields=['channel']),
-            # Index for start_time range queries (used in API filters)
-            models.Index(fields=['start_time']),
-            # Composite index for channel + start_time (most efficient for API queries without duration)
-            models.Index(fields=['channel', 'start_time']),
-            # Composite index for channel + start_time + duration_seconds (optimal for API queries with duration filter)
-            # This index can also be used efficiently for queries without duration (using prefix)
-            models.Index(fields=['channel', 'start_time', 'duration_seconds']),
-            # Index for active segments filtering
-            models.Index(fields=['is_active']),
-            # Index for recognized segments filtering
-            models.Index(fields=['is_recognized']),
-            # Index for deleted segments filtering
-            models.Index(fields=['is_delete']),
-            # Composite index for channel + is_active (common filter combination)
-            models.Index(fields=['channel', 'is_active']),
-            # Composite index for channel + is_delete (common filter combination)
-            models.Index(fields=['channel', 'is_delete']),
-            # Index for file_path uniqueness checks
-            models.Index(fields=['file_path']),
+            # main API path
+            models.Index(fields=['channel', 'start_time', 'end_time']),
         ] 
     
     @staticmethod

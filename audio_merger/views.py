@@ -33,7 +33,7 @@ def _parse_dt(value):
 
 
 def _create_merged_segment(channel, start_dt, end_dt, source_segment_ids=None):
-    """Create a merged segment with source='merged' and download audio"""
+    """Create a merged segment with source='user_merged' and download audio"""
     duration_seconds = int((end_dt - start_dt).total_seconds())
     
     # Build file_name and file_path
@@ -46,7 +46,7 @@ def _create_merged_segment(channel, start_dt, end_dt, source_segment_ids=None):
     media_dir = os.path.join(os.getcwd(), "media", start_date)
     os.makedirs(media_dir, exist_ok=True)
     
-    # Create segment payload with source='merged'
+    # Create segment payload with source='user_merged'
     segment_payload = {
         'start_time': start_dt,
         'end_time': end_dt,
@@ -56,7 +56,7 @@ def _create_merged_segment(channel, start_dt, end_dt, source_segment_ids=None):
         'file_name': file_name,
         'file_path': file_path,
         'channel': channel,
-        'source': 'merged',
+        'source': 'user_merged',
         'title_before': 'UNKNOWN',
         'title_after': 'UNKNOWN',
     }

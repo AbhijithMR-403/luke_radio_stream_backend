@@ -292,7 +292,11 @@ class AudioSegments:
         def should_stop_expansion(segment):
             """Check if we should stop expanding when hitting this segment."""
             # Stop if segment is already merged or deleted
-            if segment.source == 'merged' or segment.is_delete or segment.source == 'user':
+            if segment.source in ('system_merge', 'user_merged') or segment.is_delete or segment.source == 'user':
+                return True
+
+            # Remove this after First day of pushing this code to production
+            if segment.source == 'merged':
                 return True
             
             # Stop if segment is recognized AND (>= 20s OR not music OR is custom_file)
@@ -458,8 +462,12 @@ class AudioSegments:
         # Find recognized segments < 20 seconds and create merged segments
         for i, current_segment in enumerate(segments_list):
             # Skip segments that are already merged or deleted
-            if (current_segment.source == 'merged' or 
+            if (current_segment.source in ('system_merge', 'user_merged') or 
                 current_segment.is_delete):
+                continue
+            
+            # Remove this after First day of pushing this code to production
+            if current_segment.source == 'merged':
                 continue
             
             # Check if current segment is recognized, below 20 seconds, and has music metadata
@@ -533,8 +541,13 @@ class AudioSegments:
         
         # Check if any segment is already merged or deleted - if so, skip creating a new merge
         for seg in segments_to_merge:
-            if seg.source == 'merged' or seg.is_delete:
+            if seg.source in ('system_merge', 'user_merged') or seg.is_delete:
                 print(f"Skipping merge: segment {seg.id} is already merged (source={seg.source}) or deleted (is_delete={seg.is_delete})")
+                return None
+            
+            # Remove this after First day of pushing this code to production
+            if seg.source == 'merged':
+                print(f"Skipping merge: segment {seg.id} is already merged (source={seg.source})")
                 return None
         
         # Find earliest start_time and latest end_time
@@ -565,7 +578,7 @@ class AudioSegments:
             'file_name': file_name,
             'file_path': file_path,
             'channel': channel,
-            'source': 'merged',
+            'source': 'system_merge',
             'is_delete': False
         }
         
