@@ -146,10 +146,6 @@ class BucketCountView(APIView):
 
 
 class CategoryBucketCountView(APIView):
-    """
-    API endpoint to get percentage of count of each bucket within a specific category
-    """
-    parser_classes = [JSONParser]
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
@@ -166,11 +162,7 @@ class CategoryBucketCountView(APIView):
         try:
             # Validate query parameters
             serializer = CategoryBucketCountQuerySerializer(data=request.query_params)
-            if not serializer.is_valid():
-                return Response(
-                    serializer.errors,
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            serializer.is_valid(raise_exception=True)
             
             # Get validated data
             validated_data = serializer.validated_data

@@ -5,7 +5,7 @@ from django.utils import timezone
 from collections import defaultdict
 
 from data_analysis.models import TranscriptionAnalysis
-from core_admin.models import WellnessBucket
+from core_admin.models import WellnessBucket, Channel
 from shift_analysis.models import Shift
 
 
@@ -104,7 +104,10 @@ class BucketCountService:
         Returns:
             Dictionary mapping bucket title (uppercase) to category
         """
-        wellness_buckets = WellnessBucket.objects.all()
+        wellness_buckets = WellnessBucket.objects.filter(
+            general_setting__is_active=True,
+            is_deleted=False
+        )
         bucket_title_to_category = {}
         for bucket in wellness_buckets:
             bucket_title_to_category[bucket.title.upper()] = bucket.category
@@ -553,6 +556,21 @@ class BucketCountService:
         if category_name not in valid_categories:
             raise ValueError(f'category_name must be one of: {", ".join(valid_categories)}')
         
+        # Check if channel exists and is active
+        try:
+            channel = Channel.objects.get(id=channel_id, is_active=True, is_deleted=False)
+        except Channel.DoesNotExist:
+            # If channel doesn't exist or is not active, return empty result
+            return {
+                'buckets': {},
+                'total': 0,
+                'category': category_name,
+                'total_time_period_seconds': (end_dt - start_dt).total_seconds(),
+                'total_time_period_hours': round((end_dt - start_dt).total_seconds() / 3600, 2),
+                'total_filtered_duration_seconds': 0,
+                'total_filtered_duration_hours': 0
+            }
+        
         # Get bucket title to category mapping
         bucket_title_to_category = BucketCountService._get_bucket_title_to_category_mapping()
         
@@ -601,7 +619,7 @@ class BucketCountService:
         ).select_related(
             'transcription_detail__audio_segment'
         )
-        
+
         # Initialize bucket counts and durations for this category
         bucket_counts = {bucket_title: 0 for bucket_title in category_buckets.keys()}
         bucket_durations = {bucket_title: 0 for bucket_title in category_buckets.keys()}

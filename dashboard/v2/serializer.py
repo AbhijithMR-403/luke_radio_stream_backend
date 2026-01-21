@@ -110,23 +110,11 @@ class CategoryBucketCountQuerySerializer(serializers.Serializer):
     """
     Serializer for validating category bucket count API query parameters
     """
-    start_datetime = serializers.CharField(required=True)
-    end_datetime = serializers.CharField(required=True)
+    start_datetime = serializers.DateTimeField(required=True)
+    end_datetime = serializers.DateTimeField(required=True)
     category_name = serializers.CharField(required=True)
     channel_id = serializers.IntegerField(required=True, min_value=1)
     shift_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
-    
-    def validate_start_datetime(self, value):
-        """
-        Validate and parse start_datetime string to timezone-aware datetime
-        """
-        return parse_datetime_string(value, field_name='start_datetime')
-    
-    def validate_end_datetime(self, value):
-        """
-        Validate and parse end_datetime string to timezone-aware datetime
-        """
-        return parse_datetime_string(value, field_name='end_datetime')
     
     def validate_category_name(self, value):
         """
