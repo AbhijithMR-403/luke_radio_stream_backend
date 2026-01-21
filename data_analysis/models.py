@@ -184,6 +184,7 @@ class AudioSegments(models.Model):
     )
 
     audio_url = models.URLField(
+        max_length=2048,
         null=True,
         blank=True,
         help_text="Remote audio URL for podcast or custom URL audio"
@@ -209,12 +210,12 @@ class AudioSegments(models.Model):
     # -------------------------
     # Recognition / processing
     # -------------------------
-    is_recognized = models.BooleanField(default=False, help_text="Whether the segment was recognized")
-    is_active = models.BooleanField(default=True, help_text="Whether the segment is active (not superseded by newer data)")
+    is_recognized = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
     is_analysis_completed = models.BooleanField(default=False, help_text="Whether data analysis has been completed for this audio segment")
     is_audio_downloaded = models.BooleanField(default=False, help_text="Whether the audio file has been downloaded")
     is_manually_processed = models.BooleanField(default=False, help_text="Whether the segment was manually transcribed or analyzed")
-    is_delete = models.BooleanField(default=False, help_text="Whether the segment is marked for deletion (soft delete)")
+    is_delete = models.BooleanField(default=False)
 
     # -------------------------
     # Titles
@@ -223,19 +224,16 @@ class AudioSegments(models.Model):
         max_length=500,
         null=True, 
         blank=True, 
-        help_text="To store Title of recognized segments"
     )
     title_before = models.CharField(
         max_length=500,
         null=True, 
         blank=True, 
-        help_text="To store the before Title of recognized segments"
     )
     title_after = models.CharField(
         max_length=500,
         null=True, 
         blank=True, 
-        help_text="To store the after Title of recognized segments"
     )
     metadata_json = models.JSONField(
         null=True, 
@@ -243,15 +241,15 @@ class AudioSegments(models.Model):
         help_text="JSON field to store metadata like artists, albums, external IDs, etc. from music recognition data"
     )
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name="audios_segments")
-    notes = models.TextField(null=True, blank=True, help_text="Optional reason/log/debug info")
+    notes = models.TextField(null=True, blank=True)
     SOURCE_CHOICES = (
         ('system', 'System'),
         ('user', 'User'),
         ('system_merge', 'System Merged'),
         ('user_merged', 'User Merged'),
     )
-    source = models.CharField(max_length=15, choices=SOURCE_CHOICES, default='system', help_text="Who added the segment: system or user")
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_audio_segments', help_text="User who created the segment if manual")
+    source = models.CharField(max_length=15, choices=SOURCE_CHOICES, default='system')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_audio_segments')
 
     def __str__(self):
         status = "ACTIVE" if self.is_active else "INACTIVE"

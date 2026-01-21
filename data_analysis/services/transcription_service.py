@@ -4,6 +4,7 @@ import requests
 from typing import Optional, Dict, Any
 import os
 from django.utils import timezone
+from django.db.models import Q
 from decouple import config
 from core_admin.models import GeneralSetting, Channel
 from openai import OpenAI
@@ -16,18 +17,22 @@ from segmentor.models import TitleMappingRule
 
 class RevAISpeechToText:
     @staticmethod
-    def create_transcription_job(media_path: str):
+    def create_transcription_job(media_path: str, is_absolute_url: bool = False):
         """
-        Creates a transcription job on Rev.ai using the provided media URL and notification URL.
-        Uses revai_access_token from GeneralSetting if api_key is not provided.
-        Returns the API response as JSON.
+        Create a transcription job on Rev.ai for the given media.
+        
+        Args:
+            media_path: The media path or absolute URL.
+            is_absolute_url: If True, use media_path as the absolute URL directly.
+                           If False (default), construct URL from PUBLIC_BASE_URL + media_path.
         """
         # Validate parameters
-        ValidationUtils.validate_file_path(media_path)
+        if not is_absolute_url:
+            ValidationUtils.validate_file_path(media_path)
         
         base_url = config('PUBLIC_BASE_URL')
         notification_url = f"{base_url}/api/rev-callback"
-        media_url = f"{base_url}{media_path}"
+        media_url = media_path if is_absolute_url else f"{base_url}{media_path}"
         
         api_key = ValidationUtils.validate_revai_api_key()
         url = "https://api.rev.ai/speechtotext/v1/jobs"
@@ -84,162 +89,6 @@ class RevAISpeechToText:
             return False
 
     @staticmethod
-    def create_and_save_transcription_job(segments_data: dict[str, list]) -> list[RevTranscriptionJob]:
-        """
-        Creates transcription jobs on Rev.ai for multiple audio segments and saves them to the database.
-        
-        Args:
-            segments_data: Dictionary with 'success' and 'skipped' keys containing list of segment dictionaries
-                          Each segment dict should have: segment_id, file_name
-                          Example:
-                          {
-                              'success': [
-                                  {
-                                      'segment_id': 2958,
-                                      'file_name': 'audio_3137_240401_20250812000152_9.mp3'
-                                  }
-                              ],
-                              'skipped': [
-                                  {
-                                      'segment_id': 2959,
-                                      'file_name': 'audio_3137_240401_20250812000201_1.mp3'
-                                  }
-                              ]
-                          }
-        
-        Returns:
-            list[RevTranscriptionJob]: List of created transcription job instances
-            
-        Raises:
-            ValidationError: If validation fails
-            requests.RequestException: If the API call fails
-        """
-        if not isinstance(segments_data, dict):
-            raise ValidationError("segments_data must be a dictionary")
-        
-        # Check for both 'success' and 'skipped' keys
-        success_segments = segments_data.get('success', [])
-        skipped_segments = segments_data.get('skipped', [])
-        
-        if not isinstance(success_segments, list):
-            raise ValidationError("'success' value must be a list")
-        if not isinstance(skipped_segments, list):
-            raise ValidationError("'skipped' value must be a list")
-        
-        # Combine both lists for processing
-        all_segments = success_segments + skipped_segments
-        
-        if not all_segments:
-            return []  # Return empty list if no segments to process
-        
-        created_jobs = []
-        
-        for segment_data in all_segments:
-            if not isinstance(segment_data, dict):
-                print(f"Skipping invalid segment data: {segment_data}")
-                continue  # Skip invalid segment data
-            
-            # Extract required fields
-            segment_id = segment_data.get('segment_id')
-            
-            if not segment_id:
-                print(f"Skipping segment without segment_id: {segment_data}")
-                continue  # Skip segments without segment_id
-            
-            # Get the AudioSegments instance
-            try:
-                audio_segment = AudioSegments.objects.get(pk=segment_id)
-            except AudioSegments.DoesNotExist:
-                print(f"Skipping segment - AudioSegments with id {segment_id} not found")
-                continue  # Skip if AudioSegments not found
-            
-            # Skip transcription if a TitleMappingRule exists and update title accordingly
-            try:
-                should_skip = RevAISpeechToText.apply_title_mapping_or_skip(audio_segment)
-                if should_skip:
-                    print(f"Skipping transcription for segment {segment_id} due to TitleMappingRule match")
-                    continue
-            except Exception as e:
-                print(f"Error checking title mapping for segment {segment_id}: {str(e)}")
-
-            # Always get file_path and media_url from audio_segment
-            file_path = audio_segment.file_path
-            media_url = f"/api/{audio_segment.file_path}"
-            
-            # Check if TranscriptionDetail already exists for this audio segment
-            if TranscriptionDetail.objects.filter(audio_segment=audio_segment).exists():
-                print(f"Skipping segment {segment_id} - TranscriptionDetail already exists")
-                continue  # Skip this segment if TranscriptionDetail already exists
-            
-            # Validate that the audio segment is not recognized (should be unrecognized)
-            if audio_segment.is_recognized:
-                print(f"Skipping segment {segment_id} - Audio is already recognized")
-                continue  # Skip recognized audio segments
-            
-            # Validate that the audio segment is active
-            if not audio_segment.is_active:
-                print(f"Skipping segment {segment_id} - Audio segment is not active")
-                continue  # Skip inactive audio segments
-            
-            # Validate that the audio is downloaded
-            if not audio_segment.is_audio_downloaded:
-                print(f"Skipping segment {segment_id} - Audio is not downloaded")
-                continue  # Skip undownloaded audio segments
-            
-            # Skip transcription if duration is less than 10 seconds
-            if audio_segment.duration_seconds < 10:
-                print(f"Skipping transcription for segment {segment_id} - Duration is {audio_segment.duration_seconds}s (less than 10 seconds)")
-                continue  # Skip short audio segments
-            
-            # Create the transcription job via Rev.ai API
-            try:
-                print(f"Creating transcription job for segment {segment_id} with file: {file_path}")
-                api_response = RevAISpeechToText.create_transcription_job(media_url)
-            except requests.RequestException as e:
-                print(f"Failed to create transcription job for segment {segment_id}: {str(e)}")
-                continue  # Skip if API call fails
-            print(api_response)
-            # Extract job details from API response
-            job_id = api_response.get('id')
-            job_name = api_response.get('name', '')
-            status = api_response.get('status', '')
-            created_on_str = api_response.get('created_on', '')
-            
-            # Parse created_on datetime
-            created_on = None
-            if created_on_str:
-                try:
-                    created_on = datetime.fromisoformat(created_on_str.replace('Z', '+00:00'))
-                except ValueError:
-                    created_on = timezone.now()
-            else:
-                created_on = timezone.now()
-            
-            # Create and save the RevTranscriptionJob instance
-            try:
-                transcription_job = RevTranscriptionJob(
-                    job_id=job_id,
-                    job_name=job_name,
-                    media_url=media_url,
-                    status=status,
-                    created_on=created_on,
-                    audio_segment=audio_segment,
-                    retry_count=0
-                )
-                
-                # Validate and save the model
-                # transcription_job.full_clean()
-                transcription_job.save()
-                
-                print(f"Successfully created transcription job {job_id} for segment {segment_id}")
-                created_jobs.append(transcription_job)
-            except Exception as e:
-                print(f"Failed to save transcription job for segment {segment_id}: {str(e)}")
-                continue  # Skip if saving fails
-        
-        return created_jobs
-
-    @staticmethod
     def create_and_save_transcription_job_v2(segments: list[dict]) -> list[RevTranscriptionJob]:
         """
         Create transcription jobs only for segments where requires_analysis is True.
@@ -271,7 +120,7 @@ class RevAISpeechToText:
 
             if audio_segment is None and file_path_from_payload:
                 try:
-                    audio_segment = AudioSegments.objects.filter(file_path=file_path_from_payload).first()
+                    audio_segment = AudioSegments.objects.filter(id=segment_id).first()
                 except Exception:
                     audio_segment = None
 
@@ -288,10 +137,16 @@ class RevAISpeechToText:
                 print(f"Skipping segment {audio_segment.id} - RevTranscriptionJob already exists")
                 continue  # Skip this segment if job already exists
 
-            media_url_path = f"/api/{audio_segment.file_path}"
+            # Use audio_url directly for podcast channels, otherwise construct path
+            if audio_segment.channel and audio_segment.channel.channel_type == 'podcast':
+                media_url_path = audio_segment.audio_url
+                is_absolute_url = True
+            else:
+                media_url_path = f"/api/{audio_segment.file_path}"
+                is_absolute_url = False
 
             try:
-                api_response = RevAISpeechToText.create_transcription_job(media_url_path)
+                api_response = RevAISpeechToText.create_transcription_job(media_url_path, is_absolute_url=is_absolute_url)
             except requests.RequestException:
                 continue
 
@@ -327,11 +182,16 @@ class RevAISpeechToText:
         return created_jobs
 
     @staticmethod
-    def get_transcript_by_job_id(revid: RevTranscriptionJob, media_path: str):
+    def get_transcript_by_job_id(revid: RevTranscriptionJob, media_path: str, media_url: Optional[str] = None):
         """
         Fetches the transcript for a given Rev.ai job ID using the access token from GeneralSetting.
         Inserts a TranscriptionDetail linked to the AudioSegments (by file_path) and the RevTranscriptionJob.
         Returns the transcript as plain text.
+        
+        Args:
+            revid: The RevTranscriptionJob instance.
+            media_path: The file path of the media.
+            media_url: Optional absolute URL path for the media (e.g., for podcast channels).
         """
         # Validate parameters
         if not isinstance(revid, RevTranscriptionJob):
@@ -354,11 +214,15 @@ class RevAISpeechToText:
         response.raise_for_status()
         transcript = response.text
 
-        # Find the AudioSegments object by file_path
+        # Find the AudioSegments object by file_path, or audio_url if media_url is provided
         try:
-            audio_segments = AudioSegments.objects.filter(file_path=media_path)
+            if media_url:
+                audio_segments = AudioSegments.objects.filter(Q(file_path=media_path) | Q(audio_url=media_url))
+            else:
+                audio_segments = AudioSegments.objects.filter(file_path=media_path)
             if not audio_segments.exists():
-                raise ValueError(f"AudioSegments with file_path {media_path} not found")
+                search_paths = f"file_path={media_path}" + (f", audio_url={media_url}" if media_url else "")
+                raise ValueError(f"AudioSegments not found with: {search_paths}")
             
             # Log warning if multiple segments found with same file_path
             if audio_segments.count() > 1:

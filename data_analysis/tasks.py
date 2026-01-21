@@ -52,10 +52,10 @@ def download_audio_task(project_id, channel_id, start_time, duration_seconds, fi
         }
 
 @shared_task
-def analyze_transcription_task(job_id, media_url_path):
+def analyze_transcription_task(job_id, media_url_path, media_url=None):
     try:
         job = RevTranscriptionJob.objects.get(pk=job_id)
-        transcription_detail = RevAISpeechToText.get_transcript_by_job_id(job, media_url_path)
+        transcription_detail = RevAISpeechToText.get_transcript_by_job_id(job, media_url_path, media_url)
         TranscriptionAnalyzer.analyze_transcription(transcription_detail)
         
         # Set is_analysis_completed = True on the AudioSegments object

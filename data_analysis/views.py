@@ -950,8 +950,9 @@ class RevCallbackView(View):
 
         if job.status == 'transcribed':
             try:
-                parsed_url = urlparse(job_data.get('media_url'))
-                analyze_transcription_task.delay(job.pk, parsed_url.path)
+                media_url = job_data.get('media_url')
+                parsed_url = urlparse(media_url)
+                analyze_transcription_task.delay(job.pk, parsed_url.path, media_url)
             except Exception as e:
                 return JsonResponse({'success': False, 'error': str(e)}, status=400)
         return JsonResponse({'success': True, 'action': action, 'job_id': job.job_id})

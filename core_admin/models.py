@@ -1,3 +1,4 @@
+from datetime import datetime, timezone as dj_timezone
 from django.db import models
 from django.db.models import Q
 from django.core.exceptions import ValidationError
@@ -13,28 +14,23 @@ class Channel(models.Model):
     timezone = models.CharField(
         max_length=50,
         default='UTC',
-        help_text='Timezone for the channel (e.g., America/New_York, Europe/London, UTC)'
     )
     rss_url = models.URLField(
         max_length=500,
         blank=True,
         null=True,
-        help_text='RSS feed location URL'
     )
     channel_type = models.CharField(
         max_length=20,
         choices=[('podcast', 'Podcast'), ('broadcast', 'Broadcast')],
         db_index=True,
-        help_text='Channel type: Podcast or Broadcast'
     )
     rss_start_date = models.DateTimeField(
-        blank=True,
-        null=True,
+        default=datetime(2000, 1, 1, tzinfo=dj_timezone.utc),
         help_text='Date and time from which to start processing RSS feed'
     )
     is_active = models.BooleanField(
         default=True,
-        help_text='Soft on/off toggle for the channel'
     )
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)  # To soft delete
@@ -105,7 +101,6 @@ class Channel(models.Model):
                     |
                     Q(channel_type='broadcast',
                       rss_url__isnull=True,
-                      rss_start_date__isnull=True,
                       channel_id__isnull=False,
                       project_id__isnull=False)
                 ),

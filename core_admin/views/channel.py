@@ -7,6 +7,7 @@ from django.db import transaction
 from ..models import Channel
 from ..serializers import ChannelSerializer
 from ..utils import ACRCloudUtils
+from rss_ingestion.tasks import ingest_podcast_rss_feed_task
 
 
 class ChannelAPIView(APIView):
@@ -63,6 +64,10 @@ class ChannelAPIView(APIView):
                 {'success': False, 'error': str(e.message_dict) if hasattr(e, 'message_dict') else str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        # Trigger RSS ingestion for podcast channels
+        if channel_type == 'podcast':
+            ingest_podcast_rss_feed_task.delay(channel.id)
 
         return Response(
             {'success': True, 'channel': ChannelSerializer(channel).data},
@@ -177,3 +182,40 @@ class ChannelAPIView(APIView):
         channel.save()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class IngestPodcastRSSFeedAPIView(APIView):
+    """API endpoint to manually trigger RSS feed ingestion for a podcast channel."""
+
+    def post(self, request, *args, **kwargs):
+        channel_id = request.data.get('channel_id')
+        if not channel_id:
+            return Response(
+                {'success': False, 'error': 'channel_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        channel = Channel.objects.filter(
+            id=channel_id,
+            is_deleted=False
+        ).first()
+
+        if not channel:
+            return Response(
+                {'success': False, 'error': 'Channel not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if channel.channel_type != 'podcast':
+            return Response(
+                {'success': False, 'error': 'RSS feed ingestion is only available for podcast channels'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Trigger the RSS feed ingestion task
+        ingest_podcast_rss_feed_task.delay(channel.id)
+
+        return Response(
+            {'success': True, 'message': f'RSS feed ingestion task queued for channel: {channel.name}'},
+            status=status.HTTP_202_ACCEPTED
+        )

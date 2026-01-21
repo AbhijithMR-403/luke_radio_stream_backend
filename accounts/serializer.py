@@ -27,7 +27,8 @@ class PasswordSetupSerializer(serializers.Serializer):
 class ChannelSerializer(serializers.ModelSerializer):
     class Meta:
         model = Channel
-        fields = ['id', 'name', 'channel_id', 'project_id', 'timezone']
+        fields = ['id', 'name', 'channel_id', 'project_id', 'timezone', 'rss_url', 
+                  'channel_type', 'rss_start_date', 'is_active', 'created_at', 'is_deleted']
 
 class UserChannelAssignmentSerializer(serializers.ModelSerializer):
     channel = ChannelSerializer()
