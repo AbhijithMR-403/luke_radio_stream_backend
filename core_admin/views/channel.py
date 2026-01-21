@@ -1,8 +1,10 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAdminUser
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from datetime import datetime, timezone as dt_timezone
 
 from ..models import Channel
 from ..serializers import ChannelSerializer
@@ -231,3 +233,48 @@ class IngestPodcastRSSFeedAPIView(APIView):
             {'success': True, 'message': f'RSS feed ingestion task queued for channel: {channel.name}'},
             status=status.HTTP_202_ACCEPTED
         )
+
+
+class RSSFeedTotalDurationAPIView(APIView):
+    """API endpoint to get the total duration of an RSS feed."""
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        rss_url = request.data.get('rss_url')
+        rss_start_date = request.data.get('rss_start_date')
+
+        if not rss_url:
+            return Response(
+                {'success': False, 'error': 'rss_url is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Parse rss_start_date if provided
+        parsed_start_date = None
+        if rss_start_date:
+            try:
+                parsed_start_date = datetime.fromisoformat(rss_start_date.replace('Z', '+00:00'))
+            except (ValueError, TypeError):
+                return Response(
+                    {'success': False, 'error': 'Invalid rss_start_date format. Use ISO format: 2000-01-01T00:00:00Z'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Fetch and validate RSS feed
+        rss_service = RSSIngestionService(rss_url).fetch()
+
+        if rss_service.status != 200:
+            return Response(
+                {'success': False, 'error': 'The RSS URL is not valid'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get total duration
+        total_duration_seconds = rss_service.get_total_duration_seconds(rss_start_date=parsed_start_date)
+
+        return Response({
+            'success': True,
+            'total_duration_seconds': total_duration_seconds,
+            'rss_url': rss_url,
+            'rss_start_date': rss_start_date
+        })

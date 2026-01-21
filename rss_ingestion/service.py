@@ -331,6 +331,104 @@ class RSSIngestionService:
     def has_entries(self) -> bool:
         return isinstance(self.entries, list) and len(self.entries) > 0
 
+    def get_total_duration_seconds(self, rss_start_date: Optional[datetime] = None) -> int:
+        """
+        Get the total duration of entries in seconds, optionally filtered by date.
+        
+        Args:
+            rss_start_date: If provided, only include entries published on or after this date.
+        
+        Returns:
+            Total duration in seconds.
+        """
+        total_seconds = 0
+        
+        for entry in self.entries:
+            # Filter by rss_start_date if provided
+            if rss_start_date:
+                pub_date = self._parse_entry_pub_date(entry)
+                if not pub_date or pub_date < rss_start_date:
+                    continue
+            
+            duration = entry.get('itunes_duration') or entry.get('duration')
+            if duration:
+                total_seconds += self._parse_duration_to_seconds(duration)
+        
+        return total_seconds
+
+    def _parse_entry_pub_date(self, entry: Dict[str, Any]) -> Optional[datetime]:
+        """
+        Parse publication date from RSS entry.
+        
+        Args:
+            entry: RSS feed entry dictionary.
+        
+        Returns:
+            Parsed datetime or None if not found.
+        """
+        # Try published_parsed first (feedparser pre-parsed)
+        if entry.get('published_parsed'):
+            try:
+                dt = datetime.fromtimestamp(mktime(entry['published_parsed']), tz=dt_timezone.utc)
+                return dt
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+        # Try published string
+        if entry.get('published'):
+            try:
+                return parsedate_to_datetime(entry['published'])
+            except (ValueError, TypeError):
+                pass
+
+        # Try updated as fallback
+        if entry.get('updated_parsed'):
+            try:
+                dt = datetime.fromtimestamp(mktime(entry['updated_parsed']), tz=dt_timezone.utc)
+                return dt
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+        return None
+
+    def _parse_duration_to_seconds(self, duration: str) -> int:
+        """
+        Parse duration string to seconds.
+        Supports formats: 'HH:MM:SS', 'MM:SS', or seconds as string/int.
+        
+        Args:
+            duration: Duration string (e.g., '00:29:11', '29:11', '1751')
+        
+        Returns:
+            Duration in seconds.
+        """
+        if not duration:
+            return 0
+        
+        # If it's already an integer
+        if isinstance(duration, int):
+            return duration
+        
+        duration = str(duration).strip()
+        
+        # If it's just a number (seconds)
+        if duration.isdigit():
+            return int(duration)
+        
+        # Parse HH:MM:SS or MM:SS format
+        parts = duration.split(':')
+        try:
+            if len(parts) == 3:
+                hours, minutes, seconds = map(int, parts)
+                return hours * 3600 + minutes * 60 + seconds
+            elif len(parts) == 2:
+                minutes, seconds = map(int, parts)
+                return minutes * 60 + seconds
+            else:
+                return int(duration)
+        except (ValueError, TypeError):
+            return 0
+
     def insert_to_audio_segments(self, channel: Channel) -> Dict[str, Any]:
         """
         Insert fetched RSS entries into AudioSegments as podcast segments.
