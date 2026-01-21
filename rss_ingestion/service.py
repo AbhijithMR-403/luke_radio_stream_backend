@@ -307,13 +307,18 @@ class RSSIngestionService:
     def __init__(self, url: str):
         self.url = url
         self.entries: List[Dict[str, Any]] = []
-    
+        self.bozo: bool = True
+        self.status: int = 0
+
     def fetch(self) -> 'RSSIngestionService':
         """
         Fetch and parse the RSS feed from the URL.
         """
         feed = feedparser.parse(self.url)
         entries = feed.get('entries', [])
+        self.bozo = feed.get('bozo', True)
+        self.status = feed.get('status', 0)
+
         
         # Validate entries is a list
         if isinstance(entries, list):

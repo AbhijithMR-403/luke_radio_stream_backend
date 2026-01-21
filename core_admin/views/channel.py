@@ -8,6 +8,7 @@ from ..models import Channel
 from ..serializers import ChannelSerializer
 from ..utils import ACRCloudUtils
 from rss_ingestion.tasks import ingest_podcast_rss_feed_task
+from rss_ingestion.service import RSSIngestionService
 
 
 class ChannelAPIView(APIView):
@@ -53,6 +54,17 @@ class ChannelAPIView(APIView):
                     status=status_code
                 )
             validated['name'] = validated.get('name') or result
+
+        # Validate RSS feed URL for podcast channels
+        if channel_type == 'podcast':
+            rss_url = validated.get('rss_url')
+            if rss_url:
+                rss_service = RSSIngestionService(rss_url).fetch()
+                if rss_service.status != 200:
+                    return Response(
+                        {'success': False, 'error': 'The podcast RSS URL is not valid'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
         # Create channel with all validated data in a transaction
         # This protects against partial writes if ACR Cloud fails
