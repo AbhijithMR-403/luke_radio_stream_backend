@@ -36,26 +36,16 @@ class SummaryQuerySerializer(serializers.Serializer):
     """
     Serializer for validating summary API query parameters
     """
-    start_datetime = serializers.CharField(required=True)
-    end_datetime = serializers.CharField(required=True)
-    channel_id = serializers.IntegerField(required=True, min_value=1)
+    start_datetime = serializers.DateTimeField(required=True)
+    end_datetime = serializers.DateTimeField(required=True)
+    channel_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
+    report_folder_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
     shift_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
-    
-    def validate_start_datetime(self, value):
-        """
-        Validate and parse start_datetime string to timezone-aware datetime
-        """
-        return parse_datetime_string(value, field_name='start_datetime')
-    
-    def validate_end_datetime(self, value):
-        """
-        Validate and parse end_datetime string to timezone-aware datetime
-        """
-        return parse_datetime_string(value, field_name='end_datetime')
     
     def validate(self, attrs):
         """
         Validate that end_datetime is after start_datetime
+        and that either channel_id or report_folder_id is provided
         """
         start_dt = attrs.get('start_datetime')
         end_dt = attrs.get('end_datetime')
@@ -65,6 +55,20 @@ class SummaryQuerySerializer(serializers.Serializer):
                 raise serializers.ValidationError({
                     'end_datetime': 'end_datetime must be greater than start_datetime'
                 })
+        
+        # Validate that either channel_id or report_folder_id is provided
+        channel_id = attrs.get('channel_id')
+        report_folder_id = attrs.get('report_folder_id')
+        
+        if not channel_id and not report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Either channel_id or report_folder_id must be provided'
+            })
+        
+        if channel_id and report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Cannot provide both channel_id and report_folder_id. Please provide only one.'
+            })
         
         return attrs
 
