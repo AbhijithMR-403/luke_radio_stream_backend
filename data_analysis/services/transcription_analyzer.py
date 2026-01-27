@@ -220,20 +220,15 @@ class TranscriptionAnalyzer:
         else:
             print("No wellness bucket prompt available, skipping bucket analysis")
 
-        # Content type classification using GeneralSetting.content_type_prompt
+        # Content type classification using GeneralSetting.determine_radio_content_type_prompt
         content_type_result = ""
         try:
             content_type_definitions = settings.content_type_prompt or ""
-            if content_type_definitions and content_type_definitions.strip():
-                content_type_instruction = (
-                    "This is a transcript of a radio station, using your knowledge of radio station production "
-                    "I would like you to determine with 0.8% or greater accuracy which one of the following "
-                    "typical radio station segments this content is: "
-                    f"{content_type_definitions}.\n"
-                    "Output a comma-separated value of the segment type only and the percentage confidence measured "
-                    "in whole percentages i.e. 75%, include the % please. Where you cannot identify any decipherable "
-                    "text just return an empty result"
-                )
+            determine_radio_content_type_prompt = settings.determine_radio_content_type_prompt or ""
+            if determine_radio_content_type_prompt and determine_radio_content_type_prompt.strip():
+                # Replace {{segments}} placeholder with the transcript
+                content_type_instruction = determine_radio_content_type_prompt.replace("{{segments}}", content_type_definitions)
+
                 content_type_resp = client.chat.completions.create(
                     **{k: v for k, v in chat_params(content_type_instruction, transcript, 30).items() if v is not None}
                 )

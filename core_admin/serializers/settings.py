@@ -152,6 +152,40 @@ class GeneralSettingSerializer(serializers.Serializer):
 
         return ', '.join(items)
 
+    def validate_determine_radio_content_type_prompt(self, value):
+        """
+        Validate radio segment classification prompt.
+        Requires the {{segments}} placeholder and enforces
+        instruction-based prompt structure.
+        """
+        if self._validation_error_occurred:
+            return value
+
+        if not value or not value.strip():
+            return value
+
+        prompt = value.strip()
+
+        # Enforce required placeholder
+        if "{{segments}}" not in prompt:
+            raise serializers.ValidationError(
+                "Prompt must contain the {{segments}} placeholder."
+            )
+
+        # Minimum length check (prevents CSV-only input)
+        if len(prompt) < 50:
+            raise serializers.ValidationError(
+                "Prompt must be a descriptive instruction, not a short list."
+            )
+
+        # Require output definition
+        if not re.search(r"\b(output|return)\b", prompt, re.IGNORECASE):
+            raise serializers.ValidationError(
+                "Prompt must explicitly define the expected output format."
+            )
+
+        return prompt
+
     # -----------------------------
     # Cross-field validation
     # -----------------------------
