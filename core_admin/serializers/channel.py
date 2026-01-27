@@ -94,3 +94,44 @@ class ChannelSerializer(serializers.ModelSerializer):
                 })
         
         return data
+
+
+class ChannelPatchSerializer(serializers.Serializer):
+    """
+    Serializer specifically for PATCH operations.
+    Only allows updating: name, is_active, timezone, rss_start_date
+    """
+    name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    is_active = serializers.BooleanField(required=False)
+    timezone = serializers.CharField(max_length=50, required=False)
+    rss_start_date = serializers.DateTimeField(required=False)
+
+    def validate_timezone(self, value):
+        if value:
+            ValidationUtils.validate_timezone(value)
+        return value
+
+    def validate(self, data):
+        """
+        Validate that rss_start_date is only updated for podcast channels.
+        """
+        # Get the instance to check channel_type
+        if self.instance:
+            channel_type = self.instance.channel_type
+            
+            # Only allow rss_start_date updates for podcast channels
+            if 'rss_start_date' in data and channel_type == 'broadcast':
+                raise serializers.ValidationError({
+                    'rss_start_date': 'RSS start date can only be updated for Podcast channels'
+                })
+        
+        return data
+
+    def update(self, instance, validated_data):
+        """
+        Update and return an existing Channel instance.
+        """
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance

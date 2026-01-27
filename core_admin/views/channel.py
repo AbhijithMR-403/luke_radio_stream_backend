@@ -7,7 +7,7 @@ from django.db import transaction
 from datetime import datetime, timezone as dt_timezone
 
 from ..models import Channel
-from ..serializers import ChannelSerializer
+from ..serializers import ChannelSerializer, ChannelPatchSerializer
 from ..utils import ACRCloudUtils
 from rss_ingestion.tasks import ingest_podcast_rss_feed_task
 from rss_ingestion.service import RSSIngestionService
@@ -88,83 +88,23 @@ class ChannelAPIView(APIView):
             status=status.HTTP_201_CREATED
         )
 
-    def put(self, request, *args, **kwargs):
+    def patch(self, request, *args, **kwargs):  # Changed from put to patch
         channel_id = request.data.get('id')
         if not channel_id:
-            return Response(
-                {'success': False, 'error': 'channel id required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'success': False, 'error': 'id required'}, status=400)
 
-        channel = Channel.objects.filter(
-            id=channel_id,
-            is_deleted=False
-        ).first()
-
+        channel = Channel.objects.filter(id=channel_id, is_deleted=False).first()
         if not channel:
-            return Response(
-                {'success': False, 'error': 'Channel not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({'success': False, 'error': 'Channel not found'}, status=404)
 
-        serializer = ChannelSerializer(
-            channel,
-            data=request.data,
-            partial=True
-        )
+        # Use the patch-specific serializer
+        serializer = ChannelPatchSerializer(channel, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
 
-        validated = serializer.validated_data
-
-        # Define allowed updatable fields
-        allowed_fields = {'name', 'timezone', 'is_active'}
-        
-        # Check if any disallowed fields were provided
-        disallowed_fields = set(validated.keys()) - allowed_fields
-        if disallowed_fields:
-            return Response(
-                {'success': False, 'error': f'Fields not allowed to update: {", ".join(disallowed_fields)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Filter to only allowed fields
-        updatable_data = {k: v for k, v in validated.items() if k in allowed_fields}
-
-        # Handle empty name → fetch from ACR Cloud (only for broadcast channels)
-        if 'name' in updatable_data:
-            name = updatable_data['name']
-            if not name or not name.strip():
-                # For podcast channels, name cannot be empty
-                if channel.channel_type == 'podcast':
-                    return Response(
-                        {'success': False, 'error': 'Name is required for Podcast channels'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                # Only fetch from ACR Cloud for broadcast channels
-                elif channel.channel_type == 'broadcast' and channel.project_id and channel.channel_id:
-                    result, status_code = ACRCloudUtils.get_channel_name_by_id(
-                        channel.project_id,
-                        channel.channel_id
-                    )
-                    if status_code:
-                        return Response(
-                            {'success': False, **result},
-                            status=status_code
-                        )
-                    updatable_data['name'] = result or channel.name  # Fallback to existing name
-                else:
-                    # For broadcast channels without ACR Cloud data, keep existing name
-                    updatable_data['name'] = channel.name
-
-        # Update channel attributes
-        for attr, value in updatable_data.items():
-            setattr(channel, attr, value)
-
         # Save will trigger model validation
-        # Wrap in transaction to protect against partial writes if ACR Cloud fails
         try:
             with transaction.atomic():
-                channel.save()
+                channel = serializer.save()
         except ValidationError as e:
             return Response(
                 {'success': False, 'error': str(e.message_dict) if hasattr(e, 'message_dict') else str(e)},
