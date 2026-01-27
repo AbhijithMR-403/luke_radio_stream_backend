@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional, Any, Iterable
 from datetime import datetime
 from django.db.models import QuerySet, Q
 from django.utils import timezone
@@ -11,6 +11,78 @@ class TopicService:
     """
     Service class for getting top topics by duration and count
     """
+
+    @staticmethod
+    def _parse_sentiment_score(value: Any) -> Optional[float]:
+        """
+        Parse sentiment score from various formats.
+        
+        Args:
+            value: Sentiment value (can be string, int, float, or None)
+        
+        Returns:
+            Parsed sentiment score as float, or None if invalid
+        """
+        if isinstance(value, str):
+            value = value.strip().rstrip('%')
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _get_sentiment_score_from_segment(segment: AudioSegments) -> Optional[float]:
+        """
+        Extract and parse sentiment score from an audio segment.
+        
+        Note: Assumes segment has transcription_detail and analysis (guaranteed by query filters).
+        
+        Args:
+            segment: AudioSegments instance to extract sentiment from
+        
+        Returns:
+            Parsed sentiment score as float, or None if sentiment is missing or invalid
+        """
+        transcription_detail = segment.transcription_detail
+        analysis = transcription_detail.analysis
+        if not analysis.sentiment:
+            return None
+        
+        return TopicService._parse_sentiment_score(analysis.sentiment)
+
+    @staticmethod
+    def get_average_sentiment(
+        audio_segments: Iterable[AudioSegments],
+    ) -> Optional[float]:
+        """
+        Calculate average sentiment score weighted by duration.
+        
+        Args:
+            audio_segments: Iterable of AudioSegments with transcription_detail and analysis loaded
+        
+        Returns:
+            Average sentiment score (rounded to 3 decimal places) or None if no valid data
+        """
+        total_weighted_sentiment = 0.0
+        total_duration = 0.0
+        
+        for segment in audio_segments:
+            score = TopicService._get_sentiment_score_from_segment(segment)
+            if score is None:
+                continue
+            
+            duration = float(segment.duration_seconds or 0)
+            if duration <= 0:
+                continue
+            
+            total_weighted_sentiment += score * duration
+            total_duration += duration
+        
+        if total_duration > 0:
+            return round(total_weighted_sentiment / total_duration, 3)
+        
+        return None
 
     @staticmethod
     def _parse_topics_from_text(topics_text) -> List[str]:
@@ -385,8 +457,7 @@ class TopicService:
                 segment_ids = [seg.id for seg in segments_list]
                 
                 # Calculate average sentiment for this shift
-                from dashboard.v2.service.DashboardSummary import SummaryService
-                average_sentiment = SummaryService.get_average_sentiment(segments_list)
+                average_sentiment = TopicService.get_average_sentiment(segments_list)
                 
                 if not segment_ids:
                     # No segments for this shift, add empty result

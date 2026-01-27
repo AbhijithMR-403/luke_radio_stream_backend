@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict, Iterable, Any, Tuple
 from datetime import datetime
+from collections import defaultdict
 from django.db.models import Q
 
 from data_analysis.models import AudioSegments, ReportFolder, SavedAudioSegment
@@ -43,6 +44,95 @@ class SummaryService:
         return SummaryService._parse_sentiment_score(analysis.sentiment)
 
     @staticmethod
+    def calculate_all_metrics(
+        audio_segments: Iterable[AudioSegments],
+        thresholds: Dict[str, float]
+    ) -> Dict[str, Any]:
+        """
+        Calculates all metrics in a single pass over the data.
+        
+        Args:
+            audio_segments: Iterable of AudioSegments with transcription_detail and analysis loaded
+            thresholds: Dictionary containing sentiment threshold values:
+                - sentiment_min_lower: Lower bound for low sentiment
+                - sentiment_min_upper: Upper bound for low sentiment
+                - sentiment_max_lower: Lower bound for high sentiment
+                - sentiment_max_upper: Upper bound for high sentiment
+        
+        Returns:
+            Dictionary containing:
+            - average_sentiment: Average sentiment score (weighted by duration)
+            - low_sentiment: Percentage of low sentiment segments
+            - high_sentiment: Percentage of high sentiment segments
+            - per_day_average_sentiments: List of daily average sentiments
+            - analyzed_segment_count: Count of segments analyzed
+        """
+        # Initialize counters
+        total_duration = 0.0
+        total_weighted_sentiment = 0.0
+        low_sent_duration = 0.0
+        high_sent_duration = 0.0
+        analyzed_count = 0
+        
+        # Grouping for daily data
+        daily_stats = defaultdict(lambda: {"weighted_sent": 0.0, "duration": 0.0})
+
+        for segment in audio_segments:
+            analyzed_count += 1
+            # 1. Safe extraction
+            score = SummaryService._get_sentiment_score_from_segment(segment)
+            if score is None:
+                continue
+            
+            duration = float(segment.duration_seconds or 0)
+            if duration <= 0:
+                continue
+
+            # 2. Global Totals
+
+            total_duration += duration
+            total_weighted_sentiment += score * duration
+
+            # 3. Threshold Percentages
+            if thresholds['sentiment_min_lower'] <= score <= thresholds['sentiment_min_upper']:
+                low_sent_duration += duration
+            
+            if thresholds['sentiment_max_lower'] <= score <= thresholds['sentiment_max_upper']:
+                high_sent_duration += duration
+
+            # 4. Daily Grouping
+            transcription_detail = segment.transcription_detail
+            created_at = transcription_detail.created_at
+            if not created_at:
+                continue
+            
+            date_key = created_at.strftime('%d/%m/%Y')
+            daily_stats[date_key]["weighted_sent"] += score * duration
+            daily_stats[date_key]["duration"] += duration
+
+        # Finalize Calculations
+        avg_sentiment = round(total_weighted_sentiment / total_duration, 3) if total_duration > 0 else None
+        
+        low_pct = round((low_sent_duration / total_duration) * 100, 2) if total_duration > 0 else None
+        high_pct = round((high_sent_duration / total_duration) * 100, 2) if total_duration > 0 else None
+
+        per_day = [
+            {
+                "date": d, 
+                "average_sentiment": round(stats["weighted_sent"] / stats["duration"], 3)
+            }
+            for d, stats in sorted(daily_stats.items()) if stats["duration"] > 0
+        ]
+
+        return {
+            "average_sentiment": avg_sentiment,
+            "low_sentiment": low_pct,
+            "high_sentiment": high_pct,
+            "per_day_average_sentiments": per_day,
+            "analyzed_segment_count": analyzed_count
+        }
+
+    @staticmethod
     def _parse_sentiment_score(value: Any) -> Optional[float]:
         if isinstance(value, str):
             value = value.strip().rstrip('%')
@@ -51,179 +141,6 @@ class SummaryService:
             return float(value)
         except (TypeError, ValueError):
             return None
-
-    @staticmethod
-    def get_average_sentiment(
-        audio_segments: Iterable[AudioSegments],
-    ) -> Optional[float]:
-        total_weighted_sentiment = 0.0
-        total_duration = 0.0
-        
-        for segment in audio_segments:
-            score = SummaryService._get_sentiment_score_from_segment(segment)
-            if score is None:
-                continue
-            
-            duration_seconds = float(segment.duration_seconds) if segment.duration_seconds else 0.0
-            if duration_seconds > 0:
-                total_weighted_sentiment += score * duration_seconds
-                total_duration += duration_seconds
-        if total_duration > 0:
-            return round(total_weighted_sentiment / total_duration, 3)
-        
-        return None
-
-    @staticmethod
-    def get_low_sentiment_percentage(
-        audio_segments: Iterable[AudioSegments],
-        min_lower: Optional[float] = None,
-        min_upper: Optional[float] = None,
-    ) -> Optional[float]:
-        """
-        Calculate percentage of segments with low sentiment (within range).
-        
-        Args:
-            audio_segments: List of AudioSegments with transcription_detail and analysis loaded
-            min_lower: Lower bound of low sentiment range (inclusive)
-            min_upper: Upper bound of low sentiment range (inclusive)
-        
-        Returns:
-            Percentage of low sentiment segments (rounded to 2 decimal places) or None if no data
-        """
-        # If no range is provided, return None
-        if min_lower is None and min_upper is None:
-            return None
-        
-        low_sentiment_weighted_duration = 0
-        total_duration = 0
-        
-        for segment in audio_segments:
-            score = SummaryService._get_sentiment_score_from_segment(segment)
-            if score is None:
-                continue
-            
-            # Get duration from audio segment
-            duration_seconds = segment.duration_seconds or 0
-            
-            if duration_seconds > 0:
-                total_duration += duration_seconds
-                # Check if score is within the low sentiment range
-                meets_min_lower = min_lower is None or score >= min_lower
-                meets_min_upper = min_upper is None or score <= min_upper
-                if meets_min_lower and meets_min_upper:
-                    low_sentiment_weighted_duration += duration_seconds
-        
-        if total_duration > 0:
-            percentage = (low_sentiment_weighted_duration / total_duration) * 100
-            return round(percentage, 2)
-        
-        return None
-
-    @staticmethod
-    def get_high_sentiment_percentage(
-        audio_segments: Iterable[AudioSegments],
-        max_lower: Optional[float] = None,
-        max_upper: Optional[float] = None,
-    ) -> Optional[float]:
-        """
-        Calculate percentage of segments with high sentiment (within range).
-        
-        Args:
-            audio_segments: List of AudioSegments with transcription_detail and analysis loaded
-            max_lower: Lower bound of high sentiment range (inclusive)
-            max_upper: Upper bound of high sentiment range (inclusive)
-        
-        Returns:
-            Percentage of high sentiment segments (rounded to 2 decimal places) or None if no data
-        """
-        # If no range is provided, return None
-        if max_lower is None and max_upper is None:
-            return None
-        
-        high_sentiment_weighted_duration = 0
-        total_duration = 0
-        
-        for segment in audio_segments:
-            score = SummaryService._get_sentiment_score_from_segment(segment)
-            if score is None:
-                continue
-            
-            # Get duration from audio segment
-            duration_seconds = segment.duration_seconds or 0
-            
-            if duration_seconds > 0:
-                total_duration += duration_seconds
-                # Check if score is within the high sentiment range
-                meets_max_lower = max_lower is None or score >= max_lower
-                meets_max_upper = max_upper is None or score <= max_upper
-                if meets_max_lower and meets_max_upper:
-                    high_sentiment_weighted_duration += duration_seconds
-        
-        if total_duration > 0:
-            percentage = (high_sentiment_weighted_duration / total_duration) * 100
-            return round(percentage, 2)
-        
-        return None
-
-    @staticmethod
-    def get_per_day_average_sentiments(
-        audio_segments: Iterable[AudioSegments],
-    ) -> list[dict[str, float | str]]:
-        """
-        Calculate average sentiment per day using duration-weighted formula.
-        
-        Args:
-            audio_segments: List of AudioSegments with transcription_detail and analysis loaded
-        
-        Returns:
-            List of dictionaries with 'date' and 'average_sentiment' keys
-            Format: [{'date': 'DD/MM/YYYY', 'average_sentiment': float}, ...]
-        """
-        # Group segments by date
-        daily_data: Dict[str, Dict[str, float]] = {}
-        
-        for segment in audio_segments:
-            score = SummaryService._get_sentiment_score_from_segment(segment)
-            if score is None:
-                continue
-            
-            # Get transcription_detail for date extraction
-            transcription_detail = segment.transcription_detail
-            created_at = transcription_detail.created_at
-            if not created_at:
-                continue
-            
-            # Convert to date string in DD/MM/YYYY format
-            date_key = created_at.date().strftime('%d/%m/%Y')
-            
-            # Initialize daily data if not exists
-            if date_key not in daily_data:
-                daily_data[date_key] = {
-                    'total_weighted_sentiment': 0,
-                    'total_duration': 0
-                }
-            
-            # Get duration from audio segment
-            duration_seconds = segment.duration_seconds or 0
-            
-            if duration_seconds > 0:
-                daily_data[date_key]['total_weighted_sentiment'] += score * duration_seconds
-                daily_data[date_key]['total_duration'] += duration_seconds
-        
-        # Calculate average sentiment for each day
-        result = []
-        for date_str, data in sorted(daily_data.items()):
-            if data['total_duration'] > 0:
-                avg_sentiment = round(
-                    data['total_weighted_sentiment'] / data['total_duration'],
-                    3
-                )
-                result.append({
-                    'date': date_str,
-                    'average_sentiment': avg_sentiment
-                })
-        
-        return result
 
     @staticmethod
     def _get_sentiment_thresholds(channel_id: int) -> Dict[str, float]:
@@ -419,23 +336,10 @@ class SummaryService:
         # Get channel_id from the folder for FlagCondition lookup and shift validation
         channel_id = report_folder.channel.id
         
-        # Get all saved audio segments in this folder
-        saved_segments = SavedAudioSegment.objects.filter(
-            folder=report_folder
-        ).select_related(
-            'audio_segment',
-            'audio_segment__transcription_detail',
-            'audio_segment__transcription_detail__analysis'
-        ).prefetch_related(
-            'audio_segment__channel'
-        )
-        
-        # Get audio segments from saved segments
-        audio_segment_ids = [saved.audio_segment.id for saved in saved_segments]
-        
-        # Filter by datetime range and other conditions
+        # Filter audio segments directly using reverse lookup from SavedAudioSegment
+        # This avoids loading IDs into memory and uses a single efficient JOIN query
         base_query = AudioSegments.objects.filter(
-            id__in=audio_segment_ids,
+            saved_in_folders__folder=report_folder,
             start_time__gte=start_dt,
             start_time__lt=end_dt,
             is_active=True,
@@ -446,7 +350,17 @@ class SummaryService:
             'channel',
             'transcription_detail',
             'transcription_detail__analysis'
-        )
+        ).distinct()  # Use distinct() to avoid duplicates if a segment is saved multiple times
+        
+        # Build base query for total_talk_break (same filters but doesn't require analysis)
+        total_talk_break_query = AudioSegments.objects.filter(
+            saved_in_folders__folder=report_folder,
+            start_time__gte=start_dt,
+            start_time__lt=end_dt,
+            is_active=True,
+            is_delete=False,
+            transcription_detail__isnull=False
+        ).distinct()
         
         # Apply shift filter if provided
         if shift_id is not None:
@@ -455,21 +369,15 @@ class SummaryService:
                 raise ShiftNotFound(f"Shift with id {shift_id} not found for channel {channel_id}")
             # Get Q object from shift's get_datetime_filter method
             q_object = shift.get_datetime_filter(utc_start=start_dt, utc_end=end_dt)
-            # Apply shift filter to base query
+            # Apply shift filter to both queries
             base_query = base_query.filter(q_object)
+            total_talk_break_query = total_talk_break_query.filter(q_object)
         
         # Get all audio segments with transcription and analysis
         audio_segments = list(base_query)
         
-        # Count total talk break (segments with transcription, is_active=True, is_delete=False)
-        total_talk_break = SavedAudioSegment.objects.filter(
-            folder=report_folder,
-            audio_segment__start_time__gte=start_dt,
-            audio_segment__start_time__lt=end_dt,
-            audio_segment__is_active=True,
-            audio_segment__is_delete=False,
-            audio_segment__transcription_detail__isnull=False
-        ).count()
+        # Count total talk break using the same filters (including shift if applicable)
+        total_talk_break = total_talk_break_query.count()
         
         return audio_segments, total_talk_break, channel_id
 
@@ -530,15 +438,16 @@ class SummaryService:
                     report_folder = ReportFolder.objects.select_related('channel').filter(id=report_folder_id).first()
                     if report_folder:
                         channel_id = report_folder.channel.id
-                        # Count total talk break even when shift doesn't exist
-                        total_talk_break = SavedAudioSegment.objects.filter(
-                            folder=report_folder,
-                            audio_segment__start_time__gte=start_dt,
-                            audio_segment__start_time__lt=end_dt,
-                            audio_segment__is_active=True,
-                            audio_segment__is_delete=False,
-                            audio_segment__transcription_detail__isnull=False
-                        ).count()
+                        # Count total talk break even when shift doesn't exist using reverse lookup
+                        # Note: No shift filter applied since shift doesn't exist
+                        total_talk_break = AudioSegments.objects.filter(
+                            saved_in_folders__folder=report_folder,
+                            start_time__gte=start_dt,
+                            start_time__lt=end_dt,
+                            is_active=True,
+                            is_delete=False,
+                            transcription_detail__isnull=False
+                        ).distinct().count()
                         error_response = SummaryService._build_empty_summary_response(
                             channel_id=channel_id,
                             total_talk_break=total_talk_break
@@ -584,46 +493,29 @@ class SummaryService:
         # Get sentiment thresholds from FlagCondition
         thresholds = SummaryService._get_sentiment_thresholds(channel_id)
         target_sentiment_score = thresholds['target_sentiment_score']
-        sentiment_min_lower = thresholds['sentiment_min_lower']
-        sentiment_min_upper = thresholds['sentiment_min_upper']
-        sentiment_max_lower = thresholds['sentiment_max_lower']
-        sentiment_max_upper = thresholds['sentiment_max_upper']
         
-        # Calculate all sentiment metrics
-        average_sentiment = SummaryService.get_average_sentiment(audio_segments)
-        low_sentiment_percentage = SummaryService.get_low_sentiment_percentage(
-            audio_segments,
-            min_lower=sentiment_min_lower,
-            min_upper=sentiment_min_upper
-        )
-        high_sentiment_percentage = SummaryService.get_high_sentiment_percentage(
-            audio_segments,
-            max_lower=sentiment_max_lower,
-            max_upper=sentiment_max_upper
-        )
-        per_day_average_sentiments = SummaryService.get_per_day_average_sentiments(
-            audio_segments
-        )
+        # Calculate all metrics in a single pass
+        metrics = SummaryService.calculate_all_metrics(audio_segments, thresholds)
         
         # Build and return summary data
         return {
-            'average_sentiment': average_sentiment,
+            'average_sentiment': metrics['average_sentiment'],
             'target_sentiment_score': target_sentiment_score,
-            'low_sentiment': low_sentiment_percentage,
-            'high_sentiment': high_sentiment_percentage,
-            'per_day_average_sentiments': per_day_average_sentiments,
+            'low_sentiment': metrics['low_sentiment'],
+            'high_sentiment': metrics['high_sentiment'],
+            'per_day_average_sentiments': metrics['per_day_average_sentiments'],
             'thresholds': {
                 'target_sentiment_score': target_sentiment_score,
                 'low_sentiment_range': {
-                    'min_lower': sentiment_min_lower,
-                    'min_upper': sentiment_min_upper
+                    'min_lower': thresholds['sentiment_min_lower'],
+                    'min_upper': thresholds['sentiment_min_upper']
                 },
                 'high_sentiment_range': {
-                    'max_lower': sentiment_max_lower,
-                    'max_upper': sentiment_max_upper
+                    'max_lower': thresholds['sentiment_max_lower'],
+                    'max_upper': thresholds['sentiment_max_upper']
                 }
             },
-            'analyzed_segment_count': len(audio_segments),
+            'analyzed_segment_count': metrics['analyzed_segment_count'],
             'total_talk_break': total_talk_break
         }
 
