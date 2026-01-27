@@ -160,7 +160,8 @@ class CategoryBucketCountView(APIView):
             start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             category_name (str): Category name to filter by - one of: personal, community, spiritual (required)
-            channel_id (int): Channel ID to filter by (required)
+            channel_id (int): Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id (int): Report folder ID to filter by (required if channel_id not provided)
             shift_id (int): Optional shift ID to filter by (optional)
         """
         try:
@@ -173,7 +174,8 @@ class CategoryBucketCountView(APIView):
             start_dt = validated_data['start_datetime']
             end_dt = validated_data['end_datetime']
             category_name = validated_data['category_name']
-            channel_id = validated_data['channel_id']
+            channel_id = validated_data.get('channel_id')
+            report_folder_id = validated_data.get('report_folder_id')
             shift_id = validated_data.get('shift_id')
             
             # Get bucket counts from service
@@ -182,7 +184,8 @@ class CategoryBucketCountView(APIView):
                 end_dt=end_dt,
                 category_name=category_name,
                 channel_id=channel_id,
-                shift_id=shift_id
+                shift_id=shift_id,
+                report_folder_id=report_folder_id
             )
             
             # Build response
@@ -193,6 +196,7 @@ class CategoryBucketCountView(APIView):
                     'end_datetime': request.query_params.get('end_datetime'),
                     'category_name': category_name,
                     'channel_id': channel_id,
+                    'report_folder_id': report_folder_id,
                     'shift_id': shift_id
                 }
             }
@@ -220,7 +224,8 @@ class TopTopicsView(APIView):
         Query Parameters:
             start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
-            channel_id (int): Channel ID to filter by (required)
+            channel_id (int): Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id (int): Report folder ID to filter by (required if channel_id not provided)
             shift_id (int): Optional shift ID to filter by (optional)
             show_all_topics (bool): If True, show all topics. If False, exclude topics that are in GeneralTopic model (default: False)
             sort_by (str): Sort the main 'top_topics' list by 'count' or 'duration' (default: 'duration')
@@ -238,7 +243,8 @@ class TopTopicsView(APIView):
             validated_data = serializer.validated_data
             start_dt = validated_data['start_datetime']
             end_dt = validated_data['end_datetime']
-            channel_id = validated_data['channel_id']
+            channel_id = validated_data.get('channel_id')
+            report_folder_id = validated_data.get('report_folder_id')
             shift_id = validated_data.get('shift_id')
             show_all_topics = validated_data.get('show_all_topics', False)
             sort_by = validated_data.get('sort_by', 'duration')
@@ -249,6 +255,7 @@ class TopTopicsView(APIView):
                 start_dt=start_dt,
                 end_dt=end_dt,
                 channel_id=channel_id,
+                report_folder_id=report_folder_id,
                 shift_id=shift_id,
                 limit=1000,  # High limit to get all topics
                 show_all_topics=show_all_topics
@@ -277,6 +284,7 @@ class TopTopicsView(APIView):
                     'start_datetime': start_dt.isoformat(),
                     'end_datetime': end_dt.isoformat(),
                     'channel_id': channel_id,
+                    'report_folder_id': report_folder_id,
                     'shift_id': shift_id,
                     'sort_by': sort_by
                 }
@@ -305,7 +313,8 @@ class GeneralTopicCountByShiftView(APIView):
         Query Parameters:
             start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
-            channel_id (int): Channel ID to filter by (required)
+            channel_id (int): Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id (int): Report folder ID to filter by (required if channel_id not provided)
             show_all_topics (bool): If True, show all topics. If False, only show topics that are in GeneralTopic model (default: False)
         """
         try:
@@ -321,7 +330,8 @@ class GeneralTopicCountByShiftView(APIView):
             validated_data = serializer.validated_data
             start_dt = validated_data['start_datetime']
             end_dt = validated_data['end_datetime']
-            channel_id = validated_data['channel_id']
+            channel_id = validated_data.get('channel_id')
+            report_folder_id = validated_data.get('report_folder_id')
             show_all_topics = validated_data.get('show_all_topics', False)
             
             # Get general topic counts by shift from service
@@ -329,6 +339,7 @@ class GeneralTopicCountByShiftView(APIView):
                 start_dt=start_dt,
                 end_dt=end_dt,
                 channel_id=channel_id,
+                report_folder_id=report_folder_id,
                 show_all_topics=show_all_topics
             )
             
@@ -339,6 +350,7 @@ class GeneralTopicCountByShiftView(APIView):
                     'start_datetime': request.query_params.get('start_datetime'),
                     'end_datetime': request.query_params.get('end_datetime'),
                     'channel_id': channel_id,
+                    'report_folder_id': report_folder_id,
                     'show_all_topics': show_all_topics
                 }
             }
@@ -365,7 +377,8 @@ class CSVExportView(APIView):
         Query Parameters:
             start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
-            channel_id (int): Channel ID to filter by (required)
+            channel_id (int): Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id (int): Report folder ID to filter by (required if channel_id not provided)
             shift_id (int): Optional shift ID to filter by (optional)
         """
         try:
@@ -381,7 +394,8 @@ class CSVExportView(APIView):
             validated_data = serializer.validated_data
             start_dt = validated_data['start_datetime']
             end_dt = validated_data['end_datetime']
-            channel_id = validated_data['channel_id']
+            channel_id = validated_data.get('channel_id')
+            report_folder_id = validated_data.get('report_folder_id')
             shift_id = validated_data.get('shift_id')
             
             # Get CSV export data from service
@@ -389,6 +403,7 @@ class CSVExportView(APIView):
                 start_dt=start_dt,
                 end_dt=end_dt,
                 channel_id=channel_id,
+                report_folder_id=report_folder_id,
                 shift_id=shift_id
             )
             
@@ -418,7 +433,8 @@ class WordCountView(APIView):
         Query Parameters:
             start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
-            channel_id (int): Channel ID to filter by (required)
+            channel_id (int): Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id (int): Report folder ID to filter by (required if channel_id not provided)
             shift_id (int): Optional shift ID to filter by (optional)
         
         Returns:
@@ -441,7 +457,8 @@ class WordCountView(APIView):
             validated_data = serializer.validated_data
             start_dt = validated_data['start_datetime']
             end_dt = validated_data['end_datetime']
-            channel_id = validated_data['channel_id']
+            channel_id = validated_data.get('channel_id')
+            report_folder_id = validated_data.get('report_folder_id')
             shift_id = validated_data.get('shift_id')
             
             # Get word counts from service
@@ -449,6 +466,7 @@ class WordCountView(APIView):
                 start_dt=start_dt,
                 end_dt=end_dt,
                 channel_id=channel_id,
+                report_folder_id=report_folder_id,
                 shift_id=shift_id
             )
             
@@ -459,6 +477,7 @@ class WordCountView(APIView):
                     'start_datetime': request.query_params.get('start_datetime'),
                     'end_datetime': request.query_params.get('end_datetime'),
                     'channel_id': channel_id,
+                    'report_folder_id': report_folder_id,
                     'shift_id': shift_id
                 }
             }

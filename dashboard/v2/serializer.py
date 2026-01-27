@@ -119,7 +119,8 @@ class CategoryBucketCountQuerySerializer(serializers.Serializer):
     start_datetime = serializers.DateTimeField(required=True)
     end_datetime = serializers.DateTimeField(required=True)
     category_name = serializers.CharField(required=True)
-    channel_id = serializers.IntegerField(required=True, min_value=1)
+    channel_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
+    report_folder_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
     shift_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     
     def validate_category_name(self, value):
@@ -137,15 +138,29 @@ class CategoryBucketCountQuerySerializer(serializers.Serializer):
     def validate(self, attrs):
         """
         Validate that end_datetime is after start_datetime
+        and that either channel_id or report_folder_id is provided (but not both)
         """
         start_dt = attrs.get('start_datetime')
         end_dt = attrs.get('end_datetime')
+        channel_id = attrs.get('channel_id')
+        report_folder_id = attrs.get('report_folder_id')
         
         if start_dt and end_dt:
             if end_dt <= start_dt:
                 raise serializers.ValidationError({
                     'end_datetime': 'end_datetime must be greater than start_datetime'
                 })
+        
+        # Require either channel_id or report_folder_id, but not both
+        if not channel_id and not report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Either channel_id or report_folder_id must be provided'
+            })
+
+        if channel_id and report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Cannot provide both channel_id and report_folder_id. Please provide only one.'
+            })
         
         return attrs
 
@@ -156,7 +171,8 @@ class TopicQuerySerializer(serializers.Serializer):
     """
     start_datetime = serializers.CharField(required=True)
     end_datetime = serializers.CharField(required=True)
-    channel_id = serializers.IntegerField(required=True, min_value=1)
+    channel_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
+    report_folder_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
     shift_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     show_all_topics = serializers.BooleanField(required=False, default=False)
     sort_by = serializers.ChoiceField(choices=['count', 'duration'], required=False, default='duration')
@@ -176,15 +192,29 @@ class TopicQuerySerializer(serializers.Serializer):
     def validate(self, attrs):
         """
         Validate that end_datetime is after start_datetime
+        and that either channel_id or report_folder_id is provided (but not both)
         """
         start_dt = attrs.get('start_datetime')
         end_dt = attrs.get('end_datetime')
+        channel_id = attrs.get('channel_id')
+        report_folder_id = attrs.get('report_folder_id')
         
         if start_dt and end_dt:
             if end_dt <= start_dt:
                 raise serializers.ValidationError({
                     'end_datetime': 'end_datetime must be greater than start_datetime'
                 })
+        
+        # Require either channel_id or report_folder_id, but not both
+        if not channel_id and not report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Either channel_id or report_folder_id must be provided'
+            })
+
+        if channel_id and report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Cannot provide both channel_id and report_folder_id. Please provide only one.'
+            })
         
         return attrs
 
@@ -195,7 +225,8 @@ class GeneralTopicCountByShiftQuerySerializer(serializers.Serializer):
     """
     start_datetime = serializers.CharField(required=True)
     end_datetime = serializers.CharField(required=True)
-    channel_id = serializers.IntegerField(required=True, min_value=1)
+    channel_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
+    report_folder_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
     show_all_topics = serializers.BooleanField(required=False, default=False)
     
     def validate_start_datetime(self, value):
@@ -213,15 +244,29 @@ class GeneralTopicCountByShiftQuerySerializer(serializers.Serializer):
     def validate(self, attrs):
         """
         Validate that end_datetime is after start_datetime
+        and that either channel_id or report_folder_id is provided (but not both)
         """
         start_dt = attrs.get('start_datetime')
         end_dt = attrs.get('end_datetime')
+        channel_id = attrs.get('channel_id')
+        report_folder_id = attrs.get('report_folder_id')
         
         if start_dt and end_dt:
             if end_dt <= start_dt:
                 raise serializers.ValidationError({
                     'end_datetime': 'end_datetime must be greater than start_datetime'
                 })
+        
+        # Require either channel_id or report_folder_id, but not both
+        if not channel_id and not report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Either channel_id or report_folder_id must be provided'
+            })
+
+        if channel_id and report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Cannot provide both channel_id and report_folder_id. Please provide only one.'
+            })
         
         return attrs
 
@@ -232,7 +277,8 @@ class CSVExportQuerySerializer(serializers.Serializer):
     """
     start_datetime = serializers.CharField(required=True)
     end_datetime = serializers.CharField(required=True)
-    channel_id = serializers.IntegerField(required=True, min_value=1)
+    channel_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
+    report_folder_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
     shift_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     
     def validate_start_datetime(self, value):
@@ -250,15 +296,29 @@ class CSVExportQuerySerializer(serializers.Serializer):
     def validate(self, attrs):
         """
         Validate that end_datetime is after start_datetime
+        and that either channel_id or report_folder_id is provided (but not both)
         """
         start_dt = attrs.get('start_datetime')
         end_dt = attrs.get('end_datetime')
+        channel_id = attrs.get('channel_id')
+        report_folder_id = attrs.get('report_folder_id')
         
         if start_dt and end_dt:
             if end_dt <= start_dt:
                 raise serializers.ValidationError({
                     'end_datetime': 'end_datetime must be greater than start_datetime'
                 })
+        
+        # Require either channel_id or report_folder_id, but not both
+        if not channel_id and not report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Either channel_id or report_folder_id must be provided'
+            })
+
+        if channel_id and report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Cannot provide both channel_id and report_folder_id. Please provide only one.'
+            })
         
         return attrs
 
@@ -269,7 +329,8 @@ class WordCountQuerySerializer(serializers.Serializer):
     """
     start_datetime = serializers.CharField(required=True)
     end_datetime = serializers.CharField(required=True)
-    channel_id = serializers.IntegerField(required=True, min_value=1)
+    channel_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
+    report_folder_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
     shift_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     
     def validate_start_datetime(self, value):
@@ -287,15 +348,29 @@ class WordCountQuerySerializer(serializers.Serializer):
     def validate(self, attrs):
         """
         Validate that end_datetime is after start_datetime
+        and that either channel_id or report_folder_id is provided (but not both)
         """
         start_dt = attrs.get('start_datetime')
         end_dt = attrs.get('end_datetime')
+        channel_id = attrs.get('channel_id')
+        report_folder_id = attrs.get('report_folder_id')
         
         if start_dt and end_dt:
             if end_dt <= start_dt:
                 raise serializers.ValidationError({
                     'end_datetime': 'end_datetime must be greater than start_datetime'
                 })
+        
+        # Require either channel_id or report_folder_id, but not both
+        if not channel_id and not report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Either channel_id or report_folder_id must be provided'
+            })
+
+        if channel_id and report_folder_id:
+            raise serializers.ValidationError({
+                'non_field_errors': 'Cannot provide both channel_id and report_folder_id. Please provide only one.'
+            })
         
         return attrs
 

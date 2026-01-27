@@ -210,7 +210,8 @@ class TopicService:
     def get_topics_with_both_metrics(
         start_dt: datetime,
         end_dt: datetime,
-        channel_id: int,
+        channel_id: int = None,
+        report_folder_id: int = None,
         shift_id: int = None,
         limit: int = 1000,
         show_all_topics: bool = False
@@ -222,7 +223,8 @@ class TopicService:
         Args:
             start_dt: Start datetime
             end_dt: End datetime
-            channel_id: Channel ID to filter by
+            channel_id: Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id: Report folder ID to filter by (required if channel_id not provided)
             shift_id: Optional shift ID to filter by
             limit: Number of top topics to return (default: 1000)
             show_all_topics: If True, show all topics. If False, exclude topics that are in GeneralTopic model (default: False)
@@ -230,6 +232,31 @@ class TopicService:
         Returns:
             Dictionary with topics containing both count and duration
         """
+        # Validate filter inputs
+        if channel_id is None and report_folder_id is None:
+            raise ValueError("Either channel_id or report_folder_id must be provided")
+        
+        # Handle report folder case - get channel_id from folder
+        if report_folder_id is not None:
+            from data_analysis.models import ReportFolder
+            try:
+                report_folder = ReportFolder.objects.select_related('channel').get(id=report_folder_id)
+                channel_id = report_folder.channel.id
+            except ReportFolder.DoesNotExist:
+                # If report folder doesn't exist, return empty result
+                return {
+                    'top_topics': [],
+                    'total_topics': 0,
+                    'filters': {
+                        'start_datetime': start_dt.isoformat(),
+                        'end_datetime': end_dt.isoformat(),
+                        'channel_id': None,
+                        'report_folder_id': report_folder_id,
+                        'shift_id': shift_id,
+                        'limit': limit
+                    }
+                }
+        
         # Get GeneralTopic names (only if we need to filter them out)
         generaltopic_names = None if show_all_topics else TopicService._get_all_generaltopic_names()
         
@@ -252,6 +279,10 @@ class TopicService:
             transcription_detail__audio_segment__start_time__lt=utc_end,
             transcription_detail__audio_segment__is_delete=False
         )
+        
+        # Add report_folder_id filter if provided
+        if report_folder_id is not None:
+            query &= Q(transcription_detail__audio_segment__saved_in_folders__folder_id=report_folder_id)
         
         if shift_id:
             from shift_analysis.models import Shift
@@ -278,6 +309,10 @@ class TopicService:
         ).select_related(
             'transcription_detail__audio_segment'
         )
+        
+        # Use distinct() when report_folder_id is used to avoid duplicates from the join
+        if report_folder_id is not None:
+            analyses = analyses.distinct()
         
         # Track both metrics in a single pass
         # Use dictionaries to track segments and their durations per topic
@@ -354,6 +389,7 @@ class TopicService:
                 'start_datetime': start_dt.isoformat(),
                 'end_datetime': end_dt.isoformat(),
                 'channel_id': channel_id,
+                'report_folder_id': report_folder_id,
                 'shift_id': shift_id,
                 'limit': limit
             }
@@ -391,7 +427,8 @@ class TopicService:
     def get_general_topic_counts_by_shift(
         start_dt: datetime,
         end_dt: datetime,
-        channel_id: int,
+        channel_id: int = None,
+        report_folder_id: int = None,
         show_all_topics: bool = False
     ) -> Dict:
         """
@@ -400,7 +437,8 @@ class TopicService:
         Args:
             start_dt: Start datetime
             end_dt: End datetime
-            channel_id: Channel ID to filter by
+            channel_id: Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id: Report folder ID to filter by (required if channel_id not provided)
             show_all_topics: If True, show all topics. If False, only show topics that are in GeneralTopic model (default: False)
             
         Returns:
@@ -409,6 +447,30 @@ class TopicService:
         from shift_analysis.models import Shift
         from shift_analysis.utils import filter_segments_by_shift
         from zoneinfo import ZoneInfo
+        
+        # Validate filter inputs
+        if channel_id is None and report_folder_id is None:
+            raise ValueError("Either channel_id or report_folder_id must be provided")
+        
+        # Handle report folder case - get channel_id from folder
+        if report_folder_id is not None:
+            from data_analysis.models import ReportFolder
+            try:
+                report_folder = ReportFolder.objects.select_related('channel').get(id=report_folder_id)
+                channel_id = report_folder.channel.id
+            except ReportFolder.DoesNotExist:
+                # If report folder doesn't exist, return empty result
+                return {
+                    'shifts': [],
+                    'total_shifts': 0,
+                    'filters': {
+                        'start_datetime': start_dt.isoformat(),
+                        'end_datetime': end_dt.isoformat(),
+                        'channel_id': None,
+                        'report_folder_id': report_folder_id,
+                        'show_all_topics': show_all_topics
+                    }
+                }
         
         # Get all active shifts for the channel
         active_shifts = Shift.objects.filter(
@@ -446,10 +508,22 @@ class TopicService:
                     channel_id=channel_id,
                     is_delete=False,
                     is_active=True
-                ).select_related(
+                )
+                
+                # Add report_folder_id filter if provided
+                if report_folder_id is not None:
+                    shift_segments = shift_segments.filter(
+                        saved_in_folders__folder_id=report_folder_id
+                    )
+                
+                shift_segments = shift_segments.select_related(
                     'transcription_detail',
                     'transcription_detail__analysis'
                 )
+                
+                # Use distinct() when report_folder_id is used to avoid duplicates from the join
+                if report_folder_id is not None:
+                    shift_segments = shift_segments.distinct()
                 
                 # Convert queryset to list to ensure related data is loaded
                 # This is needed for both sentiment calculation and getting segment IDs
@@ -554,6 +628,7 @@ class TopicService:
                 'start_datetime': start_dt.isoformat(),
                 'end_datetime': end_dt.isoformat(),
                 'channel_id': channel_id,
+                'report_folder_id': report_folder_id,
                 'show_all_topics': show_all_topics
             }
         }

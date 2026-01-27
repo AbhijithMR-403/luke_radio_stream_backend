@@ -18,7 +18,8 @@ class CSVExportService:
     def get_transcription_analyses_for_export(
         start_dt: datetime,
         end_dt: datetime,
-        channel_id: int,
+        channel_id: int = None,
+        report_folder_id: Optional[int] = None,
         shift_id: Optional[int] = None
     ) -> List[TranscriptionAnalysis]:
         """
@@ -27,12 +28,27 @@ class CSVExportService:
         Args:
             start_dt: Start datetime (timezone-aware)
             end_dt: End datetime (timezone-aware)
-            channel_id: Channel ID to filter by
+            channel_id: Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id: Report folder ID to filter by (required if channel_id not provided)
             shift_id: Optional shift ID to filter by
         
         Returns:
             QuerySet of TranscriptionAnalysis records with active audio segments, ordered by start_time
         """
+        # Validate filter inputs
+        if channel_id is None and report_folder_id is None:
+            raise ValueError("Either channel_id or report_folder_id must be provided")
+        
+        # Handle report folder case - get channel_id from folder
+        if report_folder_id is not None:
+            from data_analysis.models import ReportFolder
+            try:
+                report_folder = ReportFolder.objects.select_related('channel').get(id=report_folder_id)
+                channel_id = report_folder.channel.id
+            except ReportFolder.DoesNotExist:
+                # If report folder doesn't exist, return empty queryset
+                return TranscriptionAnalysis.objects.none()
+        
         # Build Q object for filtering by date range, channel, and active status
         base_q = Q(
             transcription_detail__audio_segment__start_time__gte=start_dt,
@@ -40,6 +56,10 @@ class CSVExportService:
             transcription_detail__audio_segment__channel_id=channel_id,
             transcription_detail__audio_segment__is_active=True
         )
+        
+        # Add report_folder_id filter if provided
+        if report_folder_id is not None:
+            base_q &= Q(transcription_detail__audio_segment__saved_in_folders__folder_id=report_folder_id)
         
         # Apply shift filtering if shift_id is provided
         if shift_id is not None:
@@ -62,7 +82,13 @@ class CSVExportService:
             'transcription_detail',
             'transcription_detail__audio_segment',
             'transcription_detail__audio_segment__channel'
-        ).order_by('transcription_detail__audio_segment__start_time')
+        )
+        
+        # Use distinct() when report_folder_id is used to avoid duplicates from the join
+        if report_folder_id is not None:
+            analyses = analyses.distinct()
+        
+        analyses = analyses.order_by('transcription_detail__audio_segment__start_time')
         
         return analyses
 
@@ -137,6 +163,7 @@ class CSVExportService:
         channel_id: int,
         start_dt: datetime,
         end_dt: datetime,
+        report_folder_id: Optional[int] = None,
         shift_id: Optional[int] = None
     ) -> str:
         """
@@ -146,6 +173,7 @@ class CSVExportService:
             channel_id: Channel ID
             start_dt: Start datetime
             end_dt: End datetime
+            report_folder_id: Optional report folder ID
             shift_id: Optional shift ID
         
         Returns:
@@ -154,7 +182,12 @@ class CSVExportService:
         start_str = start_dt.strftime('%Y%m%d_%H%M%S')
         end_str = end_dt.strftime('%Y%m%d_%H%M%S')
         
-        if shift_id:
+        if report_folder_id:
+            if shift_id:
+                filename = f'transcription_export_folder_{report_folder_id}_shift_{shift_id}_{start_str}_to_{end_str}.csv'
+            else:
+                filename = f'transcription_export_folder_{report_folder_id}_{start_str}_to_{end_str}.csv'
+        elif shift_id:
             filename = f'transcription_export_{channel_id}_shift_{shift_id}_{start_str}_to_{end_str}.csv'
         else:
             filename = f'transcription_export_{channel_id}_{start_str}_to_{end_str}.csv'
@@ -165,7 +198,8 @@ class CSVExportService:
     def export_to_csv(
         start_dt: datetime,
         end_dt: datetime,
-        channel_id: int,
+        channel_id: int = None,
+        report_folder_id: Optional[int] = None,
         shift_id: Optional[int] = None
     ) -> Dict[str, str]:
         """
@@ -174,7 +208,8 @@ class CSVExportService:
         Args:
             start_dt: Start datetime (timezone-aware)
             end_dt: End datetime (timezone-aware)
-            channel_id: Channel ID to filter by
+            channel_id: Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id: Report folder ID to filter by (required if channel_id not provided)
             shift_id: Optional shift ID to filter by
         
         Returns:
@@ -187,17 +222,29 @@ class CSVExportService:
             start_dt=start_dt,
             end_dt=end_dt,
             channel_id=channel_id,
+            report_folder_id=report_folder_id,
             shift_id=shift_id
         )
         
         # Generate CSV content
         csv_content = CSVExportService.generate_csv_content(analyses)
         
+        # Get channel_id for filename (either from parameter or from report_folder)
+        filename_channel_id = channel_id
+        if report_folder_id is not None and filename_channel_id is None:
+            from data_analysis.models import ReportFolder
+            try:
+                report_folder = ReportFolder.objects.select_related('channel').get(id=report_folder_id)
+                filename_channel_id = report_folder.channel.id
+            except ReportFolder.DoesNotExist:
+                filename_channel_id = None
+        
         # Generate filename
         filename = CSVExportService.generate_csv_filename(
-            channel_id=channel_id,
+            channel_id=filename_channel_id,
             start_dt=start_dt,
             end_dt=end_dt,
+            report_folder_id=report_folder_id,
             shift_id=shift_id
         )
         

@@ -95,7 +95,8 @@ class WordCountService:
     def get_transcription_texts(
         start_dt: datetime,
         end_dt: datetime,
-        channel_id: int,
+        channel_id: int = None,
+        report_folder_id: Optional[int] = None,
         shift_id: Optional[int] = None
     ) -> Iterator[str]:
         """
@@ -105,18 +106,37 @@ class WordCountService:
         Args:
             start_dt: Start datetime (timezone-aware)
             end_dt: End datetime (timezone-aware)
-            channel_id: Channel ID to filter by
+            channel_id: Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id: Report folder ID to filter by (required if channel_id not provided)
             shift_id: Optional shift ID to filter by
         
         Returns:
             Iterator of transcription text strings
         """
+        # Validate filter inputs
+        if channel_id is None and report_folder_id is None:
+            raise ValueError("Either channel_id or report_folder_id must be provided")
+        
+        # Handle report folder case - get channel_id from folder
+        if report_folder_id is not None:
+            from data_analysis.models import ReportFolder
+            try:
+                report_folder = ReportFolder.objects.select_related('channel').get(id=report_folder_id)
+                channel_id = report_folder.channel.id
+            except ReportFolder.DoesNotExist:
+                # If report folder doesn't exist, return empty iterator
+                return iter([])
+        
         # Build Q object for filtering by date range and channel
         base_q = Q(
             audio_segment__start_time__gte=start_dt,
             audio_segment__start_time__lte=end_dt,
             audio_segment__channel_id=channel_id,
         )
+        
+        # Add report_folder_id filter if provided
+        if report_folder_id is not None:
+            base_q &= Q(audio_segment__saved_in_folders__folder_id=report_folder_id)
         
         # Apply shift filtering if shift_id is provided
         if shift_id is not None:
@@ -135,7 +155,13 @@ class WordCountService:
         # Get transcription texts as an iterator (memory-efficient)
         transcription_texts = TranscriptionDetail.objects.filter(
             base_q
-        ).values_list('transcript', flat=True).iterator()
+        )
+        
+        # Use distinct() when report_folder_id is used to avoid duplicates from the join
+        if report_folder_id is not None:
+            transcription_texts = transcription_texts.distinct()
+        
+        transcription_texts = transcription_texts.values_list('transcript', flat=True).iterator()
         
         return transcription_texts
 
@@ -209,7 +235,8 @@ class WordCountService:
     def get_word_counts(
         start_dt: datetime,
         end_dt: datetime,
-        channel_id: int,
+        channel_id: int = None,
+        report_folder_id: Optional[int] = None,
         shift_id: Optional[int] = None
     ) -> Dict[str, any]:
         """
@@ -218,7 +245,8 @@ class WordCountService:
         Args:
             start_dt: Start datetime (timezone-aware)
             end_dt: End datetime (timezone-aware)
-            channel_id: Channel ID to filter by
+            channel_id: Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id: Report folder ID to filter by (required if channel_id not provided)
             shift_id: Optional shift ID to filter by
         
         Returns:
@@ -232,6 +260,7 @@ class WordCountService:
             start_dt=start_dt,
             end_dt=end_dt,
             channel_id=channel_id,
+            report_folder_id=report_folder_id,
             shift_id=shift_id
         )
         

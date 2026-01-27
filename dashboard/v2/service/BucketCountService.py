@@ -535,8 +535,9 @@ class BucketCountService:
         start_dt: datetime,
         end_dt: datetime,
         category_name: str,
-        channel_id: int,
-        shift_id: Optional[int] = None
+        channel_id: Optional[int] = None,
+        shift_id: Optional[int] = None,
+        report_folder_id: Optional[int] = None
     ) -> Dict[str, any]:
         """
         Get count and percentage of each bucket within a specific category.
@@ -545,8 +546,9 @@ class BucketCountService:
             start_dt: Start datetime (timezone-aware)
             end_dt: End datetime (timezone-aware)
             category_name: Category to filter by (personal, community, spiritual)
-            channel_id: Channel ID to filter by
+            channel_id: Channel ID to filter by (required if report_folder_id not provided)
             shift_id: Optional shift ID to filter by
+            report_folder_id: Report folder ID to filter by (required if channel_id not provided)
         
         Returns:
             Dictionary containing:
@@ -558,6 +560,23 @@ class BucketCountService:
         valid_categories = [choice[0] for choice in WellnessBucket.CATEGORY_CHOICES]
         if category_name not in valid_categories:
             raise ValueError(f'category_name must be one of: {", ".join(valid_categories)}')
+        
+        # Handle report folder case - get channel_id from folder
+        if report_folder_id is not None:
+            try:
+                report_folder = ReportFolder.objects.select_related('channel').get(id=report_folder_id)
+                channel_id = report_folder.channel.id
+            except ReportFolder.DoesNotExist:
+                # If report folder doesn't exist, return empty result
+                return {
+                    'buckets': {},
+                    'total': 0,
+                    'category': category_name,
+                    'total_time_period_seconds': (end_dt - start_dt).total_seconds(),
+                    'total_time_period_hours': round((end_dt - start_dt).total_seconds() / 3600, 2),
+                    'total_filtered_duration_seconds': 0,
+                    'total_filtered_duration_hours': 0
+                }
         
         # Check if channel exists and is active
         try:
@@ -586,6 +605,7 @@ class BucketCountService:
         # Get audio segments using AudioSegmentDAO.filter()
         audio_segments_query = AudioSegmentDAO.filter(
             channel=channel_id,
+            report_folder_id=report_folder_id,
             start_time=start_dt,
             end_time=end_dt
         )
