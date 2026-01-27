@@ -5,7 +5,7 @@ from typing import Optional
 
 from django.db.models import QuerySet
 
-from acr_admin.models import Channel
+from core_admin.models import Channel
 from data_analysis.models import AudioSegments
 
 
@@ -15,17 +15,20 @@ class AudioSegmentDAO:
     @staticmethod
     def filter(
         *,
-        channel: int | Channel,
-        start_time: datetime | None,
-        end_time: Optional[datetime] = None,
+        channel: int | Channel | None = None,
+        report_folder_id: int| None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
     ) -> QuerySet[AudioSegments]:
         """
         Optimized filter method for AudioSegments with maximum database performance.
         
-        This method is designed to use database indexes efficiently:
+        This method supports filtering by either channel or report_folder_id (or both).
+        It is designed to use database indexes efficiently:
         - Uses ['channel', 'start_time'] index when channel and start_time are provided
         - Uses ['channel', 'is_delete'] index for is_delete filter
         - Uses ['channel', 'is_active'] index for is_active filter
+        - Uses ['folder'] index on SavedAudioSegment when report_folder_id is provided
         
         Automatically applies filters:
         - is_active=True (only active segments)
@@ -34,9 +37,11 @@ class AudioSegmentDAO:
         Automatically includes related data from:
         - transcription_detail (OneToOneField)
         - transcription_detail.analysis (OneToOneField via TranscriptionDetail)
+        - channel (ForeignKey) - included when report_folder_id is used or when needed
         
         Args:
-            channel: Filter by channel ID or Channel object (required)
+            channel: Filter by channel ID or Channel object (optional, but at least one of channel or report_folder_id must be provided)
+            report_folder_id: Filter by report folder ID (optional, but at least one of channel or report_folder_id must be provided)
             start_time: Filter segments with start_time >= start_time
             end_time: Filter segments with start_time <= end_time (uses start_time index for optimization)
         
@@ -54,23 +59,31 @@ class AudioSegmentDAO:
             # Filter by channel only
             segments = AudioSegmentDAO.filter(channel=1)
             
-            # Filter by channel and start_time only
-            segments = AudioSegmentDAO.filter(
-                channel=1,
-                start_time=datetime(2024, 1, 1)
-            )
         """
-        # Extract channel ID if Channel object is provided
-        channel_id = channel.id if isinstance(channel, Channel) else channel
+        # Validate that at least one filter is provided
+        if channel is None and report_folder_id is None:
+            raise ValueError("At least one of 'channel' or 'report_folder_id' must be provided")
         
-        # Start with channel filter first for optimal index usage
-        # This uses the ['channel', 'start_time'] composite index efficiently
-        qs = AudioSegments.objects.filter(channel_id=channel_id)
+        # Start with base queryset
+        qs = AudioSegments.objects.all()
         
-        # Apply is_delete filter early (uses ['channel', 'is_delete'] index)
+        # Apply channel filter if provided
+        if channel is not None:
+            # Extract channel ID if Channel object is provided
+            channel_id = channel.id if isinstance(channel, Channel) else channel
+            # This uses the ['channel', 'start_time'] composite index efficiently
+            qs = qs.filter(channel_id=channel_id)
+        
+        # Apply report_folder_id filter if provided
+        if report_folder_id is not None:
+            # Filter through SavedAudioSegment relationship using report_folder_id
+            # This uses the ['folder'] index on SavedAudioSegment efficiently
+            qs = qs.filter(saved_in_folders__folder_id=report_folder_id)
+        
+        # Apply is_delete filter early
         qs = qs.filter(is_delete=False)
         
-        # Apply start_time filter (uses ['channel', 'start_time'] index)
+        # Apply start_time filter (uses ['channel', 'start_time'] index when channel is provided)
         if start_time is not None:
             qs = qs.filter(start_time__gte=start_time)
         
@@ -79,17 +92,22 @@ class AudioSegmentDAO:
         if end_time is not None:
             qs = qs.filter(start_time__lte=end_time)
         
-        # Apply is_active filter (uses ['channel', 'is_active'] index)
+        # Apply is_active filter (uses ['channel', 'is_active'] index when channel is provided)
         qs = qs.filter(is_active=True)
         
         # Optimize with select_related for ForeignKey and OneToOne relationships
-        # This fetches transcription_detail and transcription_detail.analysis in a single query
+        # Channel is always included since at least one of channel or report_folder_id must be provided
         qs = qs.select_related(
+            'channel',
             'transcription_detail',
             'transcription_detail__analysis'
         )
         
-        # Order by start_time (uses the same ['channel', 'start_time'] index)
+        # Use distinct() when report_folder_id is used to avoid duplicates from the join
+        if report_folder_id is not None:
+            qs = qs.distinct()
+        
+        # Order by start_time (uses the same ['channel', 'start_time'] index when channel is provided)
         qs = qs.order_by('start_time')
         
         return qs

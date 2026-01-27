@@ -98,7 +98,8 @@ class BucketCountView(APIView):
         Query Parameters:
             start_datetime (str): Start datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
-            channel_id (int): Channel ID to filter by (required)
+            channel_id (int): Channel ID to filter by (required if report_folder_id not provided)
+            report_folder_id (int): Report folder ID to filter by (required if channel_id not provided)
             shift_id (int): Optional shift ID to filter by (optional)
         """
         try:
@@ -114,7 +115,8 @@ class BucketCountView(APIView):
             validated_data = serializer.validated_data
             start_dt = validated_data['start_datetime']
             end_dt = validated_data['end_datetime']
-            channel_id = validated_data['channel_id']
+            channel_id = validated_data.get('channel_id')
+            report_folder_id = validated_data.get('report_folder_id')
             shift_id = validated_data.get('shift_id')
             
             # Get bucket counts from service
@@ -122,16 +124,18 @@ class BucketCountView(APIView):
                 start_dt=start_dt,
                 end_dt=end_dt,
                 channel_id=channel_id,
-                shift_id=shift_id
+                shift_id=shift_id,
+                report_folder_id=report_folder_id,
             )
             
             # Build response
             response_data = {
                 **bucket_data,
                 'filters': {
-                    'start_datetime': request.query_params.get('start_datetime'),
-                    'end_datetime': request.query_params.get('end_datetime'),
+                    'start_datetime': start_dt,
+                    'end_datetime': end_dt,
                     'channel_id': channel_id,
+                    'report_folder_id': report_folder_id,
                     'shift_id': shift_id
                 }
             }

@@ -4,9 +4,10 @@ from django.db.models import QuerySet, Q
 from django.utils import timezone
 from collections import defaultdict
 
-from data_analysis.models import TranscriptionAnalysis
+from data_analysis.models import TranscriptionAnalysis, ReportFolder
 from core_admin.models import WellnessBucket, Channel
 from shift_analysis.models import Shift
+from dashboard.repositories import AudioSegmentDAO
 
 
 class BucketCountService:
@@ -191,37 +192,6 @@ class BucketCountService:
         
         return found_categories
 
-    @staticmethod
-    def _convert_shift_q_for_transcription_analysis(q_obj: Q) -> Q:
-        """
-        Convert a Q object designed for AudioSegments to work with TranscriptionAnalysis.
-        Prefixes field names with 'transcription_detail__audio_segment__'
-        
-        Args:
-            q_obj: Q object with AudioSegments field names
-        
-        Returns:
-            Q object with prefixed field names for TranscriptionAnalysis
-        """
-        if not q_obj.children:
-            return q_obj
-        
-        # Build a new Q object with converted field names
-        converted_children = []
-        for child in q_obj.children:
-            if isinstance(child, Q):
-                # Recursively process nested Q objects
-                converted_children.append(BucketCountService._convert_shift_q_for_transcription_analysis(child))
-            elif isinstance(child, tuple):
-                # Convert field name: ('start_time__lt', value) -> ('transcription_detail__audio_segment__start_time__lt', value)
-                field_name, value = child
-                new_field_name = f'transcription_detail__audio_segment__{field_name}'
-                converted_children.append((new_field_name, value))
-            else:
-                converted_children.append(child)
-        
-        # Create new Q object with converted children and same connector
-        return Q(*converted_children, _connector=q_obj.connector, _negated=q_obj.negated)
 
     @staticmethod
     def _get_last_6_months() -> List[Tuple[str, datetime, datetime]]:
@@ -264,8 +234,9 @@ class BucketCountService:
     def get_bucket_counts(
         start_dt: datetime,
         end_dt: datetime,
-        channel_id: int,
-        shift_id: Optional[int] = None
+        channel_id: Optional[int] = None,
+        shift_id: Optional[int] = None,
+        report_folder_id: Optional[int] = None,
     ) -> Dict[str, any]:
         """
         Get count of audio segments analyzed from bucket_prompt, classified by category.
@@ -274,8 +245,9 @@ class BucketCountService:
         Args:
             start_dt: Start datetime (timezone-aware) - used for overall counts only
             end_dt: End datetime (timezone-aware) - used for overall counts only
-            channel_id: Channel ID to filter by
+            channel_id: Channel ID to filter by (required if report_folder_id not provided)
             shift_id: Optional shift ID to filter by
+            report_folder_id: Optional report folder ID to filter by (required if channel_id not provided)
         
         Returns:
             Dictionary containing:
@@ -283,31 +255,47 @@ class BucketCountService:
             - total: Total count across all categories
             - monthly_breakdown: Monthly breakdown for last 6 months (excluding current month)
         """
+        # Validate filter inputs
+        if channel_id is None and report_folder_id is None:
+            raise ValueError("Either channel_id or report_folder_id must be provided")
+
         # Get bucket title to category mapping
         bucket_title_to_category = BucketCountService._get_bucket_title_to_category_mapping()
         
         # Get last 6 months (excluding current month)
         last_6_months = BucketCountService._get_last_6_months()
         
-        # Build Q object for filtering by date range and channel
-        base_q = Q(
-            transcription_detail__audio_segment__start_time__gte=start_dt,
-            transcription_detail__audio_segment__start_time__lte=end_dt,
-            transcription_detail__audio_segment__channel_id=channel_id,
-            bucket_prompt__isnull=False
+        # Handle report folder case - get channel_id from folder
+        if report_folder_id is not None:
+            try:
+                report_folder = ReportFolder.objects.select_related('channel').get(id=report_folder_id)
+                channel_id = report_folder.channel.id
+            except ReportFolder.DoesNotExist:
+                # If report folder doesn't exist, return empty result
+                return {
+                    'personal': {'count': 0, 'percentage': 0.0},
+                    'community': {'count': 0, 'percentage': 0.0},
+                    'spiritual': {'count': 0, 'percentage': 0.0},
+                    'total': 0,
+                    'monthly_breakdown': {}
+                }
+        
+        # Get audio segments using AudioSegmentDAO.filter()
+        audio_segments_query = AudioSegmentDAO.filter(
+            channel=channel_id,
+            report_folder_id=report_folder_id,
+            start_time=start_dt,
+            end_time=end_dt
         )
         
         # Apply shift filtering if shift_id is provided
         if shift_id is not None:
             try:
                 shift = Shift.objects.get(id=shift_id, channel_id=channel_id)
-                # Get Q object from shift's get_datetime_filter method
-                # This returns Q object for AudioSegments, so we need to prefix with relationship path
+                # Get Q object from shift's get_datetime_filter method (for AudioSegments)
                 shift_q = shift.get_datetime_filter(utc_start=start_dt, utc_end=end_dt)
-                # Convert Q object to work with TranscriptionAnalysis by prefixing field paths
-                shift_q_modified = BucketCountService._convert_shift_q_for_transcription_analysis(shift_q)
-                # Combine with base query
-                base_q = base_q & shift_q_modified
+                # Apply shift filter directly to AudioSegments query
+                audio_segments_query = audio_segments_query.filter(shift_q)
             except Shift.DoesNotExist:
                 # If shift doesn't exist, return empty result
                 return {
@@ -318,56 +306,49 @@ class BucketCountService:
                     'monthly_breakdown': {}
                 }
         
-        # Get all TranscriptionAnalysis records with bucket_prompt in the date range (for overall counts)
-        analyses = TranscriptionAnalysis.objects.filter(
-            base_q
-        ).exclude(
-            bucket_prompt=''
-        ).select_related(
-            'transcription_detail__audio_segment'
-        )
+        # Get audio segments - bucket_prompt data is already loaded via select_related in AudioSegmentDAO.filter()
+        # Access it safely via: getattr(getattr(segment, 'transcription_detail', None), 'analysis', None).bucket_prompt
+        audio_segments = list(audio_segments_query)
         
-        # Build Q object for last 6 months query
-        monthly_q_objects = Q()
-        for month_key, month_start, month_end in last_6_months:
-            monthly_q_objects |= Q(
-                transcription_detail__audio_segment__start_time__gte=month_start,
-                transcription_detail__audio_segment__start_time__lte=month_end,
-                transcription_detail__audio_segment__channel_id=channel_id
+        # Get audio segments for last 6 months (independent of start_dt/end_dt)
+        # Optimize: Get all 6 months in a single query instead of 6 separate queries
+        if last_6_months:
+            # Find the earliest start and latest end across all 6 months
+            earliest_month_start = min(month_start for _, month_start, _ in last_6_months)
+            latest_month_end = max(month_end for _, _, month_end in last_6_months)
+            
+            # Get all audio segments for the entire 6-month period in one query
+            monthly_segments_query = AudioSegmentDAO.filter(
+                channel=channel_id,
+                report_folder_id=report_folder_id,
+                start_time=earliest_month_start,
+                end_time=latest_month_end
             )
-        
-        # Apply shift filtering to monthly query if shift_id is provided
-        if shift_id is not None:
-            try:
-                shift = Shift.objects.get(id=shift_id, channel_id=channel_id)
-                # For monthly breakdown, we need to apply shift filter for each month
-                # Build combined Q object for all months with shift filtering
-                monthly_shift_q = Q()
-                for month_key, month_start, month_end in last_6_months:
-                    shift_q = shift.get_datetime_filter(utc_start=month_start, utc_end=month_end)
-                    # Convert shift Q object for TranscriptionAnalysis
-                    shift_q_modified = BucketCountService._convert_shift_q_for_transcription_analysis(shift_q)
-                    monthly_shift_q |= (
-                        Q(
-                            transcription_detail__audio_segment__start_time__gte=month_start,
-                            transcription_detail__audio_segment__start_time__lte=month_end,
-                            transcription_detail__audio_segment__channel_id=channel_id
-                        ) & shift_q_modified
-                    )
-                monthly_q_objects = monthly_shift_q
-            except Shift.DoesNotExist:
-                # If shift doesn't exist, monthly breakdown will be empty
-                monthly_q_objects = Q(pk__in=[])  # Empty query
-        
-        # Get analyses for last 6 months (independent of start_dt/end_dt)
-        monthly_analyses = TranscriptionAnalysis.objects.filter(
-            monthly_q_objects,
-            bucket_prompt__isnull=False
-        ).exclude(
-            bucket_prompt=''
-        ).select_related(
-            'transcription_detail__audio_segment'
-        )
+            
+            # Apply shift filtering if shift_id is provided
+            # Combine shift Q objects for all months with OR (since shift windows may vary by month)
+            if shift_id is not None:
+                try:
+                    shift = Shift.objects.get(id=shift_id, channel_id=channel_id)
+                    # Build combined shift Q object for all months
+                    combined_shift_q = Q()
+                    for month_key, month_start, month_end in last_6_months:
+                        month_shift_q = shift.get_datetime_filter(utc_start=month_start, utc_end=month_end)
+                        combined_shift_q |= month_shift_q
+                    monthly_segments_query = monthly_segments_query.filter(combined_shift_q)
+                except Shift.DoesNotExist:
+                    # If shift doesn't exist, monthly breakdown will be empty
+                    monthly_segments_query = AudioSegmentDAO.filter(
+                        channel=channel_id,
+                        report_folder_id=report_folder_id,
+                        start_time=earliest_month_start,
+                        end_time=latest_month_end
+                    ).none()  # Return empty queryset
+            
+            # Get audio segments for the 6-month period - bucket_prompt data is already loaded
+            monthly_segments = list(monthly_segments_query)
+        else:
+            monthly_segments = []
         
         # Initialize category counts for overall
         category_counts = {
@@ -386,9 +367,16 @@ class BucketCountService:
                 'spiritual': 0
             }
         
-        # Process each analysis for overall counts
-        for analysis in analyses:
-            bucket_text = analysis.bucket_prompt
+        # Process each audio segment for overall counts
+        # Bucket prompt data is already loaded via select_related
+        for segment in audio_segments:
+            # Access bucket_prompt from the already-loaded analysis using getattr for safety
+            transcription_detail = getattr(segment, 'transcription_detail', None)
+            analysis = getattr(transcription_detail, 'analysis', None) if transcription_detail else None
+            if not analysis:
+                continue
+            
+            bucket_text = getattr(analysis, 'bucket_prompt', None)
             if not bucket_text:
                 continue
             
@@ -403,18 +391,33 @@ class BucketCountService:
                 if category in category_counts:
                     category_counts[category] += 1
         
-        # Process monthly analyses
-        for analysis in monthly_analyses:
-            bucket_text = analysis.bucket_prompt
+        # Process monthly segments - group by month in Python
+        # Create a mapping of month_key to (month_start, month_end) for efficient lookup
+        month_ranges = {month_key: (month_start, month_end) for month_key, month_start, month_end in last_6_months}
+        
+        for segment in monthly_segments:
+            # Access bucket_prompt from the already-loaded analysis using getattr for safety
+            transcription_detail = getattr(segment, 'transcription_detail', None)
+            analysis = getattr(transcription_detail, 'analysis', None) if transcription_detail else None
+            if not analysis:
+                continue
+            
+            bucket_text = getattr(analysis, 'bucket_prompt', None)
             if not bucket_text:
                 continue
             
-            # Get the month of this analysis
-            segment_start_time = analysis.transcription_detail.audio_segment.start_time
-            month_key = segment_start_time.strftime('%Y-%m')
+            # Get the segment's start_time to determine which month it belongs to
+            segment_start_time = segment.start_time
+            segment_month_key = segment_start_time.strftime('%Y-%m')
             
             # Only process if it's in our last 6 months list
-            if month_key not in monthly_counts:
+            if segment_month_key not in monthly_counts:
+                continue
+            
+            # Verify the segment is actually within the month's date range
+            # (important when using combined shift filters)
+            month_start, month_end = month_ranges[segment_month_key]
+            if not (month_start <= segment_start_time <= month_end):
                 continue
             
             # Extract categories from bucket_prompt
@@ -425,8 +428,8 @@ class BucketCountService:
             
             # Count each found category for this month
             for category in found_categories:
-                if category in monthly_counts[month_key]:
-                    monthly_counts[month_key][category] += 1
+                if category in monthly_counts[segment_month_key]:
+                    monthly_counts[segment_month_key][category] += 1
         
         # Calculate total and percentages for overall
         total = sum(category_counts.values())
@@ -580,25 +583,21 @@ class BucketCountService:
             if cat == category_name
         }
         
-        # Build Q object for filtering by date range and channel
-        base_q = Q(
-            transcription_detail__audio_segment__start_time__gte=start_dt,
-            transcription_detail__audio_segment__start_time__lte=end_dt,
-            transcription_detail__audio_segment__channel_id=channel_id,
-            bucket_prompt__isnull=False
+        # Get audio segments using AudioSegmentDAO.filter()
+        audio_segments_query = AudioSegmentDAO.filter(
+            channel=channel_id,
+            start_time=start_dt,
+            end_time=end_dt
         )
         
         # Apply shift filtering if shift_id is provided
         if shift_id is not None:
             try:
                 shift = Shift.objects.get(id=shift_id, channel_id=channel_id)
-                # Get Q object from shift's get_datetime_filter method
-                # This returns Q object for AudioSegments, so we need to prefix with relationship path
+                # Get Q object from shift's get_datetime_filter method (for AudioSegments)
                 shift_q = shift.get_datetime_filter(utc_start=start_dt, utc_end=end_dt)
-                # Convert Q object to work with TranscriptionAnalysis by prefixing field paths
-                shift_q_modified = BucketCountService._convert_shift_q_for_transcription_analysis(shift_q)
-                # Combine with base query
-                base_q = base_q & shift_q_modified
+                # Apply shift filter directly to AudioSegments query
+                audio_segments_query = audio_segments_query.filter(shift_q)
             except Shift.DoesNotExist:
                 # If shift doesn't exist, return empty result
                 return {
@@ -611,14 +610,8 @@ class BucketCountService:
                     'total_filtered_duration_hours': 0
                 }
         
-        # Get all TranscriptionAnalysis records with bucket_prompt in the date range
-        analyses = TranscriptionAnalysis.objects.filter(
-            base_q
-        ).exclude(
-            bucket_prompt=''
-        ).select_related(
-            'transcription_detail__audio_segment'
-        )
+        # Get audio segments - bucket_prompt data is already loaded via select_related in AudioSegmentDAO.filter()
+        audio_segments = list(audio_segments_query)
 
         # Initialize bucket counts and durations for this category
         bucket_counts = {bucket_title: 0 for bucket_title in category_buckets.keys()}
@@ -627,15 +620,20 @@ class BucketCountService:
         # Track total filtered duration
         total_filtered_duration = 0
         
-        # Process each analysis
-        for analysis in analyses:
-            bucket_text = analysis.bucket_prompt
+        # Process each audio segment
+        for segment in audio_segments:
+            # Access bucket_prompt from the already-loaded analysis using getattr for safety
+            transcription_detail = getattr(segment, 'transcription_detail', None)
+            analysis = getattr(transcription_detail, 'analysis', None) if transcription_detail else None
+            if not analysis:
+                continue
+            
+            bucket_text = getattr(analysis, 'bucket_prompt', None)
             if not bucket_text:
                 continue
             
-            # Get duration from audio segment
-            audio_segment = analysis.transcription_detail.audio_segment
-            duration_seconds = audio_segment.duration_seconds if audio_segment else 0
+            # Get duration from audio segment (already loaded)
+            duration_seconds = segment.duration_seconds if segment.duration_seconds else 0
             total_filtered_duration += duration_seconds
             
             # Extract bucket titles that belong to the specified category
