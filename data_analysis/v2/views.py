@@ -3,6 +3,7 @@ V2 API views for data_analysis app.
 """
 
 import json
+from pathlib import Path
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -13,6 +14,7 @@ from data_analysis.v2.service import (
     build_pagination_info_v2,
     apply_search_filters
 )
+from data_analysis.services.custom_audio_service import CustomAudioService
 from data_analysis.audio_segments_helpers import (
     get_channel_and_shift,
     apply_shift_filtering,
@@ -25,6 +27,7 @@ from data_analysis.audio_segments_helpers import (
 )
 from data_analysis.serializers import AudioSegmentsSerializer
 from data_analysis.repositories import AudioSegmentDAO
+from data_analysis.v2.serializer import CustomAudioDownloadSerializer
 from core_admin.repositories import GeneralSettingService
 
 
@@ -590,4 +593,36 @@ class ContentTypePromptView(APIView):
                 'error': str(e),
                 'traceback': traceback.format_exc() if __debug__ else None
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DownloadCustomAudioV2View(APIView):
+    """
+    V2 API endpoint to upload and save custom audio file.
+    Saves to custom_audio/{date}/{filename}. Max size 100 MB; path traversal is blocked.
+    """
+    def post(self, request):
+        serializer = CustomAudioDownloadSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'success': False, 'errors': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        data = serializer.validated_data
+        try:
+            audio_info = CustomAudioService.insert_custom_audio_segment(
+                file=data["file"],
+                channel_id=data["channel_id"],
+                title=data["title"],
+                notes=data.get("notes"),
+                recorded_at=data.get("recorded_at"),
+            )
+            return Response({
+                'success': True,
+                **audio_info,
+            }, status=status.HTTP_201_CREATED)
+        except Exception as e:  
+            return Response(
+                {'success': False, 'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 

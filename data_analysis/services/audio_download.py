@@ -205,21 +205,3 @@ class ACRCloudAudioDownloader:
         
         return results
 
-
-# Usage Example for Celery:
-#
-# from data_analysis.services.audio_download import ACRCloudAudioDownloader
-# from data_analysis.models import AudioSegments
-#
-# # Get AudioSegments objects
-# segments = AudioSegments.objects.filter(channel_id=5, is_audio_downloaded=False)
-#
-# # Download audio for all segments
-# results = ACRCloudAudioDownloader.download_audio_segments_batch(
-#     audio_segments=segments
-# )
-#
-# # Results will contain:
-# # - success: list of successfully downloaded segments
-# # - failed: list of failed segments with error messages  
-# # - skipped: list of already downloaded segments

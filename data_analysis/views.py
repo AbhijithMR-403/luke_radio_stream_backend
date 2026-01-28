@@ -710,7 +710,6 @@ class AudioTranscriptionAndAnalysisView(View):
             if not segment_id:
                 return JsonResponse({'success': False, 'error': 'segment_id is required'}, status=400)
             
-            # Check if segment exists
             try:
                 segment = AudioSegmentsModel.objects.get(id=segment_id)
             except AudioSegmentsModel.DoesNotExist:

@@ -137,3 +137,29 @@ class ListAudioSegmentsV2QuerySerializer(serializers.Serializer):
         
         return dt
 
+
+class CustomAudioDownloadSerializer(serializers.Serializer):
+    file = serializers.FileField(
+        required=True,
+        help_text="Audio file to upload and save (MP3 / WAV / AAC)"
+    )
+    channel_id = serializers.IntegerField(
+        required=True,
+        help_text="Channel ID to associate the custom audio segment with"
+    )
+    title = serializers.CharField(
+        required=True,
+        max_length=500,
+        help_text="Title for the custom audio segment"
+    )
+    notes = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Optional notes for the custom audio segment"
+    )
+    recorded_at = serializers.DateTimeField(
+        required=False,
+        allow_null=True,
+        help_text="Optional recorded-at datetime; stored as pub_date"
+    )
