@@ -116,14 +116,14 @@ class ChannelPatchSerializer(serializers.Serializer):
         Validate that rss_start_date is only updated for podcast channels.
         """
         # Get the instance to check channel_type
-        if self.instance:
-            channel_type = self.instance.channel_type
+        # if self.instance:
+        #     channel_type = self.instance.channel_type
             
-            # Only allow rss_start_date updates for podcast channels
-            if 'rss_start_date' in data and channel_type == 'broadcast':
-                raise serializers.ValidationError({
-                    'rss_start_date': 'RSS start date can only be updated for Podcast channels'
-                })
+        #     # Only allow rss_start_date updates for podcast channels
+        #     if 'rss_start_date' in data and channel_type == 'broadcast':
+        #         raise serializers.ValidationError({
+        #             'rss_start_date': 'RSS start date can only be updated for Podcast channels'
+        #         })
         
         return data
 
