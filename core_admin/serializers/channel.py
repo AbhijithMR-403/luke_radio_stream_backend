@@ -88,10 +88,10 @@ class ChannelSerializer(serializers.ModelSerializer):
                     'rss_url': 'RSS URL is not allowed for Broadcast channels'
                 })
             
-            if 'rss_start_date' in data and data.get('rss_start_date') is not None:
-                raise serializers.ValidationError({
-                    'rss_start_date': 'RSS start date is not allowed for Broadcast channels'
-                })
+            # if 'rss_start_date' in data and data.get('rss_start_date') is not None:
+            #     raise serializers.ValidationError({
+            #         'rss_start_date': 'RSS start date is not allowed for Broadcast channels'
+            #     })
         
         return data
 
