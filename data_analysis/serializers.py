@@ -30,6 +30,7 @@ class AudioSegmentSerializer(serializers.Serializer):
     is_active = serializers.BooleanField()
     file_name = serializers.CharField(allow_null=True)
     file_path = serializers.CharField(allow_null=True)
+    audio_url = serializers.URLField(allow_null=True)
     title = serializers.CharField(allow_null=True)
     title_before = serializers.CharField(allow_null=True)
     title_after = serializers.CharField(allow_null=True)
@@ -140,6 +141,7 @@ class AudioSegmentsSerializer:
                 'is_active': segment.is_active,
                 'file_name': segment.file_name,
                 'file_path': segment.file_path,
+                'audio_url': getattr(segment, 'audio_url', None) or None,
                 'title': segment.title,
                 'title_before': segment.title_before,
                 'title_after': segment.title_after,
