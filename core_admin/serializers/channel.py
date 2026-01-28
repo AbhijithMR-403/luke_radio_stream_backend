@@ -111,22 +111,6 @@ class ChannelPatchSerializer(serializers.Serializer):
             ValidationUtils.validate_timezone(value)
         return value
 
-    def validate(self, data):
-        """
-        Validate that rss_start_date is only updated for podcast channels.
-        """
-        # Get the instance to check channel_type
-        # if self.instance:
-        #     channel_type = self.instance.channel_type
-            
-        #     # Only allow rss_start_date updates for podcast channels
-        #     if 'rss_start_date' in data and channel_type == 'broadcast':
-        #         raise serializers.ValidationError({
-        #             'rss_start_date': 'RSS start date can only be updated for Podcast channels'
-        #         })
-        
-        return data
-
     def update(self, instance, validated_data):
         """
         Update and return an existing Channel instance.

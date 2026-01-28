@@ -55,7 +55,7 @@ class Channel(models.Model):
                     'project_id': 'channel_id and project_id are not allowed for Podcast channels'
                 })
         elif self.channel_type == 'broadcast':
-            # Broadcast: channel_id/project_id required, RSS fields not allowed
+            # Broadcast: channel_id/project_id required; rss_url not allowed
             if self.channel_id is None or self.project_id is None:
                 raise ValidationError({
                     'channel_id': 'channel_id and project_id are required for Broadcast channels',
@@ -63,8 +63,6 @@ class Channel(models.Model):
                 })
             if self.rss_url:
                 raise ValidationError({'rss_url': 'RSS URL is not allowed for Broadcast channels'})
-            if self.rss_start_date:
-                raise ValidationError({'rss_start_date': 'RSS start date is not allowed for Broadcast channels'})
 
     def save(self, *args, **kwargs):
         """
