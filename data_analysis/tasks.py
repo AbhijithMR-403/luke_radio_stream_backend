@@ -133,7 +133,7 @@ def process_today_audio_data():
                         'segments': 0
                     })
                     continue
-                print(f"Processed segments: {processed_segments}")
+                print(f"Processed segments: {len(processed_segments)}")
                 # Step 3: Insert audio segments into database
                 inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
                 

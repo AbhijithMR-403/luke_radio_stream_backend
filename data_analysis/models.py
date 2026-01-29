@@ -414,6 +414,12 @@ class AudioSegments(models.Model):
                 if 'title_after' not in segment_dict or not segment_dict['title_after']:
                     raise ValidationError(f"Unrecognized segments must have a title_after in segment data at index {i}")
             
+            # Set audio_location_type if not provided (required by model)
+            if not segment_dict.get('audio_location_type'):
+                segment_dict['audio_location_type'] = (
+                    'audio_url' if segment_dict.get('audio_url') else 'file_path'
+                )
+            
             # Check if file_path already exists
             existing_segment = AudioSegments.objects.filter(file_path=segment_dict['file_path']).first()
             if existing_segment:
