@@ -139,6 +139,7 @@ class RSSAudioSegmentInserter:
             is_recognized=True,  # Podcasts are considered recognized (they have titles)
             is_active=True,
             file_name=file_name,
+            audio_location_type="audio_url",
             metadata_json=self._build_metadata(entry)
         )
         

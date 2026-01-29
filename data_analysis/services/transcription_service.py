@@ -137,8 +137,8 @@ class RevAISpeechToText:
                 print(f"Skipping segment {audio_segment.id} - RevTranscriptionJob already exists")
                 continue  # Skip this segment if job already exists
 
-            # Use audio_url directly for podcast channels, otherwise construct path
-            if audio_segment.channel and audio_segment.channel.channel_type == 'podcast':
+            # Use audio_url when audio_location_type is audio_url, otherwise construct path from file_path
+            if audio_segment.audio_location_type == 'audio_url':
                 media_url_path = audio_segment.audio_url
                 is_absolute_url = True
             else:
@@ -273,4 +273,54 @@ class RevAISpeechToText:
             transcript=transcript
         )
         return transcription_detail
+
+    @staticmethod
+    def trigger_transcription_for_single_segment(audio_segment: AudioSegments) -> Optional[RevTranscriptionJob]:
+        """
+        example format of audio_segment.file_path: media/custom_audio/20260129/...mp3
+        """
+        # 1. Prevent duplicate jobs
+        if TranscriptionDetail.objects.filter(audio_segment=audio_segment).exists():
+            print(f"Skipping segment {audio_segment.id} - TranscriptionDetail already exists")
+            return None
+
+        # 2. Determine the path (audio_url vs file_path)
+        if audio_segment.audio_location_type == 'audio_url':
+            media_url_path = audio_segment.audio_url
+            is_absolute_url = True
+        else:
+            clean_path = audio_segment.file_path
+            media_url_path = f"/api/{clean_path}"
+            is_absolute_url = False
+
+        # 3. Call Rev.ai API
+        try:
+            print(f"Creating transcription job for segment {audio_segment.id} with media_url_path: {media_url_path} and is_absolute_url: {is_absolute_url}")
+            api_response = RevAISpeechToText.create_transcription_job(
+                media_url_path,
+                is_absolute_url=is_absolute_url
+            )
+            print(f"API response: {api_response}")
+        except Exception as e:
+            print(f"Failed to create Rev.ai job for segment {audio_segment.id}: {e}")
+            return None
+
+        # 4. Parse response and save job record
+        job_id = api_response.get("id")
+
+        try:
+            job = RevTranscriptionJob.objects.create(
+                job_id=job_id,
+                job_name=f"Transcription for segment {audio_segment.id}",
+                media_url=media_url_path,
+                status="in_progress",
+                job_type='async',
+                language='en',
+                created_on=timezone.now(),
+                audio_segment=audio_segment,
+            )
+            return job
+        except Exception as e:
+            print(f"Failed to save RevTranscriptionJob to DB: {e}")
+            return None
 

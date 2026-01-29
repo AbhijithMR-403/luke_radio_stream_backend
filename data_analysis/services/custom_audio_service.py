@@ -8,6 +8,7 @@ from django.utils.text import slugify
 
 from core_admin.models import Channel
 from data_analysis.models import AudioSegments
+from data_analysis.services.transcription_service import RevAISpeechToText
 from mutagen import File as MutagenFile
 
 class CustomAudioService:
@@ -214,7 +215,10 @@ class CustomAudioService:
             title=title,
             notes=notes or "",
             source="user",
+            audio_location_type="file_path",
         )
+
+        RevAISpeechToText.trigger_transcription_for_single_segment(segment)
 
         return {
             "segment_id": segment.id,

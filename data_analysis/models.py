@@ -190,6 +190,16 @@ class AudioSegments(models.Model):
         help_text="Remote audio URL for podcast or custom URL audio"
     )
 
+    AUDIO_LOCATION_TYPE_CHOICES = (
+        ('file_path', 'File path'),
+        ('audio_url', 'Audio URL'),
+    )
+    audio_location_type = models.CharField(
+        max_length=20,
+        choices=AUDIO_LOCATION_TYPE_CHOICES,
+        help_text="Whether audio is served from file_path (local) or audio_url (remote)"
+    )
+
     # -------------------------
     # Podcast
     # -------------------------
