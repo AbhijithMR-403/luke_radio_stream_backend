@@ -22,7 +22,11 @@ class Channel(models.Model):
     )
     channel_type = models.CharField(
         max_length=20,
-        choices=[('podcast', 'Podcast'), ('broadcast', 'Broadcast')],
+        choices=[
+            ('podcast', 'Podcast'),
+            ('broadcast', 'Broadcast'),
+            ('custom_audio', 'Custom Audio'),
+        ],
         db_index=True,
     )
     rss_start_date = models.DateTimeField(
@@ -63,6 +67,19 @@ class Channel(models.Model):
                 })
             if self.rss_url:
                 raise ValidationError({'rss_url': 'RSS URL is not allowed for Broadcast channels'})
+        elif self.channel_type == 'custom_audio':
+            # Custom Audio: only name is used; no rss_url, channel_id, or project_id
+            if not (self.name and str(self.name).strip()):
+                raise ValidationError({'name': 'Name is required for Custom Audio channels'})
+            errors = {}
+            if self.rss_url:
+                errors['rss_url'] = 'Only name is allowed for Custom Audio channels'
+            if self.channel_id is not None:
+                errors['channel_id'] = 'Only name is allowed for Custom Audio channels'
+            if self.project_id is not None:
+                errors['project_id'] = 'Only name is allowed for Custom Audio channels'
+            if errors:
+                raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
         """
@@ -101,6 +118,11 @@ class Channel(models.Model):
                       rss_url__isnull=True,
                       channel_id__isnull=False,
                       project_id__isnull=False)
+                    |
+                    Q(channel_type='custom_audio',
+                      rss_url__isnull=True,
+                      channel_id__isnull=True,
+                      project_id__isnull=True)
                 ),
                 name='channel_type_consistency'
             )

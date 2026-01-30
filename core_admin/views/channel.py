@@ -57,6 +57,16 @@ class ChannelAPIView(APIView):
                 )
             validated['name'] = validated.get('name') or result
 
+        # Custom Audio: only name is used; require and strip it
+        if channel_type == 'custom_audio':
+            name = (validated.get('name') or '').strip()
+            if not name:
+                return Response(
+                    {'success': False, 'error': 'Name is required for Custom Audio channels'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            validated['name'] = name
+
         # Validate RSS feed URL for podcast channels
         if channel_type == 'podcast':
             rss_url = validated.get('rss_url')
