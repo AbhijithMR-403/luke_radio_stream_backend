@@ -3,6 +3,7 @@ from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
+from django.db.models import Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -25,7 +26,7 @@ class ReportFolderManagementView(APIView):
         return UserChannelAssignment.objects.filter(user=user, channel=channel).exists()
     
     def get(self, request, *args, **kwargs):
-        """Get all report folders with their saved segments count, optionally filtered by channel_id"""
+        """Get all report folders with their saved segments count, optionally filtered by channel_id and search query"""
         try:
             folders = ReportFolder.objects.select_related('channel').prefetch_related('saved_segments').all()
             
@@ -54,6 +55,13 @@ class ReportFolderManagementView(APIView):
                         {'success': False, 'error': 'channel_id must be a valid integer'}, 
                         status=status.HTTP_400_BAD_REQUEST
                     )
+            
+            # Filter by search query if provided (searches name and description)
+            search = request.query_params.get('search', '').strip()
+            if search:
+                folders = folders.filter(
+                    Q(name__icontains=search) | Q(description__icontains=search)
+                )
             
             # Filter folders to only show channels the user has access to
             accessible_folders = []
