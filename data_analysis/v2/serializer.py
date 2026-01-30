@@ -7,6 +7,8 @@ from rest_framework import serializers
 from django.utils import timezone
 from datetime import datetime
 
+from data_analysis.models import ReportFolder
+
 
 class ListAudioSegmentsV2QuerySerializer(serializers.Serializer):
     """
@@ -144,8 +146,12 @@ class CustomAudioDownloadSerializer(serializers.Serializer):
         help_text="Audio file to upload and save (MP3 / WAV / AAC)"
     )
     channel_id = serializers.IntegerField(
-        required=True,
-        help_text="Channel ID to associate the custom audio segment with"
+        required=False,
+        allow_null=True,
+    )
+    folder_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
     )
     title = serializers.CharField(
         required=True,
@@ -163,3 +169,24 @@ class CustomAudioDownloadSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Optional recorded-at datetime; stored as pub_date"
     )
+
+    def validate(self, attrs):
+        channel_id = attrs.get("channel_id")
+        folder_id = attrs.get("folder_id")
+        if not channel_id and not folder_id:
+            raise serializers.ValidationError(
+                "Either channel_id or folder_id must be provided."
+            )
+        if channel_id is not None and folder_id is not None:
+            raise serializers.ValidationError(
+                "Provide either folder_id or channel_id, not both. A folder belongs to a channel; the segment's channel is determined by the folder."
+            )
+        if not channel_id and folder_id is not None:
+            try:
+                folder = ReportFolder.objects.get(pk=folder_id)
+            except ReportFolder.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"folder_id": f"ReportFolder with id {folder_id} does not exist."}
+                )
+            attrs["channel_id"] = folder.channel_id
+        return attrs

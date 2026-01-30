@@ -28,6 +28,7 @@ from data_analysis.audio_segments_helpers import (
 from data_analysis.serializers import AudioSegmentsSerializer
 from data_analysis.repositories import AudioSegmentDAO
 from data_analysis.v2.serializer import CustomAudioDownloadSerializer
+from data_analysis.models import SavedAudioSegment
 from core_admin.repositories import GeneralSettingService
 
 
@@ -599,6 +600,8 @@ class DownloadCustomAudioV2View(APIView):
     """
     V2 API endpoint to upload and save custom audio file.
     Saves to custom_audio/{date}/{filename}. Max size 100 MB; path traversal is blocked.
+    Pass either folder_id or channel_id (not both). A folder belongs to a channel; passing folder_id uses that channel and links the segment to the folder.
+    If folder_id is passed, the new segment is linked to that folder via SavedAudioSegment after insertion.
     """
     def post(self, request):
         serializer = CustomAudioDownloadSerializer(data=request.data)
@@ -608,6 +611,7 @@ class DownloadCustomAudioV2View(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         data = serializer.validated_data
+        folder_id = data.get("folder_id")
         try:
             audio_info = CustomAudioService.insert_custom_audio_segment(
                 file=data["file"],
@@ -616,11 +620,17 @@ class DownloadCustomAudioV2View(APIView):
                 notes=data.get("notes"),
                 recorded_at=data.get("recorded_at"),
             )
+            if folder_id is not None:
+                SavedAudioSegment.objects.get_or_create(
+                    folder_id=folder_id,
+                    audio_segment_id=audio_info["segment_id"],
+                    defaults={"is_favorite": False},
+                )
             return Response({
                 'success': True,
                 **audio_info,
             }, status=status.HTTP_201_CREATED)
-        except Exception as e:  
+        except Exception as e:
             return Response(
                 {'success': False, 'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
