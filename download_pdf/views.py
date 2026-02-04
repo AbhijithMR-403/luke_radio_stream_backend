@@ -3,6 +3,7 @@ import tempfile
 import uuid
 
 from django.conf import settings
+from django.core.cache import cache
 from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.views import APIView
@@ -78,6 +79,17 @@ class DashboardPdfDownloadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        LOCK_KEY = "global_pdf_generation_lock"
+        if cache.get(LOCK_KEY):
+            return Response(
+                {
+                    "success": False,
+                    "error": "The system is currently generating another PDF. Please try again in a minute.",
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        cache.set(LOCK_KEY, True, timeout=300)
+
         pdf_filename = f"dashboard_{channel_id}_{uuid.uuid4().hex[:8]}.pdf"
         pdf_path = os.path.join(tempfile.gettempdir(), pdf_filename)
 
@@ -98,6 +110,8 @@ class DashboardPdfDownloadView(APIView):
                 {"success": False, "error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        finally:
+            cache.delete(LOCK_KEY)
 
         try:
             with open(pdf_path, "rb") as f:

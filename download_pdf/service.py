@@ -20,7 +20,7 @@ BROWSER_ARGS = [
     '--disable-accelerated-2d-canvas',
     '--disable-gpu',
     '--no-zygote',
-    '--single-process', # Warning: Use with caution, but saves massive RAM on tiny servers
+    # '--single-process', # Warning: Use with caution, but saves massive RAM on tiny servers
 ]
 
 
@@ -51,7 +51,7 @@ async def _render_slide(
     channel_name: str,
 ) -> str | None:
     """Render a single slide to a temp PDF; returns path or None on error."""
-    context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+    context = await browser.new_context()
     page = await context.new_page()
 
     temp_path = os.path.join(tempfile.gettempdir(), f"slide_{slide_num}_{uuid.uuid4().hex}.pdf")
@@ -99,15 +99,12 @@ async def _generate_multi_page_pdf_async(
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
 
-        semaphore = asyncio.Semaphore(1)
-
-        async def sem_task(s: int):
-            async with semaphore:
-                return await _render_slide(
-                    browser, s, dashboard_url, access_token, str(channel_id), channel_name
-                )
-
-        tasks = [sem_task(s) for s in slides]
+        tasks = [
+            _render_slide(
+                browser, s, dashboard_url, access_token, str(channel_id), channel_name
+            )
+            for s in slides
+        ]
         pdf_paths = await asyncio.gather(*tasks)
 
         await browser.close()
