@@ -52,7 +52,8 @@ INSTALLED_APPS = [
     "shift_analysis",
     "logger",
     "audio_policy",
-    "acr_cloud"
+    "acr_cloud",
+    "download_pdf"
 ]
 
 MIDDLEWARE = [

@@ -32,6 +32,7 @@ urlpatterns = [
     path('api/shift-analysis/', include('shift_analysis.urls')),
     path('api/', include('logger.urls')),
     path('api/', include('acr_cloud.urls')),
+    path('api/', include('download_pdf.urls')),
 ]
 
 if settings.DEBUG:
