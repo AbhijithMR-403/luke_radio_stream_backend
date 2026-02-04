@@ -13,6 +13,16 @@ import uuid
 from PyPDF2 import PdfMerger
 from playwright.async_api import async_playwright
 
+BROWSER_ARGS = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--disable-gpu',
+    '--no-zygote',
+    '--single-process', # Warning: Use with caution, but saves massive RAM on tiny servers
+]
+
 
 def _build_dashboard_url(
     base_url: str,
@@ -87,9 +97,9 @@ async def _generate_multi_page_pdf_async(
     channel_name = channel_name or "Dashboard"
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
 
-        semaphore = asyncio.Semaphore(2)
+        semaphore = asyncio.Semaphore(1)
 
         async def sem_task(s: int):
             async with semaphore:
