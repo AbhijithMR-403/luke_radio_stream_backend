@@ -1,22 +1,17 @@
 """
-Async multi-page dashboard PDF generation using PyPPeteer.
+Async multi-page dashboard PDF generation using Playwright.
 Uses FRONTEND_URL from settings; accepts channelId and accessToken.
-Runs in a subprocess so signal handlers (used by pyppeteer/Chromium) work.
+Renders up to 2 slides concurrently to avoid overloading the server.
 """
 import asyncio
-from datetime import datetime, time
-import multiprocessing
+import json
 import os
 import tempfile
 import urllib.parse
 import uuid
 
-# Set before importing pyppeteer (for consistent Chromium revision)
-PYPPETEER_CHROMIUM_REVISION = "1263111"
-os.environ.setdefault("PYPPETEER_CHROMIUM_REVISION", PYPPETEER_CHROMIUM_REVISION)
-
 from PyPDF2 import PdfMerger
-from pyppeteer import launch
+from playwright.async_api import async_playwright
 
 
 def _build_dashboard_url(
@@ -37,6 +32,41 @@ def _build_dashboard_url(
     return f"{base_url.rstrip('/')}/dashboard-v2?{query}"
 
 
+async def _render_slide(
+    browser,
+    slide_num: int,
+    dashboard_url: str,
+    access_token: str,
+    channel_id: str,
+    channel_name: str,
+) -> str | None:
+    """Render a single slide to a temp PDF; returns path or None on error."""
+    context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+    page = await context.new_page()
+
+    temp_path = os.path.join(tempfile.gettempdir(), f"slide_{slide_num}_{uuid.uuid4().hex}.pdf")
+
+    init_script = f"""
+        localStorage.setItem("accessToken", {json.dumps(access_token)});
+        localStorage.setItem("refreshToken", {json.dumps(access_token)});
+        localStorage.setItem("channelId", {json.dumps(str(channel_id))});
+        localStorage.setItem("channelName", {json.dumps(channel_name)});
+        localStorage.setItem("dashboardV2CurrentSlide", {json.dumps(str(slide_num))});
+    """
+    await page.add_init_script(init_script)
+
+    try:
+        await page.goto(dashboard_url, wait_until="networkidle")
+        await page.wait_for_selector(".dashboard-slide-ready", state="visible", timeout=15000)
+        await page.pdf(path=temp_path, print_background=True, landscape=True, format="A4")
+        return temp_path
+    except Exception as e:
+        print(f"Error on slide {slide_num}: {e}")
+        return None
+    finally:
+        await context.close()
+
+
 async def _generate_multi_page_pdf_async(
     base_url: str,
     pdf_path: str,
@@ -51,124 +81,45 @@ async def _generate_multi_page_pdf_async(
     if slides is None:
         slides = [0, 1]
 
-    dashboard_url = _build_dashboard_url(base_url, start_time=start_time, end_time=end_time, shift_id=shift_id)
-
-    # Optimized Browser Launch
-    browser = await launch(
-        # headless=True,
-        args=[
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",  # Vital for Docker/Linux to prevent crashes
-            "--font-render-hinting=none",
-        ],
+    dashboard_url = _build_dashboard_url(
+        base_url, start_time=start_time, end_time=end_time, shift_id=shift_id
     )
-    temp_pdfs = []
+    channel_name = channel_name or "Dashboard"
 
-    try:
-        for slide_num in slides:
-            start_time = datetime.now()
-            print(f"Starting slide {slide_num} at {start_time}")
-            page = await browser.newPage()
-            end_time = datetime.now()
-            print(f"Time taken to create page: {end_time - start_time}")
-            page.on("console", lambda msg: None)  # quiet by default
-            page.on("pageerror", lambda err: None)
-            page.on("requestfailed", lambda req: None)
-            page.on("response", lambda res: None)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
 
-            temp_pdf = os.path.join(tempfile.gettempdir(), f"temp_slide_{uuid.uuid4().hex}.pdf")
-            temp_pdfs.append(temp_pdf)
+        semaphore = asyncio.Semaphore(2)
 
-            await page.evaluateOnNewDocument(
-                """
-                (token, channelId, channelName, slideNum) => {
-                    localStorage.setItem("accessToken", token);
-                    localStorage.setItem("refreshToken", token);
-                    localStorage.setItem("channelId", channelId.toString());
-                    localStorage.setItem("channelName", channelName || "Dashboard");
-                    localStorage.setItem("dashboardV2CurrentSlide", slideNum.toString());
-                    localStorage.setItem("channelTimezone", "Australia/Melbourne");
-                }
-                """,
-                access_token,
-                str(channel_id),
-                channel_name or "Dashboard",
-                slide_num,
-            )
-            print("Waiting for API response")
-            print(page.url)
-            wait_api = asyncio.create_task(
-                page.waitForResponse(
-                    lambda r: "/api/v2/dashboard" in r.url and r.status == 200
+        async def sem_task(s: int):
+            async with semaphore:
+                return await _render_slide(
+                    browser, s, dashboard_url, access_token, str(channel_id), channel_name
                 )
-            )
-            end_time = datetime.now()
-            print(f"Time taken to wait for API response: {end_time - start_time}")
 
-            await page.goto(
-                dashboard_url,
-                {"waitUntil": "networkidle2"},
-            )
-            end_time = datetime.now()
-            print(f"Time taken to goto dashboard: {end_time - start_time}")
-            await wait_api
-            await asyncio.sleep(1)
-
-
-            await page.pdf(
-                path=temp_pdf,
-                format="A4",
-                printBackground=True,
-                landscape=True,
-            )
-            await page.close()
-            end_time = datetime.now()
-            print(f"Time taken to close page: {end_time - start_time}")
+        tasks = [sem_task(s) for s in slides]
+        pdf_paths = await asyncio.gather(*tasks)
 
         await browser.close()
-        start_time = datetime.now()
-        merger = PdfMerger()
-        for tp in temp_pdfs:
-            merger.append(tp)
-        merger.write(pdf_path)
-        merger.close()
-        end_time = datetime.now()
-        print(f"Time taken to merge PDFs: {end_time - start_time}")
-    finally:
-        for tp in temp_pdfs:
+
+    # Merge PDFs (only existing paths, in slide order)
+    valid_paths = [p for p in pdf_paths if p and os.path.exists(p)]
+    if not valid_paths:
+        raise RuntimeError("PDF generation failed: no slides could be rendered")
+    merger = PdfMerger()
+    for path in valid_paths:
+        merger.append(path)
+    merger.write(pdf_path)
+    merger.close()
+
+    # Cleanup temp files
+    for path in pdf_paths:
+        if path:
             try:
-                if os.path.exists(tp):
-                    os.remove(tp)
+                if os.path.exists(path):
+                    os.remove(path)
             except OSError:
                 pass
-
-
-def _run_in_subprocess(
-    base_url: str,
-    pdf_path: str,
-    access_token: str,
-    channel_id: str,
-    channel_name: str,
-    slides: list[int],
-    start_time: str | None,
-    end_time: str | None,
-    shift_id: str | None,
-) -> None:
-    """Entry point for subprocess: runs async PDF generation in main thread (signals OK)."""
-    asyncio.run(
-        _generate_multi_page_pdf_async(
-            base_url=base_url,
-            pdf_path=pdf_path,
-            access_token=access_token,
-            channel_id=channel_id,
-            channel_name=channel_name,
-            slides=slides,
-            start_time=start_time,
-            end_time=end_time,
-            shift_id=shift_id,
-        )
-    )
 
 
 def generate_multi_page_pdf(
@@ -182,26 +133,19 @@ def generate_multi_page_pdf(
     end_time: str | None = None,
     shift_id: str | int | None = None,
 ) -> None:
-    """Generate a multi-page PDF from the dashboard.
-    Runs in a subprocess so pyppeteer/Chromium signal handlers work (main thread only).
-    """
+    """Generate a multi-page PDF from the dashboard using Playwright."""
     if slides is None:
         slides = [0, 1, 2, 3, 4, 5, 6, 7]
-    proc = multiprocessing.Process(
-        target=_run_in_subprocess,
-        args=(
-            base_url,
-            pdf_path,
-            access_token,
-            str(channel_id),
-            channel_name or "Dashboard",
-            slides,
-            start_time,
-            end_time,
-            str(shift_id) if shift_id is not None else None,
-        ),
+    asyncio.run(
+        _generate_multi_page_pdf_async(
+            base_url=base_url,
+            pdf_path=pdf_path,
+            access_token=access_token,
+            channel_id=channel_id,
+            channel_name=channel_name,
+            slides=slides,
+            start_time=start_time,
+            end_time=end_time,
+            shift_id=shift_id,
+        )
     )
-    proc.start()
-    proc.join()
-    if proc.exitcode != 0:
-        raise RuntimeError(f"PDF generation subprocess exited with code {proc.exitcode}")
