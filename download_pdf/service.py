@@ -66,8 +66,9 @@ async def _render_slide(
     await page.add_init_script(init_script)
 
     try:
-        await page.goto(dashboard_url, wait_until="networkidle")
-        await page.wait_for_selector(".dashboard-slide-ready", state="visible", timeout=15000)
+        # Use "load" instead of "networkidle" — dashboards often have ongoing requests
+        await page.goto(dashboard_url, wait_until="load", timeout=60000)
+        await page.wait_for_selector(".dashboard-slide-ready", state="visible", timeout=45000)
         await page.pdf(path=temp_path, print_background=True, landscape=True, format="A4")
         return temp_path
     except Exception as e:
@@ -89,7 +90,7 @@ async def _generate_multi_page_pdf_async(
     shift_id: str | int | None = None,
 ) -> None:
     if slides is None:
-        slides = [0, 1]
+        slides = [0, 1, 2, 3, 4, 5, 6, 7]
 
     dashboard_url = _build_dashboard_url(
         base_url, start_time=start_time, end_time=end_time, shift_id=shift_id
