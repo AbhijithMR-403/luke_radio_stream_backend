@@ -49,6 +49,7 @@ async def _render_slide(
     access_token: str,
     channel_id: str,
     channel_name: str,
+    channel_timezone: str,
 ) -> str | None:
     """Render a single slide to a temp PDF; returns path or None on error."""
     context = await browser.new_context()
@@ -62,6 +63,7 @@ async def _render_slide(
         localStorage.setItem("channelId", {json.dumps(str(channel_id))});
         localStorage.setItem("channelName", {json.dumps(channel_name)});
         localStorage.setItem("dashboardV2CurrentSlide", {json.dumps(str(slide_num))});
+        localStorage.setItem("channelTimezone", {json.dumps(channel_timezone)});
     """
     await page.add_init_script(init_script)
 
@@ -84,6 +86,7 @@ async def _generate_multi_page_pdf_async(
     access_token: str,
     channel_id: str,
     channel_name: str = "",
+    channel_timezone: str = "UTC",
     slides: list[int] | None = None,
     start_time: str | None = None,
     end_time: str | None = None,
@@ -102,7 +105,7 @@ async def _generate_multi_page_pdf_async(
 
         tasks = [
             _render_slide(
-                browser, s, dashboard_url, access_token, str(channel_id), channel_name
+                browser, s, dashboard_url, access_token, str(channel_id), channel_name, channel_timezone
             )
             for s in slides
         ]

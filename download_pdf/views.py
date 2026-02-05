@@ -10,6 +10,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from core_admin.models import Channel
+
 from .service import generate_multi_page_pdf
 
 
@@ -90,6 +92,13 @@ class DashboardPdfDownloadView(APIView):
             )
         cache.set(LOCK_KEY, True, timeout=300)
 
+        channel_timezone = "UTC"
+        try:
+            channel = Channel.objects.get(id=channel_id, is_deleted=False)
+            channel_timezone = channel.timezone
+        except (Channel.DoesNotExist, TypeError, ValueError):
+            pass
+
         pdf_filename = f"dashboard_{channel_id}_{uuid.uuid4().hex[:8]}.pdf"
         pdf_path = os.path.join(tempfile.gettempdir(), pdf_filename)
 
@@ -100,6 +109,7 @@ class DashboardPdfDownloadView(APIView):
                 access_token=access_token,
                 channel_id=str(channel_id),
                 channel_name=channel_name,
+                channel_timezone=channel_timezone,
                 slides=slides,
                 start_time=str(start_time) if start_time else None,
                 end_time=str(end_time) if end_time else None,
