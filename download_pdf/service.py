@@ -39,7 +39,7 @@ def _build_dashboard_url(
     if shift_id is not None:
         params["shift_id"] = str(shift_id)
     query = urllib.parse.urlencode(params)
-    return f"{base_url.rstrip('/')}/dashboard-v2?{query}"
+    return f"{base_url.rstrip('/')}/dashboard?{query}"
 
 
 async def _render_slide(
