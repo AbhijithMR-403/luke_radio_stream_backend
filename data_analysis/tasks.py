@@ -1,7 +1,7 @@
-from celery import shared_task
-import time
+from celery import shared_task, group
 import logging
 from datetime import datetime, timedelta
+import logging
 
 from data_analysis.services.analysis_prereq_check import mark_requires_analysis
 from data_analysis.services.transcription_analyzer import TranscriptionAnalyzer
@@ -10,6 +10,10 @@ from data_analysis.services.audio_segments import AudioSegments
 from data_analysis.services.audio_download import ACRCloudAudioDownloader
 from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel 
 from core_admin.models import Channel
+
+
+logger = logging.getLogger(__name__)
+
 
 # Latest update download audio task
 @shared_task
@@ -72,333 +76,106 @@ def analyze_transcription_task(job_id, media_url_path, media_url=None):
         # Don't raise the error, just log it and return False
         return False
 
-@shared_task
-def process_today_audio_data():
+def _handle_channel_processing(channel, segments_data):
     """
-    Periodic task to process today's audio data excluding the last hour for all channels.
-    This ensures we don't process incomplete data from the most recent hour.
-    Runs daily at 1 AM.
+    Core logic to process audio segments for a channel.
+    Extracted to be shared by both Today and Previous Day tasks.
+    """
+    if not segments_data or not segments_data.get('data'):
+        logger.info(f"No data found for channel {channel.id}")
+        return 0
+
+    # Step 2: Process the audio data
+    processed_segments = AudioSegments.process_audio_data(segments_data['data'], channel)
+    if not processed_segments:
+        logger.info(f"No segments processed for channel {channel.id}")
+        return 0
+
+    # Step 3: Insert and Merge
+    inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
+    inserted_segments = AudioSegments._merge_short_recognized_segments(inserted_segments, channel)
+
+    if not inserted_segments:
+        return 0
+
+    # Step 4: Download audio (External Network Call)
+    # We do NOT use atomic transactions here because this takes time.
+    download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments)
+
+    # Step 5: Map segments for marking logic
+    segments_for_marking = [
+        {
+            "id": seg.id,
+            "file_path": seg.file_path,
+            "file_name": seg.file_name,
+            "duration_seconds": seg.duration_seconds,
+            "is_recognized": seg.is_recognized,
+            "start_time": seg.start_time,
+            "end_time": seg.end_time,
+            "channel_id": channel.id,
+            "title": seg.title,
+            "title_before": seg.title_before,
+            "title_after": seg.title_after,
+        }
+        for seg in inserted_segments
+    ]
+    marked_segments = mark_requires_analysis(segments_for_marking)
+
+    # Step 6: Create transcription jobs (External Network Call)
+    transcription_jobs = RevAISpeechToText.create_and_save_transcription_job_v2(marked_segments)
+    
+    return len(inserted_segments)
+
+
+# --- Celery Sub-Task (The Worker) ---
+
+@shared_task(bind=True)
+def process_channel_task(self, channel_id, date_str=None, is_today=False):
+    """
+    Processes a single channel. This allows Celery to run 
+    multiple channels in parallel across different workers.
     """
     try:
-        # Fetch all channels
-        channels = Channel.objects.filter(is_deleted=False, is_active=True, channel_type='broadcast')
+        channel = Channel.objects.get(pk=channel_id)
         
-        if not channels:
-            print("No active channels found")
-            return {
-                'status': 'success',
-                'total_channels': 0,
-                'total_segments': 0,
-                'recognized_segments': 0,
-                'unrecognized_segments': 0,
-                'timestamp': datetime.now().isoformat(),
-                'message': 'No active channels found'
-            }
-        
-        print(f"Starting daily audio data processing for {len(channels)} channels")
-        
-        total_segments = 0
-        total_recognized = 0
-        total_unrecognized = 0
-        channel_results = []
-        
-        for channel in channels:
-            try:
-                print(f"Processing channel {channel.id} (Project: {channel.project_id}, Channel: {channel.channel_id})")
-                
-                # Step 1: Get today's data excluding last hour for this channel
-                segments_data = AudioSegments.get_today_data_excluding_last_hour(channel.project_id, channel.channel_id)
-                
-                if not segments_data or not segments_data.get('data'):
-                    print(f"No data found for channel {channel.id}")
-                    channel_results.append({
-                        'channel_id': channel.id,
-                        'project_id': channel.project_id,
-                        'channel_id_acr': channel.channel_id,
-                        'status': 'no_data',
-                        'segments': 0
-                    })
-                    continue
-                
-                # Step 2: Process the audio data with channel object
-                processed_segments = AudioSegments.process_audio_data(segments_data['data'], channel)
-                
-                if not processed_segments:
-                    print(f"No processed segments for channel {channel.id}")
-                    channel_results.append({
-                        'channel_id': channel.id,
-                        'project_id': channel.project_id,
-                        'channel_id_acr': channel.channel_id,
-                        'status': 'no_processed_segments',
-                        'segments': 0
-                    })
-                    continue
-                print(f"Processed segments: {len(processed_segments)}")
-                # Step 3: Insert audio segments into database
-                inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
-                
-                # Step 3.5: Merge short recognized segments
-                inserted_segments = AudioSegments._merge_short_recognized_segments(inserted_segments, channel)
-                
-                if not inserted_segments:
-                    print(f"No segments inserted for channel {channel.id}")
-                    channel_results.append({
-                        'channel_id': channel.id,
-                        'project_id': channel.project_id,
-                        'channel_id_acr': channel.channel_id,
-                        'status': 'no_inserted_segments',
-                        'segments': 0
-                    })
-                    continue
-                
-                # Step 4: Download audio for the inserted segments
-                download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments)
-                
-                # # Step 5: Create and save transcription jobs using download results
-                # transcription_jobs = RevAISpeechToText.create_and_save_transcription_job(download_results)
-                
-                # Step 5: Call mark_requires_analysis to determine which segments need transcription
-                # Convert model instances to dicts expected by mark_requires_analysis
-                segments_for_marking = [
-                    {
-                        "id": seg.id,
-                        "file_path": seg.file_path,
-                        "file_name": seg.file_name,
-                        "duration_seconds": seg.duration_seconds,
-                        "is_recognized": seg.is_recognized,
-                        "start_time": seg.start_time,
-                        "end_time": seg.end_time,
-                        "channel_id": getattr(seg, "channel_id", None) or (seg.channel.id if getattr(seg, "channel", None) else None),
-                        "title": seg.title,
-                        "title_before": seg.title_before,
-                        "title_after": seg.title_after,
-                    }
-                    for seg in inserted_segments
-                ]
-                marked_segments = mark_requires_analysis(segments_for_marking)
-                
-                # Step 6: Create and save transcription jobs only for segments requiring analysis
-                transcription_jobs = RevAISpeechToText.create_and_save_transcription_job_v2(marked_segments)
+        if is_today:
+            segments_data = AudioSegments.get_today_data_excluding_last_hour(
+                channel.project_id, channel.channel_id
+            )
+        else:
+            segments_data = AudioSegments.fetch_data(
+                channel.project_id, channel.channel_id, date=date_str
+            )
 
-                
-                # Count segments for this channel
-                channel_segments = len(inserted_segments)
-                channel_recognized = sum(1 for seg in inserted_segments if seg.is_recognized)
-                channel_unrecognized = channel_segments - channel_recognized
-                
-                total_segments += channel_segments
-                total_recognized += channel_recognized
-                total_unrecognized += channel_unrecognized
-                
-                print(f"Channel {channel.id}: {channel_segments} segments ({channel_recognized} recognized, {channel_unrecognized} unrecognized)")
-                
-                channel_results.append({
-                    'channel_id': channel.id,
-                    'project_id': channel.project_id,
-                    'channel_id_acr': channel.channel_id,
-                    'status': 'success',
-                    'segments': channel_segments,
-                    'recognized': channel_recognized,
-                    'unrecognized': channel_unrecognized,
-                    'transcription_jobs': len(transcription_jobs) if transcription_jobs else 0
-                })
-                
-            except Exception as e:
-                print(f"Error processing channel {channel.id}: {e}")
-                channel_results.append({
-                    'channel_id': channel.id,
-                    'project_id': channel.project_id,
-                    'channel_id_acr': channel.channel_id,
-                    'status': 'error',
-                    'error': str(e),
-                    'segments': 0
-                })
-        
-        print(f"Completed processing {len(channels)} channels. Total: {total_segments} segments ({total_recognized} recognized, {total_unrecognized} unrecognized)")
+        count = _handle_channel_processing(channel, segments_data)
         
         return {
+            'channel_id': channel_id,
             'status': 'success',
-            'total_channels': len(channels),
-            'total_segments': total_segments,
-            'recognized_segments': total_recognized,
-            'unrecognized_segments': total_unrecognized,
-            'channel_results': channel_results,
-            'timestamp': datetime.now().isoformat()
+            'segments_count': count
         }
-            
     except Exception as e:
-        print(f"Error in process_today_audio_data: {e}")
-        return {
-            'status': 'error',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }
+        logger.error(f"Error in process_channel_task for channel {channel_id}: {str(e)}", exc_info=True)
+        return {'channel_id': channel_id, 'status': 'error', 'message': str(e)}
+
+
+# --- Orchestrator Tasks (The Schedulers) ---
+
+@shared_task
+def process_today_audio_data():
+    """ Runs daily 1 hrs interval. Spawns parallel tasks for each channel. """
+    channels = Channel.objects.filter(is_deleted=False, is_active=True, channel_type='broadcast')
+    print(channels)
+    # Use a group to run channel tasks in parallel
+    for channel in channels:
+        process_channel_task.delay(channel.id, is_today=True)
+
 
 @shared_task
 def process_previous_day_audio_data():
-    """
-    Periodic task to process previous day's audio data for all channels.
-    This fetches complete data from the previous day.
-    Runs daily at 2 AM.
-    """
-    try:
-        # Fetch all channels
-        channels = Channel.objects.filter(is_deleted=False, is_active=True, channel_type='broadcast')
-        
-        if not channels:
-            print("No active channels found")
-            return {
-                'status': 'success',
-                'total_channels': 0,
-                'total_segments': 0,
-                'recognized_segments': 0,
-                'unrecognized_segments': 0,
-                'timestamp': datetime.now().isoformat(),
-                'message': 'No active channels found'
-            }
-        
-        # Get previous day's date in YYYYMMDD format
-        previous_day = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-        print(f"Starting previous day audio data processing for {len(channels)} channels for date: {previous_day}")
-        
-        total_segments = 0
-        total_recognized = 0
-        total_unrecognized = 0
-        channel_results = []
-        
-        for channel in channels:
-            try:
-                print(f"Processing channel {channel.id} (Project: {channel.project_id}, Channel: {channel.channel_id}) for date: {previous_day}")
-                
-                # Step 1: Get previous day's data for this channel
-                segments_data = AudioSegments.fetch_data(channel.project_id, channel.channel_id, date=previous_day)
-                
-                if not segments_data or not segments_data.get('data'):
-                    print(f"No data found for channel {channel.id} on date {previous_day}")
-                    channel_results.append({
-                        'channel_id': channel.id,
-                        'project_id': channel.project_id,
-                        'channel_id_acr': channel.channel_id,
-                        'date': previous_day,
-                        'status': 'no_data',
-                        'segments': 0
-                    })
-                    continue
-                
-                # Step 2: Process the audio data with channel object
-                processed_segments = AudioSegments.process_audio_data(segments_data['data'], channel)
-                
-                if not processed_segments:
-                    print(f"No processed segments for channel {channel.id}")
-                    channel_results.append({
-                        'channel_id': channel.id,
-                        'project_id': channel.project_id,
-                        'channel_id_acr': channel.channel_id,
-                        'date': previous_day,
-                        'status': 'no_processed_segments',
-                        'segments': 0
-                    })
-                    continue
-                print(f"Processed segments: {len(processed_segments)}")
-                # Step 3: Insert audio segments into database
-                inserted_segments = AudioSegmentsModel.insert_audio_segments(processed_segments, channel.id)
-                
-                # Step 3.5: Merge short recognized segments
-                inserted_segments = AudioSegments._merge_short_recognized_segments(inserted_segments, channel)
-                
-                if not inserted_segments:
-                    print(f"No segments inserted for channel {channel.id}")
-                    channel_results.append({
-                        'channel_id': channel.id,
-                        'project_id': channel.project_id,
-                        'channel_id_acr': channel.channel_id,
-                        'date': previous_day,
-                        'status': 'no_inserted_segments',
-                        'segments': 0
-                    })
-                    continue
-                
-                # Step 4: Download audio for the inserted segments
-                download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments)
-                
-                # # Step 5: Create and save transcription jobs using download results
-                # transcription_jobs = RevAISpeechToText.create_and_save_transcription_job(download_results)
-                
+    """ Runs daily at 2 AM. Spawns parallel tasks for each channel. """
+    previous_day = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+    channels = Channel.objects.filter(is_deleted=False, is_active=True, channel_type='broadcast')
+    for channel in channels:
+        process_channel_task.delay(channel.id, date_str=previous_day, is_today=False)
 
-                # Step 5: Call mark_requires_analysis to determine which segments need transcription
-                segments_for_marking = [
-                    {
-                        "id": seg.id,
-                        "file_path": seg.file_path,
-                        "file_name": seg.file_name,
-                        "duration_seconds": seg.duration_seconds,
-                        "is_recognized": seg.is_recognized,
-                        "start_time": seg.start_time,
-                        "end_time": seg.end_time,
-                        "channel_id": getattr(seg, "channel_id", None) or (seg.channel.id if getattr(seg, "channel", None) else None),
-                        "title": seg.title,
-                        "title_before": seg.title_before,
-                        "title_after": seg.title_after,
-                    }
-                    for seg in inserted_segments
-                ]
-                marked_segments = mark_requires_analysis(segments_for_marking)
-                
-                # Step 6: Create and save transcription jobs only for segments requiring analysis
-                transcription_jobs = RevAISpeechToText.create_and_save_transcription_job_v2(marked_segments)
-
-                # Count segments for this channel
-                channel_segments = len(inserted_segments)
-                channel_recognized = sum(1 for seg in inserted_segments if seg.is_recognized)
-                channel_unrecognized = channel_segments - channel_recognized
-                
-                total_segments += channel_segments
-                total_recognized += channel_recognized
-                total_unrecognized += channel_unrecognized
-                
-                print(f"Channel {channel.id}: {channel_segments} segments ({channel_recognized} recognized, {channel_unrecognized} unrecognized)")
-                
-                channel_results.append({
-                    'channel_id': channel.id,
-                    'project_id': channel.project_id,
-                    'channel_id_acr': channel.channel_id,
-                    'date': previous_day,
-                    'status': 'success',
-                    'segments': channel_segments,
-                    'recognized': channel_recognized,
-                    'unrecognized': channel_unrecognized,
-                    'transcription_jobs': len(transcription_jobs) if transcription_jobs else 0
-                })
-                
-            except Exception as e:
-                print(f"Error processing channel {channel.id}: {e}")
-                channel_results.append({
-                    'channel_id': channel.id,
-                    'project_id': channel.project_id,
-                    'channel_id_acr': channel.channel_id,
-                    'date': previous_day,
-                    'status': 'error',
-                    'error': str(e),
-                    'segments': 0
-                })
-        
-        print(f"Completed processing {len(channels)} channels for date {previous_day}. Total: {total_segments} segments ({total_recognized} recognized, {total_unrecognized} unrecognized)")
-        
-        return {
-            'status': 'success',
-            'date': previous_day,
-            'total_channels': len(channels),
-            'total_segments': total_segments,
-            'recognized_segments': total_recognized,
-            'unrecognized_segments': total_unrecognized,
-            'channel_results': channel_results,
-            'timestamp': datetime.now().isoformat()
-        }
-            
-    except Exception as e:
-        print(f"Error in process_previous_day_audio_data: {e}")
-        return {
-            'status': 'error',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }
