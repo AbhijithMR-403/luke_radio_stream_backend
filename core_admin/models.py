@@ -130,6 +130,12 @@ class Channel(models.Model):
 
 class GeneralSetting(models.Model):
 
+    channel = models.ForeignKey(
+        Channel,
+        on_delete=models.CASCADE,
+        related_name='general_settings',
+    )
+
     # Auth Keys
     openai_api_key = EncryptedTextField(null=True, blank=True)
     openai_org_id = models.CharField(max_length=255)
@@ -231,8 +237,14 @@ class GeneralSetting(models.Model):
         verbose_name = 'General Setting'
         verbose_name_plural = 'General Settings'
         constraints = [
+            # Ensure versions are unique per channel
             models.UniqueConstraint(
-                fields=['is_active'],
+                fields=['channel', 'version'],
+                name='unique_channel_version',
+            ),
+            # Ensure only one active version per channel
+            models.UniqueConstraint(
+                fields=['channel', 'is_active'],
                 condition=models.Q(is_active=True),
                 name='only_one_active_general_setting'
             )

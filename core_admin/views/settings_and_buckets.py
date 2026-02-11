@@ -13,26 +13,20 @@ from ..repositories import GeneralSettingService
 
 
 class SettingsAndBucketsAPIView(APIView):
-    """
-    Admin-only API for:
-    - Fetching active GeneralSetting + WellnessBuckets
-    - Updating active version
-    - Creating a new version
-    """
     permission_classes = [IsAdminUser]
 
-    # --------------------------------------------------
-    # GET: fetch active settings + buckets
-    # --------------------------------------------------
     def get(self, request, *args, **kwargs):
         try:
-            settings_obj = GeneralSetting.objects.filter(is_active=True).first()
+            channel_id = request.query_params.get('channel_id')
+            print(channel_id)
 
-            buckets = (
-                settings_obj.wellness_buckets.filter(is_deleted=False)
-                if settings_obj
-                else WellnessBucket.objects.none()
-            )
+            if channel_id is not None and channel_id != '' and  not channel_id.isdigit():
+                raise ValidationError('channel_id must be a valid integer')
+
+            settings_obj = GeneralSetting.objects.filter(is_active=True, channel_id=channel_id).first()
+            buckets = None
+            if settings_obj:
+                buckets = settings_obj.wellness_buckets.filter(is_deleted=False)
 
             serializer = SettingsAndBucketsResponseSerializer({
                 'settings': settings_obj,
@@ -44,15 +38,17 @@ class SettingsAndBucketsAPIView(APIView):
                 status=status.HTTP_200_OK
             )
 
+        except ValidationError as ve:
+            return Response(
+                {'success': False, 'error': ve},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
             return Response(
                 {'success': False, 'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-    # --------------------------------------------------
-    # POST: create a new version
-    # --------------------------------------------------
     def post(self, request, *args, **kwargs):
         serializer = SettingsAndBucketsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -62,8 +58,9 @@ class SettingsAndBucketsAPIView(APIView):
 
         try:
             # Get active setting to merge with incoming settings
-            active_setting = GeneralSetting.objects.filter(is_active=True).first()
             incoming_settings = validated.get('settings') or {}
+            channel_id = validated.get('settings').get('channel_id')
+            active_setting = GeneralSetting.objects.filter(is_active=True, channel_id=channel_id).first()
             
             # Merge incoming settings with active setting values
             # Missing keys in incoming_settings will use values from active_setting
@@ -88,6 +85,7 @@ class SettingsAndBucketsAPIView(APIView):
             else:
                 # No active setting, use incoming settings as-is
                 merged_settings = incoming_settings
+                print(f"merged_settings: {merged_settings}")
             
             new_setting = GeneralSettingService.create_new_version(
                 settings_data=merged_settings,

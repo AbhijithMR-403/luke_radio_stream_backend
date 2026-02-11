@@ -11,6 +11,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAdminUser
 
 from core_admin.models import Channel
+from core_admin.repositories import GeneralSettingService
 from data_analysis.models import (
     AudioSegments as AudioSegmentsModel,
 )
@@ -75,8 +76,12 @@ def _create_merged_segment(channel, start_dt, end_dt, source_segment_ids=None):
         # Create new segment
         created_segment = AudioSegmentsModel.insert_single_audio_segment(segment_payload)
     
+    settings = GeneralSettingService.get_active_setting(channel=channel, include_buckets=False)
+    if not settings or not settings.acr_cloud_api_key:
+        raise ValueError("ACRCloud API key not configured for channel")
     # Download audio
     media_url = ACRCloudAudioDownloader.download_audio(
+        api_key=settings.acr_cloud_api_key,
         project_id=channel.project_id,
         channel_id=channel.channel_id,
         start_time=start_dt,

@@ -15,7 +15,7 @@ from audio_policy.models import ContentTypeDeactivationRule
 
 class TranscriptionAnalyzer:
     @staticmethod
-    def get_bucket_prompt():
+    def get_bucket_prompt(channel: Channel | int):
         """
         Fetches wellness buckets from the active GeneralSetting and constructs a prompt string.
         Returns the constructed prompt or None if no buckets are found.
@@ -23,6 +23,7 @@ class TranscriptionAnalyzer:
         try:
             # Fetch active GeneralSetting with buckets
             active_setting = GeneralSettingService.get_active_setting(
+                channel=channel,
                 include_buckets=True,
                 exclude_deleted_buckets=True
             )
@@ -169,8 +170,8 @@ class TranscriptionAnalyzer:
             # Continue with API calls if check fails
 
         # Validate OpenAI API key
-        api_key = ValidationUtils.validate_openai_api_key()
-        settings = ValidationUtils.validate_settings_exist()
+        api_key = ValidationUtils.validate_openai_api_key(transcription_detail.audio_segment.channel.id)
+        settings = ValidationUtils.validate_settings_exist(transcription_detail.audio_segment.channel.id)
         client = OpenAI(api_key=api_key)
         transcript = transcription_detail.transcript
 
@@ -210,7 +211,7 @@ class TranscriptionAnalyzer:
         iab_topics = iab_topics_resp.choices[0].message.content.strip()
 
         # Wellness bucket analysis
-        bucket_prompt = TranscriptionAnalyzer.get_bucket_prompt()
+        bucket_prompt = TranscriptionAnalyzer.get_bucket_prompt(transcription_detail.audio_segment.channel.id)
         wellness_buckets = ""
         if bucket_prompt:
             wellness_buckets_resp = client.chat.completions.create(

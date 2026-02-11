@@ -2,6 +2,7 @@ import os
 import requests
 from datetime import datetime
 from django.core.exceptions import ValidationError
+from core_admin.models import Channel
 from core_admin.repositories import GeneralSettingService
 from data_analysis.models import AudioSegments
 
@@ -37,9 +38,10 @@ class ACRCloudAudioDownloader:
         return start_time_str, int(duration_seconds)
 
     @staticmethod
-    def download_audio(project_id: int, channel_id: int, start_time, duration_seconds: int, filename: str = None, filepath: str = None):
+    def download_audio(api_key: str, project_id: int, channel_id: int, start_time, duration_seconds: int, filename: str = None, filepath: str = None):
         """
         Downloads audio from the ACRCloud API for the given parameters and saves it as an mp3 file.
+        - api_key: ACRCloud API key (already resolved from settings or caller)
         - start_time: timestamp_utc (format: YYYYMMDDHHMMSS) or datetime object
         - duration_seconds: played_duration (int)
         - filename: optional custom filename for the downloaded file
@@ -51,6 +53,10 @@ class ACRCloudAudioDownloader:
         start_time_str, duration_seconds = ACRCloudAudioDownloader.validate_download_parameters(
             project_id, channel_id, start_time, duration_seconds
         )
+        
+        # Validate API key
+        if not api_key:
+            raise ValueError("ACRCloud API key is required")
         
         # Handle filepath and filename logic
         if filepath:
@@ -83,10 +89,7 @@ class ACRCloudAudioDownloader:
             return media_url
         
         # No existing file found, proceed with download
-        settings = GeneralSettingService.get_active_setting(include_buckets=False)
-        if not settings or not settings.acr_cloud_api_key:
-            raise ValueError("ACRCloud API key not configured")
-        token = settings.acr_cloud_api_key
+        token = api_key
         params = {
             "timestamp_utc": start_time_str,
             "played_duration": min(duration_seconds, 600)
@@ -110,7 +113,7 @@ class ACRCloudAudioDownloader:
         return media_url
 
     @staticmethod
-    def download_audio_segments_batch(audio_segments: list[AudioSegments]):
+    def download_audio_segments_batch(audio_segments: list[AudioSegments], channel: Channel | int):
         """
         Downloads audio for a list of AudioSegments and updates their is_audio_downloaded field.
         
@@ -130,7 +133,12 @@ class ACRCloudAudioDownloader:
             'failed': [],
             'skipped': []
         }
-        
+        settings = GeneralSettingService.get_active_setting(channel=channel, include_buckets=False)
+        if not settings or not settings.acr_cloud_api_key:
+            results['failed'].append({
+                'error': 'ACRCloud API key not configured for channel'
+            })
+            return results
         # Process each segment
         for segment in audio_segments:
             try:
@@ -178,12 +186,14 @@ class ACRCloudAudioDownloader:
                     continue
                 # Download the audio
                 media_url = ACRCloudAudioDownloader.download_audio(
+                    api_key=settings.acr_cloud_api_key,
                     project_id=project_id,
                     channel_id=channel_id,
                     start_time=segment.start_time,
                     duration_seconds=segment.duration_seconds,
                     filepath=file_path
                 )
+                print(f"media_url: {media_url}")
                 # Update the segment
                 segment.is_audio_downloaded = True
                 segment.save()

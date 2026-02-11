@@ -2,83 +2,170 @@ import requests
 from config.validation import ValidationUtils
 
 
+class BaseAPIUtils:
+    @staticmethod
+    def _safe_request(url, headers, method="GET", timeout=10, max_attempts=2):
+        """
+        Wrapper around requests with simple retry logic.
+        Returns a tuple of (status_or_error, response_or_none).
+        - On success (non-5xx HTTP status): (status_code: int, response)
+        - On persistent 5xx: ("SERVER_ERROR", None)
+        - On persistent network error: ("NETWORK_ERROR", None)
+        - Fallback: ("UNKNOWN_ERROR", None)
+        """
+        for attempt in range(max_attempts):
+            try:
+                response = requests.request(
+                    method, url, headers=headers, timeout=timeout
+                )
+
+                # If 500+, retry. If last attempt, return 'SERVER_ERROR'
+                if response.status_code >= 500:
+                    if attempt < max_attempts - 1:
+                        continue
+                    return "SERVER_ERROR", None
+
+                return response.status_code, response
+
+            except requests.exceptions.RequestException:
+                if attempt < max_attempts - 1:
+                    continue
+                return "NETWORK_ERROR", None
+
+        return "UNKNOWN_ERROR", None
+
+    @staticmethod
+    def extract_error_message(response, default_message: str) -> str:
+        """
+        Safely parses a typical error JSON body and returns a message.
+        Tries `error.message` first, then top-level `message`, otherwise
+        falls back to the provided default_message.
+        """
+        try:
+            data = response.json()
+        except Exception:
+            return default_message
+
+        if isinstance(data, dict):
+            msg = None
+            error_obj = data.get("error")
+            if isinstance(error_obj, dict):
+                msg = error_obj.get("message")
+            if not msg:
+                msg = data.get("message")
+            if msg:
+                return msg
+
+        return default_message
+
+
 class OpenAIUtils:
     @staticmethod
     def validate_api_key(api_key: str):
         """
         Validates OpenAI API key by calling the /v1/me endpoint.
-        Returns (is_valid: bool, error_message: str or None, email: str or None)
+        Returns dict: {"is_valid": bool, "error_message": str or None, "email": str or None}
         """
         if not api_key or not api_key.strip():
-            return False, "OpenAI API key cannot be empty", None
-        
+            return {
+                "is_valid": False,
+                "error_message": "OpenAI API key cannot be empty",
+                "email": None,
+            }
         url = "https://api.openai.com/v1/me"
-        headers = {
-            "Authorization": f"Bearer {api_key.strip()}"
+        headers = {"Authorization": f"Bearer {api_key.strip()}"}
+
+        status, response = BaseAPIUtils._safe_request(
+            url, headers=headers, method="GET", timeout=15
+        )
+
+        # Treat server/network issues as valid per requirements.
+        if status in ("SERVER_ERROR", "NETWORK_ERROR", "UNKNOWN_ERROR"):
+            return {
+                "is_valid": True,
+                "error_message": None,
+                "email": None,
+            }
+
+        # At this point, status is an int and response is not None.
+        if status == 200:
+            try:
+                user_data = response.json()
+                email = user_data.get("email", "")
+                return {
+                    "is_valid": True,
+                    "error_message": None,
+                    "email": email,
+                }
+            except Exception:
+                return {
+                    "is_valid": True,
+                    "error_message": None,
+                    "email": None,
+                }
+        if status == 401:
+            error_message = BaseAPIUtils.extract_error_message(
+                response, "Invalid API key"
+            )
+            return {
+                "is_valid": False,
+                "error_message": error_message,
+                "email": None,
+            }
+
+        return {
+            "is_valid": False,
+            "error_message": f"Unexpected response from OpenAI API: {status}",
+            "email": None,
         }
-        
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                try:
-                    user_data = response.json()
-                    email = user_data.get('email', '')
-                    return True, None, email
-                except:
-                    return True, None, None
-            elif response.status_code == 401:
-                try:
-                    error_data = response.json()
-                    error_message = error_data.get('error', {}).get('message', 'Invalid API key')
-                    return False, error_message, None
-                except:
-                    return False, "Invalid API key provided", None
-            else:
-                return False, f"Unexpected response from OpenAI API: {response.status_code}", None
-        except requests.exceptions.RequestException as e:
-            return False, f"Failed to validate API key: {str(e)}", None
     
     @staticmethod
     def validate_model(model: str, api_key: str):
         """
         Validates OpenAI model by calling the /v1/models/{model} endpoint.
-        Returns (is_valid: bool, error_message: str or None)
+        Returns dict: {"is_valid": bool, "error_message": str or None}
         """
         if not model or not model.strip():
-            return False, "Model name cannot be empty"
+            return {
+                "is_valid": False,
+                "error_message": "Model name cannot be empty",
+            }
         
         if not api_key or not api_key.strip():
-            return False, "OpenAI API key is required to validate the model"
-        
+            return {
+                "is_valid": False,
+                "error_message": "OpenAI API key is required to validate the model",
+            }
         url = f"https://api.openai.com/v1/models/{model.strip()}"
-        headers = {
-            "Authorization": f"Bearer {api_key.strip()}"
+        headers = {"Authorization": f"Bearer {api_key.strip()}"}
+
+        status, response = BaseAPIUtils._safe_request(
+            url, headers=headers, method="GET", timeout=10
+        )
+
+        # Treat server/network issues as valid per requirements.
+        if status in ("SERVER_ERROR", "NETWORK_ERROR", "UNKNOWN_ERROR"):
+            return {"is_valid": True, "error_message": None}
+
+        # At this point, status is an int and response is not None.
+        if status == 200:
+            return {"is_valid": True, "error_message": None}
+        if status == 401:
+            error_message = BaseAPIUtils.extract_error_message(
+                response, "Invalid API key"
+            )
+            return {"is_valid": False, "error_message": error_message}
+        if status == 404:
+            # Model not found should definitively be treated as invalid.
+            return {
+                "is_valid": False,
+                "error_message": f"Model '{model}' not found or not available with this API key",
+            }
+
+        return {
+            "is_valid": False,
+            "error_message": f"Unexpected response from OpenAI API: {status}",
         }
-        
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                return True, None
-            elif response.status_code == 401:
-                try:
-                    error_data = response.json()
-                    error_message = error_data.get('error', {}).get('message', 'Invalid API key')
-                    return False, error_message
-                except:
-                    return False, "Invalid API key provided"
-            elif response.status_code == 404:
-                return False, f"Model '{model}' not found or not available with this API key"
-            else:
-                try:
-                    error_data = response.json()
-                    error_message = error_data.get('error', {}).get('message', f"Unexpected response: {response.status_code}")
-                    return False, error_message
-                except:
-                    return False, f"Unexpected response from OpenAI API: {response.status_code}"
-        except requests.exceptions.RequestException as e:
-            return False, f"Failed to validate model: {str(e)}"
 
 
 class ACRCloudUtils:
@@ -86,34 +173,40 @@ class ACRCloudUtils:
     def validate_api_key(api_key: str):
         """
         Validates ACR Cloud API key by calling the /api/bm-bd-projects endpoint.
-        Returns (is_valid: bool, error_message: str or None)
+        Returns dict: {"is_valid": bool, "error_message": str or None}
         """
         if not api_key or not api_key.strip():
-            return False, "ACR Cloud API key cannot be empty"
-        
+            return {
+                "is_valid": False,
+                "error_message": "ACR Cloud API key cannot be empty",
+            }
         url = "https://api-v2.acrcloud.com/api/bm-bd-projects"
-        headers = {
-            "Authorization": f"Bearer {api_key.strip()}"
+        headers = {"Authorization": f"Bearer {api_key.strip()}"}
+
+        status, response = BaseAPIUtils._safe_request(
+            url, headers=headers, method="GET"
+        )
+
+        # Treat server/network issues as valid per requirements.
+        if status in ("SERVER_ERROR", "NETWORK_ERROR", "UNKNOWN_ERROR"):
+            return {"is_valid": True, "error_message": None}
+
+        # At this point, status is an int and response is not None.
+        if status == 200:
+            return {"is_valid": True, "error_message": None}
+        if status in (401, 403):
+            error_message = BaseAPIUtils.extract_error_message(
+                response, "Invalid API key"
+            )
+            return {
+                "is_valid": False,
+                "error_message": error_message or "Invalid ACR Cloud API key",
+            }
+
+        return {
+            "is_valid": False,
+            "error_message": f"Unexpected response from ACR Cloud API: {status}",
         }
-        
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                return True, None
-            elif response.status_code == 401 or response.status_code == 403:
-                try:
-                    error_data = response.json()
-                    error_message = error_data.get('error', {}).get('message', 'Invalid API key')
-                    if not error_message:
-                        error_message = error_data.get('message', 'Invalid API key')
-                    return False, error_message or 'Invalid ACR Cloud API key'
-                except:
-                    return False, "Invalid ACR Cloud API key provided"
-            else:
-                return False, f"Unexpected response from ACR Cloud API: {response.status_code}"
-        except requests.exceptions.RequestException as e:
-            return False, f"Failed to validate API key: {str(e)}"
 
 
 class RevAIUtils:
@@ -121,34 +214,40 @@ class RevAIUtils:
     def validate_api_key(access_token: str):
         """
         Validates Rev.ai access token by calling the /speechtotext/v1/vocabularies endpoint.
-        Returns (is_valid: bool, error_message: str or None)
+        Returns dict: {"is_valid": bool, "error_message": str or None}
         """
         if not access_token or not access_token.strip():
-            return False, "Rev.ai access token cannot be empty"
-        
+            return {
+                "is_valid": False,
+                "error_message": "Rev.ai access token cannot be empty",
+            }
         url = "https://api.rev.ai/speechtotext/v1/vocabularies?limit=0"
-        headers = {
-            "Authorization": f"Bearer {access_token.strip()}"
+        headers = {"Authorization": f"Bearer {access_token.strip()}"}
+
+        status, response = BaseAPIUtils._safe_request(
+            url, headers=headers, method="GET", timeout=10
+        )
+
+        # Treat server/network issues as valid per requirements.
+        if status in ("SERVER_ERROR", "NETWORK_ERROR", "UNKNOWN_ERROR"):
+            return {"is_valid": True, "error_message": None}
+
+        # At this point, status is an int and response is not None.
+        if status == 200:
+            return {"is_valid": True, "error_message": None}
+        if status in (401, 403):
+            error_message = BaseAPIUtils.extract_error_message(
+                response, "Invalid Rev.ai access token"
+            )
+            return {
+                "is_valid": False,
+                "error_message": error_message or "Invalid Rev.ai access token",
+            }
+
+        return {
+            "is_valid": False,
+            "error_message": f"Unexpected response from Rev.ai API: {status}",
         }
-        
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                return True, None
-            elif response.status_code == 401 or response.status_code == 403:
-                try:
-                    error_data = response.json()
-                    error_message = error_data.get('error', {}).get('message', 'Invalid Rev.ai access token')
-                    if not error_message:
-                        error_message = error_data.get('message', 'Invalid Rev.ai access token')
-                    return False, error_message or 'Invalid Rev.ai access token'
-                except:
-                    return False, "Invalid Rev.ai access token provided"
-            else:
-                return False, f"Unexpected response from Rev.ai API: {response.status_code}"
-        except requests.exceptions.RequestException as e:
-            return False, f"Failed to validate access token: {str(e)}"
     
     @staticmethod
     def get_channel_name_by_id(pid: int, channel_id, access_token: str = None):

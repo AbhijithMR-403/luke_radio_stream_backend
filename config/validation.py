@@ -17,35 +17,35 @@ class ValidationUtils:
             raise ValidationError(f"Channel with project_id {project_id} and channel_id {channel_id} not found or is deleted")
     
     @staticmethod
-    def validate_settings_exist():
+    def validate_settings_exist(channel: Channel | int):
         """Validate that GeneralSetting exists"""
-        settings = GeneralSettingService.get_active_setting(include_buckets=False)
+        settings = GeneralSettingService.get_active_setting(channel=channel, include_buckets=False)
         if not settings:
-            raise ValidationError("GeneralSetting not found. Please configure the application settings.")
+            raise ValidationError(f"GeneralSetting not found for channel {channel}. Please configure the application settings.")
         return settings
     
     @staticmethod
-    def validate_acr_cloud_api_key():
+    def validate_acr_cloud_api_key(channel: Channel | int):
         """Validate that ACRCloud API key is configured"""
-        settings = ValidationUtils.validate_settings_exist()
+        settings = ValidationUtils.validate_settings_exist(channel)
         if not settings.acr_cloud_api_key:
-            raise ValidationError("ACRCloud API key not configured in GeneralSetting")
+            raise ValidationError(f"ACRCloud API key not configured for channel {channel} in GeneralSetting")
         return settings.acr_cloud_api_key
     
     @staticmethod
-    def validate_revai_api_key():
+    def validate_revai_api_key(channel: Channel | int):
         """Validate that Rev.ai API key is configured"""
-        settings = ValidationUtils.validate_settings_exist()
+        settings = ValidationUtils.validate_settings_exist(channel=channel)
         if not settings.revai_access_token:
-            raise ValidationError("Rev.ai API key not configured in GeneralSetting")
+            raise ValidationError(f"Rev.ai API key not configured for channel {channel} in GeneralSetting")
         return settings.revai_access_token
     
     @staticmethod
-    def validate_openai_api_key():
+    def validate_openai_api_key(channel: Channel | int):
         """Validate that OpenAI API key is configured"""
-        settings = ValidationUtils.validate_settings_exist()
+        settings = ValidationUtils.validate_settings_exist(channel=channel)
         if not settings.openai_api_key:
-            raise ValidationError("OpenAI API key not configured in GeneralSetting")
+            raise ValidationError(f"OpenAI API key not configured for channel {channel} in GeneralSetting")
         return settings.openai_api_key
     
     @staticmethod

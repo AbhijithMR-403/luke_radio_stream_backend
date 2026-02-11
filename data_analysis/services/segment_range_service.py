@@ -4,9 +4,10 @@ from django.utils import timezone
 from decouple import config
 
 from core_admin.models import Channel
+from core_admin.repositories import GeneralSettingService
 from data_analysis.models import AudioSegments as AudioSegmentsModel, RevTranscriptionJob, TranscriptionQueue
 from data_analysis.services.transcription_service import RevAISpeechToText
-
+from data_analysis.services.audio_download import ACRCloudAudioDownloader
 
 def create_segment_download_and_queue(channel: Channel, start_dt: datetime, end_dt: datetime, *,
     user=None,
@@ -79,10 +80,12 @@ def create_segment_download_and_queue(channel: Channel, start_dt: datetime, end_
 	else:
 		# Create new segment
 		created_segment = AudioSegmentsModel.insert_single_audio_segment(segment_payload)
-
-	# Download audio now (blocking)
-	from data_analysis.services.audio_download import ACRCloudAudioDownloader
+	
+	settings = GeneralSettingService.get_active_setting(channel=channel, include_buckets=False)
+	if not settings or not settings.acr_cloud_api_key:
+		raise ValueError("ACRCloud API key not configured for channel")
 	media_url = ACRCloudAudioDownloader.download_audio(
+		api_key=settings.acr_cloud_api_key,
 		project_id=channel.project_id,
 		channel_id=channel.channel_id,
 		start_time=start_dt,
@@ -121,7 +124,7 @@ def create_segment_download_and_queue(channel: Channel, start_dt: datetime, end_
 
 		# Start transcription job
 		media_path = "/api/" + created_segment.file_path
-		transcription_job = RevAISpeechToText.create_transcription_job(media_path)
+		transcription_job = RevAISpeechToText.create_transcription_job(media_path, channel=created_segment.channel)
 		job_id = transcription_job.get('id')
 		if not job_id:
 			raise RuntimeError("Failed to create transcription job")

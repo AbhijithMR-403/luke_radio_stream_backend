@@ -519,23 +519,34 @@ class ContentTypePromptView(APIView):
     """
     V2 API endpoint for getting content_type_prompt from GeneralSetting.
     
+    Query Parameters:
+    - channel_id (required): Channel ID to get settings for
+    
     Returns:
     - content_type_prompt: The prompt text from GeneralSetting
     - search_in: List of search_in options with their labels
     
     Example URL:
-    - /api/v2/content-type-prompt/
+    - /api/v2/content-type-prompt/?channel_id=1
     """
     
     def get(self, request, *args, **kwargs):
         try:
-            # Get GeneralSetting object
-            settings_obj = GeneralSettingService.get_active_setting(include_buckets=False)
+            # Validate channel_id parameter
+            channel_id = request.query_params.get('channel_id')
+            if not channel_id:
+                return Response({
+                    'success': False,
+                    'error': 'channel_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                        
+            # Get GeneralSetting object for the specified channel
+            settings_obj = GeneralSettingService.get_active_setting(channel=channel_id, include_buckets=False)
             
             if not settings_obj:
                 return Response({
                     'success': False,
-                    'error': 'GeneralSetting not found'
+                    'error': f'GeneralSetting not found for channel {channel_id}'
                 }, status=status.HTTP_404_NOT_FOUND)
             
             # Define search_in options with labels as mentioned in views.py line 439-440

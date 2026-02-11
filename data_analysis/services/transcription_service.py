@@ -17,7 +17,7 @@ from segmentor.models import TitleMappingRule
 
 class RevAISpeechToText:
     @staticmethod
-    def create_transcription_job(media_path: str, is_absolute_url: bool = False):
+    def create_transcription_job(media_path: str, is_absolute_url: bool = False, channel: Channel | int = None):
         """
         Create a transcription job on Rev.ai for the given media.
         
@@ -25,7 +25,11 @@ class RevAISpeechToText:
             media_path: The media path or absolute URL.
             is_absolute_url: If True, use media_path as the absolute URL directly.
                            If False (default), construct URL from PUBLIC_BASE_URL + media_path.
+            channel: Channel instance or channel ID (required for Rev.ai API key lookup).
         """
+        if channel is None:
+            print("channel is required for create_transcription_job")
+            return None
         # Validate parameters
         if not is_absolute_url:
             ValidationUtils.validate_file_path(media_path)
@@ -34,7 +38,7 @@ class RevAISpeechToText:
         notification_url = f"{base_url}/api/rev-callback"
         media_url = media_path if is_absolute_url else f"{base_url}{media_path}"
         
-        api_key = ValidationUtils.validate_revai_api_key()
+        api_key = ValidationUtils.validate_revai_api_key(channel)
         url = "https://api.rev.ai/speechtotext/v1/jobs"
         headers = {
             "Content-Type": "application/json",
@@ -146,7 +150,9 @@ class RevAISpeechToText:
                 is_absolute_url = False
 
             try:
-                api_response = RevAISpeechToText.create_transcription_job(media_url_path, is_absolute_url=is_absolute_url)
+                api_response = RevAISpeechToText.create_transcription_job(
+                    media_url_path, is_absolute_url=is_absolute_url, channel=audio_segment.channel
+                )
             except requests.RequestException:
                 continue
 
@@ -203,7 +209,7 @@ class RevAISpeechToText:
         elif media_path.startswith('api/'):
             media_path = media_path[4:]  # Remove 'api' prefix
                 
-        api_key = ValidationUtils.validate_revai_api_key()
+        api_key = ValidationUtils.validate_revai_api_key(revid.audio_segment.channel)
         url = f"https://api.rev.ai/speechtotext/v1/jobs/{revid.job_id}/transcript"
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -298,7 +304,8 @@ class RevAISpeechToText:
             print(f"Creating transcription job for segment {audio_segment.id} with media_url_path: {media_url_path} and is_absolute_url: {is_absolute_url}")
             api_response = RevAISpeechToText.create_transcription_job(
                 media_url_path,
-                is_absolute_url=is_absolute_url
+                is_absolute_url=is_absolute_url,
+                channel=audio_segment.channel,
             )
             print(f"API response: {api_response}")
         except Exception as e:

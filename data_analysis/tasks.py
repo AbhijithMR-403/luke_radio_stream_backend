@@ -1,5 +1,4 @@
-from celery import shared_task, group
-import logging
+from celery import shared_task
 from datetime import datetime, timedelta
 import logging
 
@@ -10,50 +9,11 @@ from data_analysis.services.audio_segments import AudioSegments
 from data_analysis.services.audio_download import ACRCloudAudioDownloader
 from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel 
 from core_admin.models import Channel
+from core_admin.repositories import GeneralSettingService
 
 
 logger = logging.getLogger(__name__)
 
-
-# Latest update download audio task
-@shared_task
-def download_audio_task(project_id, channel_id, start_time, duration_seconds, filename=None, filepath=None):
-    """
-    Celery task to download audio for unrecognized segments using ACRCloudAudioDownloader
-    """
-    try:
-        media_url = ACRCloudAudioDownloader.download_audio(
-            project_id, 
-            channel_id, 
-            start_time, 
-            duration_seconds, 
-            filename, 
-            filepath
-        )
-        print(f"Successfully downloaded audio for segment: {start_time} - {duration_seconds}s")
-        
-        # Return detailed file information
-        return {
-            'media_url': media_url,
-            'filename': filename,
-            'filepath': filepath,
-            'project_id': project_id,
-            'channel_id': channel_id,
-            'start_time': start_time,
-            'duration_seconds': duration_seconds,
-            'status': 'success'
-        }
-    except Exception as e:
-        print(f"Error downloading audio for segment {start_time}: {e}")
-        return {
-            'status': 'error',
-            'error': str(e),
-            'filename': filename,
-            'project_id': project_id,
-            'channel_id': channel_id,
-            'start_time': start_time,
-            'duration_seconds': duration_seconds
-        }
 
 @shared_task
 def analyze_transcription_task(job_id, media_url_path, media_url=None):
@@ -76,7 +36,7 @@ def analyze_transcription_task(job_id, media_url_path, media_url=None):
         # Don't raise the error, just log it and return False
         return False
 
-def _handle_channel_processing(channel, segments_data):
+def _handle_channel_processing(channel: Channel | int, segments_data):
     """
     Core logic to process audio segments for a channel.
     Extracted to be shared by both Today and Previous Day tasks.
@@ -98,9 +58,7 @@ def _handle_channel_processing(channel, segments_data):
     if not inserted_segments:
         return 0
 
-    # Step 4: Download audio (External Network Call)
-    # We do NOT use atomic transactions here because this takes time.
-    download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments)
+    download_results = ACRCloudAudioDownloader.download_audio_segments_batch(inserted_segments, channel)
 
     # Step 5: Map segments for marking logic
     segments_for_marking = [
@@ -159,14 +117,68 @@ def process_channel_task(self, channel_id, date_str=None, is_today=False):
         return {'channel_id': channel_id, 'status': 'error', 'message': str(e)}
 
 
+# --- Channel settings validation (for broadcast pipeline) ---
+
+# GeneralSetting fields required for broadcast audio pipeline; if any is missing/empty, channel is deactivated
+BROADCAST_SETTINGS_REQUIRED_FIELDS = [
+    'revai_access_token',
+    'acr_cloud_api_key',
+    'openai_api_key',
+    'summarize_transcript_prompt',
+    'sentiment_analysis_prompt',
+    'general_topics_prompt',
+    'iab_topics_prompt',
+    'determine_radio_content_type_prompt',
+    'content_type_prompt',
+]
+
+
+def deactivate_channels_without_valid_settings():
+    """
+    For broadcast channels that are active and not deleted, ensure each has an
+    active GeneralSetting with all required fields. If a channel has no settings
+    or any important field is missing/empty, set the channel to inactive.
+    Returns the list of Channel instances that are valid for processing.
+    """
+    channels = Channel.objects.filter(
+        is_deleted=False, is_active=True, channel_type='broadcast'
+    )
+    valid_channels = []
+    for channel in channels:
+        settings = GeneralSettingService.get_active_setting(
+            channel=channel, include_buckets=False
+        )
+        if not settings:
+            logger.warning(
+                "Channel id=%s has no active GeneralSetting; deactivating.", channel.id
+            )
+            channel.is_active = False
+            channel.save()
+            continue
+        missing = []
+        for field in BROADCAST_SETTINGS_REQUIRED_FIELDS:
+            val = getattr(settings, field, None)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                missing.append(field)
+        if missing:
+            logger.warning(
+                "Channel id=%s missing required settings fields: %s; deactivating.",
+                channel.id,
+                missing,
+            )
+            channel.is_active = False
+            channel.save()
+            continue
+        valid_channels.append(channel)
+    return valid_channels
+
+
 # --- Orchestrator Tasks (The Schedulers) ---
 
 @shared_task
 def process_today_audio_data():
     """ Runs daily 1 hrs interval. Spawns parallel tasks for each channel. """
-    channels = Channel.objects.filter(is_deleted=False, is_active=True, channel_type='broadcast')
-    print(channels)
-    # Use a group to run channel tasks in parallel
+    channels = deactivate_channels_without_valid_settings()
     for channel in channels:
         process_channel_task.delay(channel.id, is_today=True)
 
@@ -175,7 +187,7 @@ def process_today_audio_data():
 def process_previous_day_audio_data():
     """ Runs daily at 2 AM. Spawns parallel tasks for each channel. """
     previous_day = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-    channels = Channel.objects.filter(is_deleted=False, is_active=True, channel_type='broadcast')
+    channels = deactivate_channels_without_valid_settings()
     for channel in channels:
         process_channel_task.delay(channel.id, date_str=previous_day, is_today=False)
 

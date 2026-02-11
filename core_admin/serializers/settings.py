@@ -54,6 +54,7 @@ class GeneralSettingSerializer(serializers.Serializer):
     radio_segment_error_rate = serializers.IntegerField(
         required=False, allow_null=True, min_value=0, max_value=100
     )
+    channel_id = serializers.IntegerField(required=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -69,13 +70,14 @@ class GeneralSettingSerializer(serializers.Serializer):
             return value
 
         if value and value.strip():
-            is_valid, error_message, email = OpenAIUtils.validate_api_key(value)
-            if not is_valid:
+            result = OpenAIUtils.validate_api_key(value)
+            if not result.get("is_valid"):
                 self._validation_error_occurred = True
                 raise serializers.ValidationError(
-                    error_message or 'Invalid OpenAI API key'
+                    result.get("error_message") or 'Invalid OpenAI API key'
                 )
 
+            email = result.get("email")
             if email:
                 self._openai_email = email
 
@@ -86,11 +88,11 @@ class GeneralSettingSerializer(serializers.Serializer):
             return value
 
         if value and value.strip():
-            is_valid, error_message = ACRCloudUtils.validate_api_key(value)
-            if not is_valid:
+            result = ACRCloudUtils.validate_api_key(value)
+            if not result.get("is_valid"):
                 self._validation_error_occurred = True
                 raise serializers.ValidationError(
-                    error_message or 'Invalid ACR Cloud API key'
+                    result.get("error_message") or 'Invalid ACR Cloud API key'
                 )
         return value
 
@@ -99,11 +101,11 @@ class GeneralSettingSerializer(serializers.Serializer):
             return value
 
         if value and value.strip():
-            is_valid, error_message = RevAIUtils.validate_api_key(value)
-            if not is_valid:
+            result = RevAIUtils.validate_api_key(value)
+            if not result.get("is_valid"):
                 self._validation_error_occurred = True
                 raise serializers.ValidationError(
-                    error_message or 'Invalid Rev.ai access token'
+                    result.get("error_message") or 'Invalid Rev.ai access token'
                 )
         return value
 
@@ -213,10 +215,10 @@ class GeneralSettingSerializer(serializers.Serializer):
                     )
                 })
 
-            is_valid, error_message = OpenAIUtils.validate_model(model.strip(), api_key)
-            if not is_valid:
+            result = OpenAIUtils.validate_model(model.strip(), api_key)
+            if not result.get("is_valid"):
                 raise serializers.ValidationError({
-                    'chatgpt_model': error_message or f'Invalid model: {model}'
+                    'chatgpt_model': result.get("error_message") or f'Invalid model: {model}'
                 })
 
         return attrs
@@ -312,11 +314,18 @@ class GeneralSettingResponseSerializer(serializers.ModelSerializer):
             'determine_radio_content_type_prompt',
             'content_type_prompt',
             'radio_segment_error_rate',
+            'version',
+            'is_active',
+            'created_by',
+            'created_at',
+            'change_reason',
+            'parent_version',
+            'channel_id',
         ]
         read_only_fields = fields
 
     def get_bucket_prompt(self, obj):
-        return TranscriptionAnalyzer.get_bucket_prompt()
+        return TranscriptionAnalyzer.get_bucket_prompt(obj.channel_id)
 
 
 class WellnessBucketResponseSerializer(serializers.ModelSerializer):

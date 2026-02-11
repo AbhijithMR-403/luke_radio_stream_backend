@@ -25,6 +25,14 @@ class ACRCloudFileUploadView(APIView):
         bucket_id = request.query_params.get('bucket_id')
         audio_url = request.query_params.get('url')
         title = request.query_params.get('title')
+        channel_id = request.query_params.get('channel_id')
+        
+        # Validate channel_id
+        if not channel_id:
+            return Response(
+                {'error': 'channel_id query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Validate required parameters
         if not bucket_id:
@@ -50,7 +58,7 @@ class ACRCloudFileUploadView(APIView):
         
         # Get ACR Cloud API token
         try:
-            acr_token = ValidationUtils.validate_acr_cloud_api_key()
+            acr_token = ValidationUtils.validate_acr_cloud_api_key(channel_id)
         except Exception as e:
             return Response(
                 {'error': str(e)},
@@ -137,14 +145,30 @@ class ACRCloudBucketsView(APIView):
     API endpoint to fetch buckets from ACR Cloud.
     Only authenticated users can access this endpoint.
     
+    Query parameters:
+    - channel_id: The channel ID (required) to resolve settings.
+    
     Returns the list of buckets from ACR Cloud API.
     """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
+        channel_id = request.query_params.get('channel_id')
+        if not channel_id:
+            return Response(
+                {'error': 'channel_id query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            channel_id_int = int(channel_id)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'channel_id must be a valid integer'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         # Get ACR Cloud API token
         try:
-            acr_token = ValidationUtils.validate_acr_cloud_api_key()
+            acr_token = ValidationUtils.validate_acr_cloud_api_key(channel_id_int)
         except Exception as e:
             return Response(
                 {'error': str(e)},

@@ -40,8 +40,8 @@ class AudioSegments:
         # Validate parameters
         ValidationUtils.validate_positive_integer(project_id, "project_id")
         ValidationUtils.validate_positive_integer(channel_id, "channel_id")
-        
-        token = ValidationUtils.validate_acr_cloud_api_key()
+        channel = ValidationUtils.validate_channel_exists(project_id, channel_id)
+        token = ValidationUtils.validate_acr_cloud_api_key(channel)
         url = AudioSegments._construct_url(project_id, channel_id, date)
         headers = {
             "Content-Type": "application/json",
@@ -799,110 +799,3 @@ class AudioSegments:
             print(f"   Due to overlap with newer segment: {new_segment_identifier}")
         
         return deactivated_count
-
-    @staticmethod
-    def _insert_segments_to_database(segments, channel):
-        """
-        Insert audio segments into the AudioSegments database table.
-        
-        Args:
-            segments: List of segment dictionaries
-            channel: Channel object
-        """
-        from data_analysis.tasks import download_audio_task
-        
-        inserted_count = 0
-        deactivated_count = 0
-        
-        for segment in segments:
-            # Deactivate any overlapping segments first
-            deactivated = AudioSegments._deactivate_overlapping_segments(
-                segment["start_time"], 
-                segment["end_time"], 
-                segment["duration_seconds"],
-                channel
-            )
-            deactivated_count += deactivated
-            
-            # Generate filename for the audio file
-            start_time_str = segment["start_time"].strftime("%Y%m%d%H%M%S")
-            filename = f"audio_{channel.project_id}_{channel.channel_id}_{start_time_str}_{segment['duration_seconds']}.mp3"
-            
-            # Prepare data for database insertion
-            segment_data = {
-                'start_time': segment["start_time"],
-                'end_time': segment["end_time"],
-                'duration_seconds': segment["duration_seconds"],
-                'is_recognized': segment["is_recognized"],
-                'is_active': True,  # New segment is always active
-                'channel': channel,
-                'file_name': filename,
-                'file_path': f"/api/media/{filename}",
-            }
-            
-            # Add title fields based on recognition status
-            if segment["is_recognized"]:
-                segment_data['title'] = segment.get("title", "Unknown Title")
-            else:
-                segment_data['title_before'] = segment.get("title_before", "")
-                segment_data['title_after'] = segment.get("title_after", "")
-            
-            # Create or update the AudioSegments record
-            try:
-                # Check if this exact segment already exists
-                existing_segments = AudioSegmentsModel.objects.filter(
-                    start_time=segment["start_time"],
-                    end_time=segment["end_time"],
-                    channel=channel
-                )
-                
-                if existing_segments.exists():
-                    # Update the first existing segment (or create if none exist)
-                    obj, created = AudioSegmentsModel.objects.update_or_create(
-                        start_time=segment["start_time"],
-                        end_time=segment["end_time"],
-                        channel=channel,
-                        defaults=segment_data
-                    )
-                    action = "updated" if not created else "created"
-                    print(f"Segment {action}: {segment['start_time']} - {segment['end_time']} (ID: {obj.id})")
-                else:
-                    # Create new segment
-                    obj = AudioSegmentsModel.objects.create(**segment_data)
-                    print(f"Segment created: {segment['start_time']} - {segment['end_time']} (ID: {obj.id})")
-                    created = True
-                
-                # Update the notes of deactivated segments with the actual new segment ID
-                if deactivated > 0:
-                    deactivated_segments = AudioSegmentsModel.objects.filter(
-                        channel=channel,
-                        is_active=False,
-                        notes__contains="🔴 Deactivated due to overlap with newer segment"
-                    ).exclude(
-                        start_time=segment["start_time"],
-                        end_time=segment["end_time"]
-                    )
-                    
-                    for seg in deactivated_segments:
-                        if f"{segment['start_time'].strftime('%Y%m%d_%H%M%S')}_{segment['duration_seconds']}s" in seg.notes:
-                            seg.notes = f"🔴 Deactivated due to overlap with segment ID:{obj.id} (time: {segment['start_time']} - {segment['end_time']})"
-                            seg.save()
-
-                
-                # Call Celery task to download audio
-                download_audio_task.delay(
-                    project_id=channel.project_id,
-                    channel_id=channel.channel_id,
-                    start_time=segment["start_time"],
-                    duration_seconds=segment["duration_seconds"],
-                    filename=filename
-                )
-                print(f"Triggered audio download task for audio segment: {start_time_str}")
-                inserted_count += 1
-                    
-            except Exception as e:
-                # Log error but continue processing other segments
-                print(f"Error inserting segment: {str(e)}")
-        
-        print(f"Database insertion complete: {inserted_count} inserted, {deactivated_count} deactivated")
-

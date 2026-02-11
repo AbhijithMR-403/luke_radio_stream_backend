@@ -17,6 +17,7 @@ from django.conf import settings
 import re
 
 from core_admin.models import Channel
+from core_admin.repositories import GeneralSettingService
 from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel, TranscriptionDetail, TranscriptionQueue
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.tasks import analyze_transcription_task
@@ -787,8 +788,16 @@ class AudioTranscriptionAndAnalysisView(View):
                     if file_dir:
                         os.makedirs(file_dir, exist_ok=True)
                     
+                    settings = GeneralSettingService.get_active_setting(channel=segment.channel, include_buckets=False)
+                    if not settings or not settings.acr_cloud_api_key:
+                        return JsonResponse({
+                            'success': False, 
+                            'error': 'ACRCloud API key not configured for channel'
+                        }, status=400)
+                    
                     # Download the audio file
                     media_url = ACRCloudAudioDownloader.download_audio(
+                        api_key=settings.acr_cloud_api_key,
                         project_id=project_id,
                         channel_id=channel_id,
                         start_time=segment.start_time,
@@ -855,7 +864,7 @@ class AudioTranscriptionAndAnalysisView(View):
                 
                 
                 # Call the transcription service
-                transcription_job = RevAISpeechToText.create_transcription_job(media_path)
+                transcription_job = RevAISpeechToText.create_transcription_job(media_path, channel=segment.channel)
                 job_id = transcription_job.get('id')
                 
                 if not job_id:
