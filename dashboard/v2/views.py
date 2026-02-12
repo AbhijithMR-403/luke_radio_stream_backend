@@ -303,7 +303,6 @@ class GeneralTopicCountByShiftView(APIView):
     """
     API endpoint to get count of general topics grouped by shift
     """
-    parser_classes = [JSONParser]
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
