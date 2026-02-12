@@ -73,7 +73,7 @@ async def _render_slide(
         await page.wait_for_selector(".dashboard-slide-ready", state="visible", timeout=45000)
         pdf_options = dict(path=temp_path, print_background=True, landscape=True, format="A4")
         if slide_num == 6:
-            pdf_options["scale"] = 0.9
+            pdf_options["scale"] = 0.8
         await page.pdf(**pdf_options)
         return temp_path
     except Exception as e:
