@@ -28,7 +28,7 @@ class ChannelSerializer(serializers.ModelSerializer):
     class Meta:
         model = Channel
         fields = ['id', 'name', 'channel_id', 'project_id', 'timezone', 'rss_url', 
-                  'channel_type', 'rss_start_date', 'is_active', 'created_at', 'is_deleted']
+                  'channel_type', 'rss_start_date', 'is_active', 'created_at', 'is_deleted', 'is_default_settings']
 
 class UserChannelAssignmentSerializer(serializers.ModelSerializer):
     channel = ChannelSerializer()

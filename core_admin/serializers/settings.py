@@ -273,6 +273,26 @@ class RevertToVersionSerializer(serializers.Serializer):
     target_version_number = serializers.IntegerField(required=True, min_value=1)
 
 
+class VersionHistoryItemSerializer(serializers.Serializer):
+    """Read-only summary of a GeneralSetting version for history listing, including settings and buckets."""
+
+    id = serializers.IntegerField(read_only=True)
+    version = serializers.IntegerField(read_only=True)
+    is_active = serializers.BooleanField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    change_reason = serializers.CharField(read_only=True, allow_null=True)
+    created_by = serializers.PrimaryKeyRelatedField(read_only=True, allow_null=True)
+    settings = serializers.SerializerMethodField()
+    buckets = serializers.SerializerMethodField()
+
+    def get_settings(self, obj):
+        return GeneralSettingResponseSerializer(obj).data
+
+    def get_buckets(self, obj):
+        buckets = obj.wellness_buckets.filter(is_deleted=False)
+        return WellnessBucketResponseSerializer(buckets, many=True).data
+
+
 class SettingsAndBucketsSerializer(serializers.Serializer):
     """
     Serializer for validating settings + buckets payload

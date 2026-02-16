@@ -70,6 +70,7 @@ async def _render_slide(
     try:
         # Use "load" instead of "networkidle" — dashboards often have ongoing requests
         await page.goto(dashboard_url, wait_until="load", timeout=60000)
+        
         await page.wait_for_selector(".dashboard-slide-ready", state="visible", timeout=45000)
         pdf_options = dict(path=temp_path, print_background=True, landscape=True, format="A4")
         if slide_num == 6:

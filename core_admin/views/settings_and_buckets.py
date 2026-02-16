@@ -9,6 +9,7 @@ from core_admin.serializers.settings import (
     SettingsAndBucketsSerializer,
     SettingsAndBucketsResponseSerializer,
     RevertToVersionSerializer,
+    VersionHistoryItemSerializer,
 )
 from ..repositories import GeneralSettingService
 
@@ -122,6 +123,27 @@ class SettingsAndBucketsAPIView(APIView):
 class RevertToVersionAPIView(APIView):
     """Revert channel settings to a specific historical version by creating a new version cloned from it."""
     permission_classes = [IsAdminUser]
+
+    def get(self, request, *args, **kwargs):
+        """Return version history for a channel (query: channel_id)."""
+        channel_id = request.query_params.get('channel_id')
+        if channel_id is None or channel_id == '':
+            return Response(
+                {'success': False, 'error': 'channel_id is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not str(channel_id).isdigit():
+            return Response(
+                {'success': False, 'error': 'channel_id must be a valid integer'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        channel_id = int(channel_id)
+        versions = GeneralSetting.objects.filter(channel_id=channel_id).order_by('-version')
+        serializer = VersionHistoryItemSerializer(versions, many=True)
+        return Response(
+            {'success': True, 'versions': serializer.data},
+            status=status.HTTP_200_OK,
+        )
 
     def post(self, request, *args, **kwargs):
         serializer = RevertToVersionSerializer(data=request.data)
