@@ -1,4 +1,4 @@
-from .channel import ChannelSerializer, ChannelPatchSerializer
+from .channel import ChannelSerializer, ChannelPatchSerializer, SetChannelDefaultSettingsSerializer
 
-__all__ = ['ChannelSerializer', 'ChannelPatchSerializer']
+__all__ = ['ChannelSerializer', 'ChannelPatchSerializer', 'SetChannelDefaultSettingsSerializer']
 

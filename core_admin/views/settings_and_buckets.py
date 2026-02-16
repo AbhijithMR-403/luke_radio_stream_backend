@@ -8,6 +8,7 @@ from ..models import GeneralSetting, WellnessBucket
 from core_admin.serializers.settings import (
     SettingsAndBucketsSerializer,
     SettingsAndBucketsResponseSerializer,
+    RevertToVersionSerializer,
 )
 from ..repositories import GeneralSettingService
 
@@ -18,7 +19,6 @@ class SettingsAndBucketsAPIView(APIView):
     def get(self, request, *args, **kwargs):
         try:
             channel_id = request.query_params.get('channel_id')
-            print(channel_id)
 
             if channel_id is not None and channel_id != '' and  not channel_id.isdigit():
                 raise ValidationError('channel_id must be a valid integer')
@@ -116,4 +116,41 @@ class SettingsAndBucketsAPIView(APIView):
             return Response(
                 {'success': False, 'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class RevertToVersionAPIView(APIView):
+    """Revert channel settings to a specific historical version by creating a new version cloned from it."""
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        serializer = RevertToVersionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        user = request.user if request.user.is_authenticated else None
+
+        try:
+            new_setting = GeneralSettingService.revert_to_version(
+                channel_id=data['channel_id'],
+                target_version_number=data['target_version_number'],
+                user=user,
+            )
+            buckets = new_setting.wellness_buckets.filter(is_deleted=False)
+            response_serializer = SettingsAndBucketsResponseSerializer({
+                'settings': new_setting,
+                'buckets': buckets,
+            })
+            return Response(
+                {'success': True, **response_serializer.data},
+                status=status.HTTP_201_CREATED,
+            )
+        except ValidationError as ve:
+            return Response(
+                {'success': False, 'error': str(ve)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
             )

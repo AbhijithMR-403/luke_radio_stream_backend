@@ -266,6 +266,13 @@ class WellnessBucketSerializer(serializers.Serializer):
         return attrs
 
 
+class RevertToVersionSerializer(serializers.Serializer):
+    """Serializer for revert-to-version request: channel_id and target_version_number."""
+
+    channel_id = serializers.IntegerField(required=True)
+    target_version_number = serializers.IntegerField(required=True, min_value=1)
+
+
 class SettingsAndBucketsSerializer(serializers.Serializer):
     """
     Serializer for validating settings + buckets payload

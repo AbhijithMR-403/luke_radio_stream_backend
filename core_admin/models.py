@@ -36,6 +36,10 @@ class Channel(models.Model):
     is_active = models.BooleanField(
         default=True,
     )
+    is_default_settings = models.BooleanField(
+        default=False,
+        help_text='When True, this channel settings is used as default settings',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)  # To soft delete
 
@@ -82,9 +86,8 @@ class Channel(models.Model):
                 raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
-        """
-        Override save to run validation by default.
-        """
+        if self.is_default_settings and not self.is_deleted:
+            Channel.objects.filter(is_deleted=False).exclude(pk=self.pk).update(is_default_settings=False)
         self.full_clean()
         super().save(*args, **kwargs)
 
@@ -125,7 +128,12 @@ class Channel(models.Model):
                       project_id__isnull=True)
                 ),
                 name='channel_type_consistency'
-            )
+            ),
+            models.UniqueConstraint(
+                fields=['is_default_settings'],
+                condition=Q(is_default_settings=True, is_deleted=False),
+                name='only_one_default_channel',
+            ),
         ]
 
 class GeneralSetting(models.Model):
@@ -271,14 +279,6 @@ class WellnessBucket(models.Model):
         on_delete=models.CASCADE,
         related_name='wellness_buckets',
         help_text="General settings version this bucket belongs to."
-    )
-    source_bucket_id = models.ForeignKey(
-        'self',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='cloned_buckets',
-        help_text="Original bucket ID when this bucket was cloned."
     )
     created_at = models.DateTimeField(
         auto_now_add=True,

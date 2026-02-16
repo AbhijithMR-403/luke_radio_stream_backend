@@ -18,6 +18,7 @@ class ChannelSerializer(serializers.ModelSerializer):
             'is_active',
             'created_at',
             'is_deleted',
+            'is_default_settings',
         ]
         read_only_fields = [
             'id',
@@ -119,3 +120,9 @@ class ChannelPatchSerializer(serializers.Serializer):
             setattr(instance, attr, value)
         instance.save()
         return instance
+
+
+class SetChannelDefaultSettingsSerializer(serializers.Serializer):
+    """Request body for POST /channels/default-settings."""
+    channel_id = serializers.IntegerField(required=True)
+    is_default_settings = serializers.BooleanField(required=True)

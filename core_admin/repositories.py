@@ -48,7 +48,8 @@ class GeneralSettingService:
         settings_data: dict,
         buckets_data: list,
         user=None,
-        change_reason: str | None = None
+        change_reason: str | None = None,
+        replace_buckets: bool = False,
     ):
         """
         Creates a new GeneralSetting version atomically.
@@ -108,8 +109,10 @@ class GeneralSettingService:
             parent_version=active_setting,
         )
 
-        # ---- Clone buckets from active version ----
-        if active_setting:
+        # ---- Clone buckets from active version (unless replace_buckets) ----
+        if replace_buckets:
+            bucket_map = {}
+        elif active_setting:
             old_buckets = active_setting.wellness_buckets.filter(is_deleted=False)
             bucket_map = {}  # old_id → new_bucket
 
@@ -119,7 +122,6 @@ class GeneralSettingService:
                     description=old_bucket.description,
                     category=old_bucket.category,
                     general_setting=new_setting,
-                    source_bucket_id=old_bucket,
                 )
                 bucket_map[old_bucket.id] = new_bucket
 
@@ -327,6 +329,7 @@ class GeneralSettingService:
             buckets_data=buckets_data,
             user=user,
             change_reason=f"Reverted to version {target_version_number}",
+            replace_buckets=True,
         )
 
 

@@ -1,5 +1,6 @@
 import requests
 from config.validation import ValidationUtils
+from core_admin.models import GeneralSetting
 
 
 class BaseAPIUtils:
@@ -287,3 +288,31 @@ class RevAIUtils:
             # Optionally log the error
             return {"error": "You don't have permission to access this project"}, 403
 
+
+# --- Default channel settings validation (for SetChannelDefaultSettings API) ---
+DEFAULT_SETTINGS_REQUIRED_FIELDS = [
+    'openai_api_key',
+    'acr_cloud_api_key',
+    'revai_access_token',
+    'summarize_transcript_prompt',
+    'sentiment_analysis_prompt',
+    'general_topics_prompt',
+    'iab_topics_prompt',
+    'determine_radio_content_type_prompt',
+    'content_type_prompt',
+]
+
+
+def channel_has_complete_settings(channel):
+    """
+    Return (ok: bool, missing_fields: list).
+    Channel must have an active GeneralSetting with all DEFAULT_SETTINGS_REQUIRED_FIELDS non-empty.
+    """
+    active = GeneralSetting.objects.filter(channel=channel, is_active=True).first()
+    if not active:
+        return False, []
+    missing = [
+        f for f in DEFAULT_SETTINGS_REQUIRED_FIELDS
+        if not (getattr(active, f, None) and str(getattr(active, f, '')).strip())
+    ]
+    return len(missing) == 0, missing

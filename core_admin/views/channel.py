@@ -4,11 +4,11 @@ from rest_framework import status
 from rest_framework.permissions import IsAdminUser
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime
 
 from ..models import Channel
-from ..serializers import ChannelSerializer, ChannelPatchSerializer
-from ..utils import ACRCloudUtils
+from ..serializers import ChannelSerializer, ChannelPatchSerializer, SetChannelDefaultSettingsSerializer
+from ..utils import ACRCloudUtils, channel_has_complete_settings
 from rss_ingestion.tasks import ingest_podcast_rss_feed_task
 from rss_ingestion.service import RSSIngestionService
 
@@ -146,6 +146,39 @@ class ChannelAPIView(APIView):
         channel.save()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SetChannelDefaultSettingsAPIView(APIView):
+    """Set or unset a channel as default. Only one channel can be default; requires complete active settings to set."""
+
+    def post(self, request, *args, **kwargs):
+        serializer = SetChannelDefaultSettingsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        channel = Channel.objects.filter(id=data['channel_id'], is_deleted=False).first()
+        if not channel:
+            return Response({'success': False, 'error': 'Channel not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if data['is_default_settings']:
+            ok, missing = channel_has_complete_settings(channel)
+            if not ok:
+                err = (
+                    'Channel has no active settings. Create and activate settings first.'
+                    if not missing else
+                    'Cannot set as default: required settings fields are missing.'
+                )
+                body = {'success': False, 'error': err}
+                if missing:
+                    body['missing_fields'] = missing
+                return Response(body, status=status.HTTP_400_BAD_REQUEST)
+            channel.is_default_settings = True
+            channel.save(update_fields=['is_default_settings'])
+        else:
+            channel.is_default_settings = False
+            channel.save(update_fields=['is_default_settings'])
+
+        return Response({'success': True, 'channel': ChannelSerializer(channel).data})
 
 
 class IngestPodcastRSSFeedAPIView(APIView):
