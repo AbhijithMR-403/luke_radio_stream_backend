@@ -4,6 +4,13 @@ from config.validation import ValidationUtils
 
 
 class ChannelSerializer(serializers.ModelSerializer):
+    replicate_default_settings = serializers.BooleanField(
+        required=False,
+        default=False,
+        write_only=True,
+        help_text='If true, copy settings from the default settings channel; otherwise leave settings empty.',
+    )
+
     class Meta:
         model = Channel
         fields = [
@@ -19,6 +26,7 @@ class ChannelSerializer(serializers.ModelSerializer):
             'created_at',
             'is_deleted',
             'is_default_settings',
+            'replicate_default_settings',
         ]
         read_only_fields = [
             'id',
@@ -93,6 +101,18 @@ class ChannelSerializer(serializers.ModelSerializer):
             #     raise serializers.ValidationError({
             #         'rss_start_date': 'RSS start date is not allowed for Broadcast channels'
             #     })
+
+        # Enforce unique name (non-empty, stripped) among non-deleted channels
+        name_value = (data.get('name') or (self.instance.name if self.instance else '') or '').strip()
+        if name_value:
+            qs = Channel.objects.filter(is_deleted=False, name=name_value)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError({
+                    'success': False,
+                    'name': 'A channel with this name already exists.'
+                })
         
         return data
 

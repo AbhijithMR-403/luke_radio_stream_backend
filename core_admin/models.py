@@ -46,6 +46,16 @@ class Channel(models.Model):
     def clean(self):
         """Validate the timezone field and channel type requirements"""
         super().clean()
+        # Normalize name (strip) so uniqueness is consistent
+        if self.name is not None:
+            self.name = (self.name or '').strip()
+        # Enforce unique name among non-deleted channels (non-empty names only)
+        if self.name and not self.is_deleted:
+            qs = Channel.objects.filter(is_deleted=False, name=self.name)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError({'name': 'A channel with this name already exists.'})
         if self.timezone:
             try:
                 ZoneInfo(self.timezone)
@@ -133,6 +143,11 @@ class Channel(models.Model):
                 fields=['is_default_settings'],
                 condition=Q(is_default_settings=True, is_deleted=False),
                 name='only_one_default_channel',
+            ),
+            models.UniqueConstraint(
+                fields=['name'],
+                condition=Q(is_deleted=False) & ~Q(name=''),
+                name='unique_channel_name',
             ),
         ]
 

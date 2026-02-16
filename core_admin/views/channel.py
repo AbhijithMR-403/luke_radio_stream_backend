@@ -9,6 +9,7 @@ from datetime import datetime
 from ..models import Channel
 from ..serializers import ChannelSerializer, ChannelPatchSerializer, SetChannelDefaultSettingsSerializer
 from ..utils import ACRCloudUtils, channel_has_complete_settings
+from ..repositories import GeneralSettingService
 from rss_ingestion.tasks import ingest_podcast_rss_feed_task
 from rss_ingestion.service import RSSIngestionService
 
@@ -39,9 +40,15 @@ class ChannelAPIView(APIView):
 
     def post(self, request, *args, **kwargs):
         serializer = ChannelSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        serializer.is_valid()
+        if serializer.errors:
+            return Response(
+                {'success': False, 'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         validated = serializer.validated_data
+        replicate_default_settings = validated.pop('replicate_default_settings', False)
         channel_type = validated['channel_type']
 
         # Fetch name from ACR Cloud if not provided (only for broadcast channels)
@@ -89,6 +96,29 @@ class ChannelAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Replicate settings from default channel if requested
+        if replicate_default_settings:
+            default_channel = Channel.objects.filter(
+                is_default_settings=True, is_deleted=False
+            ).first()
+            if not default_channel:
+                return Response(
+                    {
+                        'success': False,
+                        'error': 'No default settings channel is set. Set a channel as default first, or leave "replicate_default_settings" false to create with empty settings.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                GeneralSettingService.transfer_settings(
+                    default_channel.id, channel.id, getattr(request, 'user', None)
+                )
+            except ValidationError as e:
+                return Response(
+                    {'success': False, 'error': str(e)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Trigger RSS ingestion for podcast channels
         if channel_type == 'podcast':
             ingest_podcast_rss_feed_task.delay(channel.id)
@@ -116,8 +146,15 @@ class ChannelAPIView(APIView):
             with transaction.atomic():
                 channel = serializer.save()
         except ValidationError as e:
+            if getattr(e, 'message_dict', None):
+                first_message = next(
+                    (str(m) for msgs in e.message_dict.values() for m in (msgs if isinstance(msgs, list) else [msgs])),
+                    str(e)
+                )
+            else:
+                first_message = str(e)
             return Response(
-                {'success': False, 'error': str(e.message_dict) if hasattr(e, 'message_dict') else str(e)},
+                {'success': False, 'error': first_message},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
