@@ -74,7 +74,9 @@ async def _render_slide(
         await page.wait_for_selector(".dashboard-slide-ready", state="visible", timeout=45000)
         pdf_options = dict(path=temp_path, print_background=True, landscape=True, format="A4")
         if slide_num == 6:
-            pdf_options["scale"] = 0.8
+            pdf_options["scale"] = 0.9
+        elif slide_num == 7:
+            await asyncio.sleep(1) # wait for 1 second to load the slide
         await page.pdf(**pdf_options)
         return temp_path
     except Exception as e:
