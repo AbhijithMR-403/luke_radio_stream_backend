@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import JSONParser
 from rest_framework import permissions
+from django.core.cache import cache
 from django.http import HttpResponse
 
 from dashboard.v2.service.DashboardSummary import SummaryService
@@ -26,7 +27,6 @@ class SummaryView(GenericAPIView):
     """
     API endpoint for sentiment summary with datetime and shift filtering
     """
-    serializer_class = SummaryQuerySerializer
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
@@ -42,7 +42,7 @@ class SummaryView(GenericAPIView):
         """
         try:
             # Validate query parameters using serializer
-            serializer = self.get_serializer(data=request.query_params)
+            serializer = SummaryQuerySerializer(data=request.query_params)
             serializer.is_valid(raise_exception=True)
             
             # Get validated data
@@ -53,14 +53,24 @@ class SummaryView(GenericAPIView):
             report_folder_id = validated_data.get('report_folder_id')
             shift_id_int = validated_data.get('shift_id')
             
-            # Get summary data from service
-            summary_data = SummaryService.get_summary_data(
-                channel_id=channel_id,
-                start_dt=start_dt,
-                end_dt=end_dt,
-                shift_id=shift_id_int,
-                report_folder_id=report_folder_id
+            # Cache key from query params
+            cache_key = "dashboard:v2:summary:%s:%s:%s:%s:%s" % (
+                start_dt.isoformat() if start_dt else "",
+                end_dt.isoformat() if end_dt else "",
+                channel_id or "",
+                report_folder_id or "",
+                shift_id_int or "",
             )
+            summary_data = cache.get(cache_key)
+            if summary_data is None:
+                summary_data = SummaryService.get_summary_data(
+                    channel_id=channel_id,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    shift_id=shift_id_int,
+                    report_folder_id=report_folder_id
+                )
+                cache.set(cache_key, summary_data, timeout=300)  # 5 minutes
             
             # Build response with filters
             response_data = {
@@ -119,14 +129,24 @@ class BucketCountView(APIView):
             report_folder_id = validated_data.get('report_folder_id')
             shift_id = validated_data.get('shift_id')
             
-            # Get bucket counts from service
-            bucket_data = BucketCountService.get_bucket_counts(
-                start_dt=start_dt,
-                end_dt=end_dt,
-                channel_id=channel_id,
-                shift_id=shift_id,
-                report_folder_id=report_folder_id,
+            # Cache key from query params (same request = same key)
+            cache_key = "dashboard:v2:bucket_counts:%s:%s:%s:%s:%s" % (
+                start_dt.isoformat() if start_dt else "",
+                end_dt.isoformat() if end_dt else "",
+                channel_id or "",
+                shift_id or "",
+                report_folder_id or "",
             )
+            bucket_data = cache.get(cache_key)
+            if bucket_data is None:
+                bucket_data = BucketCountService.get_bucket_counts(
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    channel_id=channel_id,
+                    shift_id=shift_id,
+                    report_folder_id=report_folder_id,
+                )
+                cache.set(cache_key, bucket_data, timeout=300)  # 5 minutes
             
             # Build response
             response_data = {
@@ -178,15 +198,26 @@ class CategoryBucketCountView(APIView):
             report_folder_id = validated_data.get('report_folder_id')
             shift_id = validated_data.get('shift_id')
             
-            # Get bucket counts from service
-            bucket_data = BucketCountService.get_category_bucket_counts(
-                start_dt=start_dt,
-                end_dt=end_dt,
-                category_name=category_name,
-                channel_id=channel_id,
-                shift_id=shift_id,
-                report_folder_id=report_folder_id
+            # Cache key from query params
+            cache_key = "dashboard:v2:category_bucket_counts:%s:%s:%s:%s:%s:%s" % (
+                start_dt.isoformat() if start_dt else "",
+                end_dt.isoformat() if end_dt else "",
+                category_name or "",
+                channel_id or "",
+                report_folder_id or "",
+                shift_id or "",
             )
+            bucket_data = cache.get(cache_key)
+            if bucket_data is None:
+                bucket_data = BucketCountService.get_category_bucket_counts(
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    category_name=category_name,
+                    channel_id=channel_id,
+                    shift_id=shift_id,
+                    report_folder_id=report_folder_id
+                )
+                cache.set(cache_key, bucket_data, timeout=300)  # 5 minutes
             
             # Build response
             response_data = {
@@ -249,17 +280,27 @@ class TopTopicsView(APIView):
             show_all_topics = validated_data.get('show_all_topics', False)
             sort_by = validated_data.get('sort_by', 'duration')
             
-            # Get all topics with both count and duration calculated in a single pass
-            # This ensures accurate data for both metrics
-            topics_data = TopicService.get_topics_with_both_metrics(
-                start_dt=start_dt,
-                end_dt=end_dt,
-                channel_id=channel_id,
-                report_folder_id=report_folder_id,
-                shift_id=shift_id,
-                limit=1000,  # High limit to get all topics
-                show_all_topics=show_all_topics
+            # Cache key from query params (exclude sort_by - we cache raw topics_data)
+            cache_key = "dashboard:v2:top_topics:%s:%s:%s:%s:%s:%s" % (
+                start_dt.isoformat() if start_dt else "",
+                end_dt.isoformat() if end_dt else "",
+                channel_id or "",
+                report_folder_id or "",
+                shift_id or "",
+                show_all_topics,
             )
+            topics_data = cache.get(cache_key)
+            if topics_data is None:
+                topics_data = TopicService.get_topics_with_both_metrics(
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    channel_id=channel_id,
+                    report_folder_id=report_folder_id,
+                    shift_id=shift_id,
+                    limit=1000,  # High limit to get all topics
+                    show_all_topics=show_all_topics
+                )
+                cache.set(cache_key, topics_data, timeout=300)  # 5 minutes
             
             # Get all topics (unsorted)
             all_topics = topics_data['top_topics']
@@ -333,14 +374,24 @@ class GeneralTopicCountByShiftView(APIView):
             report_folder_id = validated_data.get('report_folder_id')
             show_all_topics = validated_data.get('show_all_topics', False)
             
-            # Get general topic counts by shift from service
-            result_data = TopicService.get_general_topic_counts_by_shift(
-                start_dt=start_dt,
-                end_dt=end_dt,
-                channel_id=channel_id,
-                report_folder_id=report_folder_id,
-                show_all_topics=show_all_topics
+            # Cache key from query params
+            cache_key = "dashboard:v2:general_topic_counts_by_shift:%s:%s:%s:%s:%s" % (
+                start_dt.isoformat() if start_dt else "",
+                end_dt.isoformat() if end_dt else "",
+                channel_id or "",
+                report_folder_id or "",
+                show_all_topics,
             )
+            result_data = cache.get(cache_key)
+            if result_data is None:
+                result_data = TopicService.get_general_topic_counts_by_shift(
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    channel_id=channel_id,
+                    report_folder_id=report_folder_id,
+                    show_all_topics=show_all_topics
+                )
+                cache.set(cache_key, result_data, timeout=300)  # 5 minutes
             
             # Build response
             response_data = {
@@ -460,14 +511,24 @@ class WordCountView(APIView):
             report_folder_id = validated_data.get('report_folder_id')
             shift_id = validated_data.get('shift_id')
             
-            # Get word counts from service
-            word_count_data = WordCountService.get_word_counts(
-                start_dt=start_dt,
-                end_dt=end_dt,
-                channel_id=channel_id,
-                report_folder_id=report_folder_id,
-                shift_id=shift_id
+            # Cache key from query params
+            cache_key = "dashboard:v2:word_counts:%s:%s:%s:%s:%s" % (
+                start_dt.isoformat() if start_dt else "",
+                end_dt.isoformat() if end_dt else "",
+                channel_id or "",
+                report_folder_id or "",
+                shift_id or "",
             )
+            word_count_data = cache.get(cache_key)
+            if word_count_data is None:
+                word_count_data = WordCountService.get_word_counts(
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    channel_id=channel_id,
+                    report_folder_id=report_folder_id,
+                    shift_id=shift_id
+                )
+                cache.set(cache_key, word_count_data, timeout=300)  # 5 minutes
             
             # Build response
             response_data = {
