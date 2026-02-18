@@ -7,6 +7,7 @@ import traceback
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from django.core.cache import cache
 
 from data_analysis.services.custom_audio_service import CustomAudioService
 from data_analysis.v2.serializer import CustomAudioDownloadSerializer
@@ -30,6 +31,32 @@ from data_analysis.v2.service import (
 from data_analysis.serializers import AudioSegmentsSerializer
 from config.validation import TimezoneUtils
 
+# Cache timeout for list audio segments (seconds). Same as dashboard v2 views.
+AUDIO_SEGMENTS_V2_CACHE_TIMEOUT = 300
+
+
+def _audio_segments_v2_cache_key(params, channel):
+    """Build a stable cache key from request params and channel."""
+    start_iso = params['base_start_dt'].isoformat() if params.get('base_start_dt') else ""
+    end_iso = params['base_end_dt'].isoformat() if params.get('base_end_dt') else ""
+    content_type_str = ",".join(sorted(params.get('content_type') or []))
+    status_val = params.get('status')
+    status_str = "active" if status_val is True else ("inactive" if status_val is False else "both")
+    return "data_analysis:v2:audio_segments:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s" % (
+        getattr(channel, 'id', params.get('channel_pk')),
+        start_iso,
+        end_iso,
+        params.get('shift_id') or "",
+        params.get('predefined_filter_id') or "",
+        params.get('page', 1),
+        params.get('page_size', 1),
+        status_str,
+        content_type_str,
+        (params.get('search_text') or "").strip(),
+        params.get('search_in') or "",
+        "1" if params.get('show_flagged_only') else "0",
+    )
+
 
 class ListAudioSegmentsV2View(APIView):
     """
@@ -46,16 +73,21 @@ class ListAudioSegmentsV2View(APIView):
             channel, shift, predefined_filter, error_response = get_channel_and_shift(params)
             if error_response:
                 return Response(json.loads(error_response.content), status=error_response.status_code)
+
+            cache_key = _audio_segments_v2_cache_key(params, channel)
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return Response(cached)
             
             valid_windows = None
             if shift:
                 valid_windows = apply_shift_filtering(params['base_start_dt'], params['base_end_dt'], shift)
                 if not valid_windows:
-                    return self._return_empty_response(params, channel)
+                    return self._return_empty_response(params, channel, cache_key)
             elif predefined_filter:
                 valid_windows = apply_predefined_filter_filtering(params['base_start_dt'], params['base_end_dt'], predefined_filter)
                 if not valid_windows:
-                    return self._return_empty_response(params, channel)
+                    return self._return_empty_response(params, channel, cache_key)
 
             is_flagged_mode = params.get('show_flagged_only')
             is_search_mode = params.get('search_text') and params.get('search_in')
@@ -146,7 +178,8 @@ class ListAudioSegmentsV2View(APIView):
                 )
             
             response_data['has_data'] = len(all_segments) > 0
-            
+
+            cache.set(cache_key, response_data, timeout=AUDIO_SEGMENTS_V2_CACHE_TIMEOUT)
             return Response(response_data)
 
         except Exception as e:
@@ -157,9 +190,9 @@ class ListAudioSegmentsV2View(APIView):
                 'traceback': traceback.format_exc() if __debug__ else None
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def _return_empty_response(self, params, channel):
+    def _return_empty_response(self, params, channel, cache_key=None):
         """Helper to return consistent empty response structure."""
-        return Response({
+        response_data = {
             'success': True,
             'data': [],
             'has_data': False,
@@ -173,7 +206,10 @@ class ListAudioSegmentsV2View(APIView):
                     'end': TimezoneUtils.convert_to_channel_tz(params['base_end_dt'], channel.timezone)
                 }
             }
-        })
+        }
+        if cache_key is not None:
+            cache.set(cache_key, response_data, timeout=AUDIO_SEGMENTS_V2_CACHE_TIMEOUT)
+        return Response(response_data)
 
 
 class ContentTypePromptView(APIView):

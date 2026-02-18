@@ -517,41 +517,30 @@ def has_active_flag_condition(channel):
 def build_pagination_info_v2(base_start_dt, base_end_dt, page, page_size, channel, valid_windows=None, 
                              status=None, content_type_list=None, search_text=None, search_in=None):
     """
-    Build pagination information with accurate counts respecting all filters (content_type, search, etc).
+    Build pagination info.
+    Optimized: Returns 24 hours for the selected day, but only 1 hour for all other days.
     """
+    from config.validation import TimezoneUtils
+    
+    # Use datetime in channel tz for .date() logic (convert_to_channel_tz returns ISO str)
+    channel_zone = TimezoneUtils.get_channel_timezone_zone(channel.timezone)
+    def to_local_dt(dt_utc):
+        return dt_utc.astimezone(channel_zone) if channel_zone else dt_utc
+    
     available_pages = []
     total_hours = math.ceil((base_end_dt - base_start_dt).total_seconds() / 3600)
-    
-    # If in search mode, we only have 1 page
-    if search_text and search_in:
-        qs = get_segments_queryset(
-            channel, base_start_dt, base_end_dt, valid_windows, status,
-            content_type_list, search_text, search_in, is_last_page=True
-        )
-        count = qs.distinct().count()
-        
-        available_pages.append({
-            'page': 1,
-            'start_time': TimezoneUtils.convert_to_channel_tz(base_start_dt, channel.timezone),
-            'end_time': TimezoneUtils.convert_to_channel_tz(base_end_dt, channel.timezone),
-            'has_data': count > 0,
-            'segment_count': count
-        })
-        
-        return {
-            'current_page': 1,
-            'page_size': total_hours or 1,
-            'available_pages': available_pages,
-            'total_pages': 1,
-            'time_range': {
-                'start': TimezoneUtils.convert_to_channel_tz(base_start_dt, channel.timezone),
-                'end': TimezoneUtils.convert_to_channel_tz(base_end_dt, channel.timezone)
-            }
-        }
-
-    # Standard Pagination
     total_pages_needed = math.ceil(total_hours / page_size)
     
+    # 1. Determine the "Target Day" (The local day of the currently selected page)
+    target_page_offset = (page - 1) * page_size
+    target_dt_utc = base_start_dt + timezone.timedelta(hours=target_page_offset)
+    target_local_dt = to_local_dt(target_dt_utc)
+    target_date = target_local_dt.date()
+
+    # Track which dates we have already added a "Summary Hour" for
+    seen_dates = set()
+
+    # 2. Iterate through all potential pages
     for page_num in range(1, total_pages_needed + 1):
         hour_offset = (page_num - 1) * page_size
         page_start = base_start_dt + timezone.timedelta(hours=hour_offset)
@@ -562,27 +551,47 @@ def build_pagination_info_v2(base_start_dt, base_end_dt, page, page_size, channe
             
         is_last_page = (page_num == total_pages_needed)
         
-        # Use central query builder for counting to ensure consistency
-        page_query = get_segments_queryset(
-            channel, page_start, page_end, valid_windows, status,
-            content_type_list, search_text, search_in, is_last_page
-        )
-        
-        segment_count = page_query.distinct().count()
-        
-        available_pages.append({
-            'page': page_num,
-            'start_time': TimezoneUtils.convert_to_channel_tz(page_start, channel.timezone),
-            'end_time': TimezoneUtils.convert_to_channel_tz(page_end, channel.timezone),
-            'has_data': segment_count > 0,
-            'segment_count': segment_count
-        })
+        # Calculate the local date for this specific page (datetime for .date())
+        current_local_dt = to_local_dt(page_start)
+        current_date = current_local_dt.date()
+
+        # ------------------------------------------------------------------
+        # FILTER LOGIC: 
+        # Only process this page if:
+        # A) It's the day the user is looking at (Target Day)
+        # B) It's the first hour we've encountered for a different day
+        # ------------------------------------------------------------------
+        is_target_day = (current_date == target_date)
+        is_first_hour_of_other_day = (current_date != target_date and current_date not in seen_dates)
+
+        if is_target_day or is_first_hour_of_other_day:
+            # Mark this date as seen so we don't add more hours for it (unless it's target day)
+            seen_dates.add(current_date)
+
+            # Perform the database count for this hour
+            page_query = get_segments_queryset(
+                channel, page_start, page_end, valid_windows, status,
+                content_type_list, search_text, search_in, is_last_page
+            )
+            
+            segment_count = page_query.distinct().count()
+            
+            available_pages.append({
+                'page': page_num,
+                'start_time': TimezoneUtils.convert_to_channel_tz(page_start, channel.timezone),
+                'end_time': TimezoneUtils.convert_to_channel_tz(page_end, channel.timezone),
+                'has_data': segment_count > 0,
+                'segment_count': segment_count
+            })
+        else:
+            # Skip this hour to save space in the JSON response
+            continue
     
     return {
         'current_page': page,
         'page_size': page_size,
-        'available_pages': available_pages,
-        'total_pages': len(available_pages),
+        'available_pages': available_pages, # Now much smaller
+        'total_pages': total_pages_needed,
         'time_range': {
             'start': TimezoneUtils.convert_to_channel_tz(base_start_dt, channel.timezone),
             'end': TimezoneUtils.convert_to_channel_tz(base_end_dt, channel.timezone)
