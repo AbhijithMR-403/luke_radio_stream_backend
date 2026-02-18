@@ -4,35 +4,32 @@ V2 API views for data_analysis app.
 
 import json
 import traceback
-from pathlib import Path
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from data_analysis.v2.service import (
-    get_segments_queryset,
-    validate_v2_parameters,
-    apply_content_type_filter,
-    build_pagination_info_v2,
-    apply_search_filters
-)
 from data_analysis.services.custom_audio_service import CustomAudioService
-from data_analysis.audio_segments_helpers import (
+from data_analysis.v2.serializer import CustomAudioDownloadSerializer
+from data_analysis.models import SavedAudioSegment
+from core_admin.repositories import GeneralSettingService
+
+
+from data_analysis.v2.service import (
+    validate_v2_parameters,
     get_channel_and_shift,
     apply_shift_filtering,
     apply_predefined_filter_filtering,
     calculate_pagination_window,
-    # build_base_query,
+    get_segments_queryset,
     apply_flag_conditions_to_segments,
+    build_pagination_info_v2,
     has_active_flag_condition,
     flag_entry_is_active
 )
+
 from data_analysis.serializers import AudioSegmentsSerializer
-from data_analysis.repositories import AudioSegmentDAO
-from data_analysis.v2.serializer import CustomAudioDownloadSerializer
-from data_analysis.models import SavedAudioSegment
 from config.validation import TimezoneUtils
-from core_admin.repositories import GeneralSettingService
+
 
 class ListAudioSegmentsV2View(APIView):
     """
@@ -41,17 +38,15 @@ class ListAudioSegmentsV2View(APIView):
     
     def get(self, request, *args, **kwargs):
         try:
-            # 1. Validate Parameters
             params, error_response = validate_v2_parameters(request)
             if error_response:
+                # Convert JsonResponse to DRF Response
                 return Response(json.loads(error_response.content), status=error_response.status_code)
             
-            # 2. Get Context Objects
             channel, shift, predefined_filter, error_response = get_channel_and_shift(params)
             if error_response:
                 return Response(json.loads(error_response.content), status=error_response.status_code)
             
-            # 3. Calculate Valid Time Windows (Shift/Predefined Filter)
             valid_windows = None
             if shift:
                 valid_windows = apply_shift_filtering(params['base_start_dt'], params['base_end_dt'], shift)
@@ -62,18 +57,13 @@ class ListAudioSegmentsV2View(APIView):
                 if not valid_windows:
                     return self._return_empty_response(params, channel)
 
-            # 4. Determine Execution Mode
-            # We skip pagination (show all results) if:
-            # - show_flagged_only is True
-            # - We are searching (text + search_in)
-            # - It is a podcast channel
             is_flagged_mode = params.get('show_flagged_only')
             is_search_mode = params.get('search_text') and params.get('search_in')
             is_podcast = getattr(channel, 'channel_type', None) == 'podcast'
             
             skip_pagination = is_flagged_mode or is_search_mode or is_podcast
 
-            # 4a. Validate Flagged Mode Requirements
+            # Pre-check for Flagged Mode
             if is_flagged_mode:
                 has_condition = has_active_flag_condition(channel)
                 has_shift_flag = shift and getattr(shift, 'flag_seconds', None) is not None
@@ -84,13 +74,13 @@ class ListAudioSegmentsV2View(APIView):
                         'error': 'No FlagCondition or Shift Duration limit configured. Cannot filter flagged segments.'
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-            # 5. Determine Query Time Range
             if skip_pagination:
+                # Query the full requested date range
                 current_page_start = params['base_start_dt']
                 current_page_end = params['base_end_dt']
                 is_last_page = True
             else:
-                # Calculate specific page window
+                # Calculate the specific hour window for the requested page
                 current_page_start, current_page_end, is_last_page, error_response = calculate_pagination_window(
                     params['base_start_dt'], 
                     params['base_end_dt'], 
@@ -103,7 +93,6 @@ class ListAudioSegmentsV2View(APIView):
                 if error_response:
                     return Response(json.loads(error_response.content), status=error_response.status_code)
 
-            # 6. Build and Execute Query (Centralized Logic)
             db_segments = get_segments_queryset(
                 channel=channel,
                 start_dt=current_page_start,
@@ -116,30 +105,25 @@ class ListAudioSegmentsV2View(APIView):
                 is_last_page=is_last_page
             )
 
-            # 7. Serialize Data
             all_segments = AudioSegmentsSerializer.serialize_segments_data(db_segments, channel.timezone)
             
-            # 8. Apply Flags (Handles both Policy and Shift Duration)
-            # We pass 'shift' so the helper can check flag_seconds
+            # Apply Flags (Policy + Shift Duration)
             all_segments = apply_flag_conditions_to_segments(all_segments, channel, shift)
 
-            # 9. Filter for Flagged Only (if requested)
+            # If Flagged Mode, filter the list in Python
             if is_flagged_mode:
                 all_segments = [
                     seg for seg in all_segments 
                     if any(flag_entry_is_active(f_data) for f_data in seg.get('flag', {}).values())
                 ]
 
-            # 10. Build Response
             response_data = AudioSegmentsSerializer.build_response(all_segments, channel)
-            
-            # 11. Attach Pagination Info
             if skip_pagination:
-                # Pseudo-pagination for non-paginated views
+                # Return simplified pagination info for full-list modes
                 response_data['pagination'] = {
                     'current_page': 1,
                     'page_size': params['page_size'],
-                    'available_pages': [], # Client often ignores this in these modes
+                    'available_pages': [], 
                     'total_pages': 1,
                     'time_range': {
                         'start': TimezoneUtils.convert_to_channel_tz(params['base_start_dt'], channel.timezone),
@@ -147,7 +131,7 @@ class ListAudioSegmentsV2View(APIView):
                     }
                 }
             else:
-                # Accurate pagination calculation
+                # Calculate accurate available pages / counts using the helper
                 response_data['pagination'] = build_pagination_info_v2(
                     params['base_start_dt'], 
                     params['base_end_dt'], 
@@ -162,9 +146,11 @@ class ListAudioSegmentsV2View(APIView):
                 )
             
             response_data['has_data'] = len(all_segments) > 0
+            
             return Response(response_data)
 
         except Exception as e:
+            # Catch-all for unexpected errors
             return Response({
                 'success': False, 
                 'error': str(e),
@@ -188,6 +174,7 @@ class ListAudioSegmentsV2View(APIView):
                 }
             }
         })
+
 
 class ContentTypePromptView(APIView):
     """

@@ -85,7 +85,6 @@ def validate_v2_parameters(request):
     validated_data = serializer.validated_data
     
     # Map serializer output to the dictionary structure expected by views
-    # Serializer validate() puts parsed datetimes in base_start_dt / base_end_dt
     params = {
         'channel_pk': validated_data['channel_id'],
         'base_start_dt': validated_data['base_start_dt'],
@@ -240,7 +239,8 @@ def get_segments_queryset(channel, start_dt, end_dt, valid_windows=None, status=
         base_query = apply_search_filters(base_query, search_text, search_in)
 
     # 5. Optimization
-    base_query = base_query.prefetch_related(
+    base_query = base_query.select_related(
+        'transcription_detail',
         'transcription_detail__rev_job',
         'transcription_detail__analysis'
     )
@@ -362,8 +362,8 @@ def check_flag_conditions(segment, flag_condition):
     Returns a dictionary with flag information.
     """
     flags = {}
-    transcription = segment.get('transcription', {})
-    analysis = segment.get('analysis', {})
+    transcription = segment.get('transcription') or {}
+    analysis = segment.get('analysis') or {}
     
     def build_flag_entry(triggered, message=''):
         return {'flagged': bool(triggered), 'message': message}

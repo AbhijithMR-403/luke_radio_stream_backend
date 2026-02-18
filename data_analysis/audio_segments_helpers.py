@@ -363,8 +363,8 @@ def check_flag_conditions(segment, flag_condition):
     Returns a dictionary with flag information.
     """
     flags = {}
-    transcription = segment.get('transcription', {})
-    analysis = segment.get('analysis', {})
+    transcription = segment.get('transcription') or {}
+    analysis = segment.get('analysis') or {}
     
     def build_flag_entry(triggered, message=''):
         return {'flagged': bool(triggered), 'message': message}
