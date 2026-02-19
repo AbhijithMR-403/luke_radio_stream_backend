@@ -324,32 +324,6 @@ def apply_predefined_filter_filtering(base_start_dt, base_end_dt, predefined_fil
     return valid_windows
 
 
-def get_page_window_from_pagination_entry(entry):
-    """
-    Get (start_dt_utc, end_dt_utc, is_last_page) from an available_pages entry.
-    Use when the entry has whole_day=True so the view fetches the full day range.
-    Returns None if entry is missing or missing required keys.
-    """
-    if not entry or 'start_time' not in entry or 'end_time' not in entry:
-        return None
-    from datetime import datetime as dt_class
-    try:
-        start_s = entry['start_time'].replace('Z', '+00:00') if entry.get('start_time') else None
-        end_s = entry['end_time'].replace('Z', '+00:00') if entry.get('end_time') else None
-        if not start_s or not end_s:
-            return None
-        start_dt = dt_class.fromisoformat(start_s)
-        end_dt = dt_class.fromisoformat(end_s)
-        if start_dt.tzinfo is None or end_dt.tzinfo is None:
-            return None
-        start_utc = start_dt.astimezone(dt_utc.utc)
-        end_utc = end_dt.astimezone(dt_utc.utc)
-        is_last_page = entry.get('is_last_page', False)
-        return start_utc, end_utc, is_last_page
-    except (ValueError, TypeError):
-        return None
-
-
 def calculate_pagination_window(base_start_dt, base_end_dt, page, page_size, search_text, search_in, valid_windows=None):
     """Calculate the current page time window."""
     # If searching, collapse to a single page
@@ -544,31 +518,14 @@ def build_pagination_info_v2(base_start_dt, base_end_dt, page, page_size, channe
                              status=None, content_type_list=None, search_text=None, search_in=None):
     """
     Build pagination info.
-    Optimized: Returns 24 pages (one per hour) for the selected day, but only 1 page per other day
-    that covers the whole day.
+    Returns one entry per page (e.g. 10 days × 24 hours = 240 pages when page_size=1).
     """
-    from datetime import datetime as dt_class
     from config.validation import TimezoneUtils
-
-    # Use datetime in channel tz for .date() logic (convert_to_channel_tz returns ISO str)
-    channel_zone = TimezoneUtils.get_channel_timezone_zone(channel.timezone)
-    def to_local_dt(dt_utc):
-        return dt_utc.astimezone(channel_zone) if channel_zone else dt_utc
 
     available_pages = []
     total_hours = math.ceil((base_end_dt - base_start_dt).total_seconds() / 3600)
     total_pages_needed = math.ceil(total_hours / page_size)
 
-    # 1. Determine the "Target Day" (The local day of the currently selected page)
-    target_page_offset = (page - 1) * page_size
-    target_dt_utc = base_start_dt + timezone.timedelta(hours=target_page_offset)
-    target_local_dt = to_local_dt(target_dt_utc)
-    target_date = target_local_dt.date()
-
-    # Track which dates we have already added an entry for (target day: per-hour; others: one whole-day)
-    seen_dates = set()
-
-    # 2. Iterate through all potential pages
     for page_num in range(1, total_pages_needed + 1):
         hour_offset = (page_num - 1) * page_size
         page_start = base_start_dt + timezone.timedelta(hours=hour_offset)
@@ -579,64 +536,19 @@ def build_pagination_info_v2(base_start_dt, base_end_dt, page, page_size, channe
 
         is_last_page = (page_num == total_pages_needed)
 
-        # Calculate the local date for this specific page (datetime for .date())
-        current_local_dt = to_local_dt(page_start)
-        current_date = current_local_dt.date()
+        page_query = get_segments_queryset(
+            channel, page_start, page_end, valid_windows, status,
+            content_type_list, search_text, search_in, is_last_page
+        )
+        segment_count = page_query.distinct().count()
 
-        # ------------------------------------------------------------------
-        # FILTER LOGIC:
-        # A) Target day: include every hour (24 pages, one per hour)
-        # B) Other days: include one page per day covering the whole day
-        # ------------------------------------------------------------------
-        is_target_day = (current_date == target_date)
-        is_first_hour_of_other_day = (current_date != target_date and current_date not in seen_dates)
-
-        if is_target_day:
-            seen_dates.add(current_date)
-            # One page per hour for the selected day
-            page_query = get_segments_queryset(
-                channel, page_start, page_end, valid_windows, status,
-                content_type_list, search_text, search_in, is_last_page
-            )
-            segment_count = page_query.distinct().count()
-            available_pages.append({
-                'page': page_num,
-                'start_time': TimezoneUtils.convert_to_channel_tz(page_start, channel.timezone),
-                'end_time': TimezoneUtils.convert_to_channel_tz(page_end, channel.timezone),
-                'has_data': segment_count > 0,
-                'segment_count': segment_count,
-                'whole_day': False,
-                'is_last_page': is_last_page,
-            })
-        elif is_first_hour_of_other_day:
-            seen_dates.add(current_date)
-            # One page for the whole day (midnight to midnight in channel tz, clamped to base range)
-            day_start_local = dt_class(
-                current_date.year, current_date.month, current_date.day, 0, 0, 0, tzinfo=channel_zone
-            )
-            day_end_local = day_start_local + timezone.timedelta(days=1)
-            day_start_utc = day_start_local.astimezone(dt_utc.utc)
-            day_end_utc = day_end_local.astimezone(dt_utc.utc)
-            day_start_utc = max(day_start_utc, base_start_dt)
-            day_end_utc = min(day_end_utc, base_end_dt)
-            if day_start_utc >= day_end_utc:
-                continue
-            page_query = get_segments_queryset(
-                channel, day_start_utc, day_end_utc, valid_windows, status,
-                content_type_list, search_text, search_in, is_last_page=(day_end_utc >= base_end_dt)
-            )
-            segment_count = page_query.distinct().count()
-            available_pages.append({
-                'page': page_num,
-                'start_time': TimezoneUtils.convert_to_channel_tz(day_start_utc, channel.timezone),
-                'end_time': TimezoneUtils.convert_to_channel_tz(day_end_utc, channel.timezone),
-                'has_data': segment_count > 0,
-                'segment_count': segment_count,
-                'whole_day': True,
-                'is_last_page': day_end_utc >= base_end_dt,
-            })
-        else:
-            continue
+        available_pages.append({
+            'page': page_num,
+            'start_time': TimezoneUtils.convert_to_channel_tz(page_start, channel.timezone),
+            'end_time': TimezoneUtils.convert_to_channel_tz(page_end, channel.timezone),
+            'has_data': segment_count > 0,
+            'segment_count': segment_count,
+        })
 
     return {
         'current_page': page,

@@ -21,7 +21,6 @@ from data_analysis.v2.service import (
     apply_shift_filtering,
     apply_predefined_filter_filtering,
     calculate_pagination_window,
-    get_page_window_from_pagination_entry,
     get_segments_queryset,
     apply_flag_conditions_to_segments,
     build_pagination_info_v2,
@@ -113,48 +112,16 @@ class ListAudioSegmentsV2View(APIView):
                 current_page_end = params['base_end_dt']
                 is_last_page = True
             else:
-                # Build pagination first to detect whole-day pages
-                pagination_info = build_pagination_info_v2(
+                # Calculate the specific hour window for the requested page
+                current_page_start, current_page_end, is_last_page, error_response = calculate_pagination_window(
                     params['base_start_dt'],
                     params['base_end_dt'],
                     params['page'],
                     params['page_size'],
-                    channel,
-                    valid_windows,
-                    params.get('status'),
-                    params.get('content_type', []),
                     params.get('search_text'),
-                    params.get('search_in')
+                    params.get('search_in'),
+                    valid_windows
                 )
-                current_page_entry = next(
-                    (p for p in pagination_info['available_pages'] if p['page'] == params['page']),
-                    None
-                )
-                if current_page_entry and current_page_entry.get('whole_day'):
-                    window = get_page_window_from_pagination_entry(current_page_entry)
-                    if window:
-                        current_page_start, current_page_end, is_last_page = window
-                        error_response = None
-                    else:
-                        current_page_start, current_page_end, is_last_page, error_response = calculate_pagination_window(
-                            params['base_start_dt'],
-                            params['base_end_dt'],
-                            params['page'],
-                            params['page_size'],
-                            params.get('search_text'),
-                            params.get('search_in'),
-                            valid_windows
-                        )
-                else:
-                    current_page_start, current_page_end, is_last_page, error_response = calculate_pagination_window(
-                        params['base_start_dt'],
-                        params['base_end_dt'],
-                        params['page'],
-                        params['page_size'],
-                        params.get('search_text'),
-                        params.get('search_in'),
-                        valid_windows
-                    )
                 if error_response:
                     return Response(json.loads(error_response.content), status=error_response.status_code)
 
@@ -196,8 +163,19 @@ class ListAudioSegmentsV2View(APIView):
                     }
                 }
             else:
-                # Reuse pagination built earlier in this branch
-                response_data['pagination'] = pagination_info
+                # Build pagination with one entry per page (e.g. 240 pages for 10 days)
+                response_data['pagination'] = build_pagination_info_v2(
+                    params['base_start_dt'],
+                    params['base_end_dt'],
+                    params['page'],
+                    params['page_size'],
+                    channel,
+                    valid_windows,
+                    params.get('status'),
+                    params.get('content_type', []),
+                    params.get('search_text'),
+                    params.get('search_in')
+                )
             
             response_data['has_data'] = len(all_segments) > 0
 
