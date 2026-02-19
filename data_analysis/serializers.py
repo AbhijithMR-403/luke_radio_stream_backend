@@ -31,6 +31,7 @@ class AudioSegmentSerializer(serializers.Serializer):
     file_name = serializers.CharField(allow_null=True)
     file_path = serializers.CharField(allow_null=True)
     audio_url = serializers.URLField(allow_null=True)
+    audio_location_type = serializers.CharField()
     title = serializers.CharField(allow_null=True)
     title_before = serializers.CharField(allow_null=True)
     title_after = serializers.CharField(allow_null=True)
@@ -142,6 +143,7 @@ class AudioSegmentsSerializer:
                 'file_name': segment.file_name,
                 'file_path': segment.file_path,
                 'audio_url': getattr(segment, 'audio_url', None) or None,
+                'audio_location_type': getattr(segment, 'audio_location_type', None),
                 'title': segment.title,
                 'title_before': segment.title_before,
                 'title_after': segment.title_after,
