@@ -8,7 +8,14 @@ class ACRCloudCustomFileUpload(models.Model):
     """
     # Upload details
     bucket_id = models.CharField(max_length=255, help_text="ACR Cloud bucket ID")
-    audio_url = models.URLField(max_length=512, help_text="URL of the audio file uploaded")
+    audio_url = models.URLField(
+        max_length=512, null=True, blank=True,
+        help_text="URL of the audio file (when uploaded via URL); null when uploaded as file"
+    )
+    file_name = models.CharField(
+        max_length=255, null=True, blank=True,
+        help_text="Original filename when uploaded as a file"
+    )
     title = models.CharField(max_length=255, null=True, blank=True, help_text="Optional title for the file")
     
     # Status tracking
