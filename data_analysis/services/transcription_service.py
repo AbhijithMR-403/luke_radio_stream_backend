@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.db.models import Q
 from decouple import config
 from core_admin.models import GeneralSetting, Channel
+from core_admin.repositories import GeneralSettingService
 from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
@@ -39,6 +40,8 @@ class RevAISpeechToText:
         media_url = media_path if is_absolute_url else f"{base_url}{media_path}"
         
         api_key = ValidationUtils.validate_revai_api_key(channel)
+        settings = GeneralSettingService.get_active_setting(channel=channel, include_buckets=False)
+        phrases = list(settings.custom_vocabulary) if (settings and getattr(settings, "custom_vocabulary", None)) else []
         url = "https://api.rev.ai/speechtotext/v1/jobs"
         headers = {
             "Content-Type": "application/json",
@@ -51,8 +54,10 @@ class RevAISpeechToText:
             },
             "options": {
                 "timestamps": False
-            }
+            },
         }
+        if phrases:
+            data["custom_vocabularies"] = [{"phrases": phrases}]
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()
         return response.json()

@@ -216,6 +216,11 @@ class GeneralSetting(models.Model):
         help_text="Minimum accuracy percentage required for radio segment classification (e.g., 80).",
         null=True, blank=True
     )
+    custom_vocabulary = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of custom vocabulary phrases."
+    )
 
     # Versioning fields
     version = models.PositiveIntegerField(

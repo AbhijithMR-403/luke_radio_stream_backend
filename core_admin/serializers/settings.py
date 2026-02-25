@@ -54,6 +54,12 @@ class GeneralSettingSerializer(serializers.Serializer):
     radio_segment_error_rate = serializers.IntegerField(
         required=False, allow_null=True, min_value=0, max_value=100
     )
+    custom_vocabulary = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_empty=True,
+        default=list,
+    )
     channel_id = serializers.IntegerField(required=True)
 
     def __init__(self, *args, **kwargs):
@@ -341,6 +347,7 @@ class GeneralSettingResponseSerializer(serializers.ModelSerializer):
             'determine_radio_content_type_prompt',
             'content_type_prompt',
             'radio_segment_error_rate',
+            'custom_vocabulary',
             'version',
             'is_active',
             'created_by',
