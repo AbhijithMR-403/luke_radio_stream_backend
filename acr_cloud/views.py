@@ -19,11 +19,14 @@ class ACRCloudFileUploadView(APIView):
         channel_id = request.query_params.get('channel_id')
         uploaded_file = request.FILES.get('file')
 
+        # Remove this after fixing the issue in frontend
         if not channel_id:
-            return Response(
-                {'error': 'channel_id query parameter is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            channel_id = 1
+        # if not channel_id:
+        #     return Response(
+        #         {'error': 'channel_id query parameter is required'},
+        #         status=status.HTTP_400_BAD_REQUEST
+        #     )
         if not bucket_id:
             return Response(
                 {'error': 'bucket_id query parameter is required'},
