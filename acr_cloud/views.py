@@ -13,23 +13,20 @@ class ACRCloudFileUploadView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # Get query parameters
-        bucket_id = request.query_params.get('bucket_id')
-        title = request.query_params.get('title')
-        channel_id = request.query_params.get('channel_id')
+        # Get from request body (multipart/form-data)
+        bucket_id = request.data.get('bucket_id')
+        title = request.data.get('title')
+        channel_id = request.data.get('channel_id')
         uploaded_file = request.FILES.get('file')
 
-        # Remove this after fixing the issue in frontend
         if not channel_id:
-            channel_id = 1
-        # if not channel_id:
-        #     return Response(
-        #         {'error': 'channel_id query parameter is required'},
-        #         status=status.HTTP_400_BAD_REQUEST
-        #     )
+            return Response(
+                {'error': 'channel_id query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         if not bucket_id:
             return Response(
-                {'error': 'bucket_id query parameter is required'},
+                {'error': 'bucket_id is required in request body'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         if not uploaded_file:
