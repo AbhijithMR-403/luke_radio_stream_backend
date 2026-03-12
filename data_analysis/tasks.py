@@ -80,7 +80,9 @@ def _handle_channel_processing(channel: Channel | int, segments_data):
     marked_segments = mark_requires_analysis(segments_for_marking)
 
     # Step 6: Create transcription jobs (External Network Call)
+    logger.info(f"Creating transcription jobs for {len(marked_segments)} segments")
     transcription_jobs = RevAISpeechToText.create_and_save_transcription_job_v2(marked_segments)
+    logger.info(f"Created {len(transcription_jobs)} transcription jobs")
     
     return len(inserted_segments)
 
