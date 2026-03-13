@@ -59,8 +59,8 @@ class RevAISpeechToText:
         if phrases:
             data["custom_vocabularies"] = [{"phrases": phrases}]
         response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status()
         print(f"Response: {response.json()}")
+        response.raise_for_status()
         return response.json()
 
     @staticmethod
