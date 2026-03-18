@@ -183,13 +183,28 @@ class UserChannelsView(APIView):
     def get(self, request):
         user_data = UserSerializer(request.user).data
         if request.user.is_admin:
-            channels = Channel.objects.filter(is_deleted=False)
-            channels_data = ChannelSerializer(channels, many=True).data
-            return Response({
-                'user': user_data,
-                'channels': channels_data,
-                'is_admin': True
-            })
+            user_id = request.query_params.get('user_id')
+            if user_id:
+                try:
+                    target_user = User.objects.get(pk=user_id)
+                except User.DoesNotExist:
+                    return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+                assignments = UserChannelAssignment.objects.filter(user=target_user).select_related('channel')
+                channels = [assignment.channel for assignment in assignments]
+                channels_data = ChannelSerializer(channels, many=True).data
+                return Response({
+                    'user': UserSerializer(target_user).data,
+                    'channels': channels_data,
+                    'is_admin': True
+                })
+            else:
+                channels = Channel.objects.filter(is_deleted=False)
+                channels_data = ChannelSerializer(channels, many=True).data
+                return Response({
+                    'user': user_data,
+                    'channels': channels_data,
+                    'is_admin': True
+                })
         else:
             assignments = UserChannelAssignment.objects.filter(user=request.user).select_related('channel')
             channels = [assignment.channel for assignment in assignments]

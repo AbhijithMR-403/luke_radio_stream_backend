@@ -579,7 +579,8 @@ class AudioSegments:
             'file_path': file_path,
             'channel': channel,
             'source': 'system_merge',
-            'is_delete': False
+            'is_delete': False,
+            'audio_location_type': 'file_path',
         }
         
         if all_recognized:
