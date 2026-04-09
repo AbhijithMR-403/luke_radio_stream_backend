@@ -189,7 +189,32 @@ def process_today_audio_data():
 def process_previous_day_audio_data():
     """ Runs daily at 2 AM. Spawns parallel tasks for each channel. """
     previous_day = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+    process_audio_data_for_date.delay(previous_day)
+
+
+@shared_task
+def process_audio_data_for_date(date_str):
+    """
+    Spawns parallel processing tasks for all valid channels for a given date.
+    Expected date format: YYYYMMDD
+    """
+    try:
+        datetime.strptime(date_str, "%Y%m%d")
+    except ValueError:
+        logger.error("Invalid date_str '%s'. Expected format is YYYYMMDD.", date_str)
+        return {
+            "status": "error",
+            "message": "Invalid date_str format. Use YYYYMMDD.",
+            "date_str": date_str,
+        }
+
     channels = deactivate_channels_without_valid_settings()
     for channel in channels:
-        process_channel_task.delay(channel.id, date_str=previous_day, is_today=False)
+        process_channel_task.delay(channel.id, date_str=date_str, is_today=False)
+
+    return {
+        "status": "success",
+        "date_str": date_str,
+        "channels_dispatched": len(channels),
+    }
 
