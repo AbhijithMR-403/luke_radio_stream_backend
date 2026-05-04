@@ -10,6 +10,33 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task
+def ingest_all_podcast_rss_feeds_task():
+    """
+    Enqueue RSS ingestion for every active podcast channel.
+
+    Returns:
+        Dictionary with enqueue summary.
+    """
+    podcast_channel_ids = list(
+        Channel.objects.filter(
+            channel_type='podcast',
+            is_deleted=False
+        ).values_list('id', flat=True)
+    )
+
+    for channel_id in podcast_channel_ids:
+        ingest_podcast_rss_feed_task.delay(channel_id)
+
+    logger.info("Queued RSS ingestion for %s podcast channels", len(podcast_channel_ids))
+
+    return {
+        'status': 'success',
+        'queued_channels_count': len(podcast_channel_ids),
+        'channel_ids': podcast_channel_ids,
+    }
+
+
+@shared_task
 def ingest_podcast_rss_feed_task(channel_id: int):
     """
     Celery task to fetch and ingest RSS feed entries for a podcast channel.

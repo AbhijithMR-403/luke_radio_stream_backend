@@ -17,6 +17,11 @@ app.autodiscover_tasks()
 
 # Celery Beat Schedule Configuration
 app.conf.beat_schedule = {
+    # Queue RSS feed ingestion for all podcast channels every day
+    'ingest-all-podcast-rss-feeds': {
+        'task': 'rss_ingestion.tasks.ingest_all_podcast_rss_feeds_task',
+        'schedule': crontab(hour=1, minute=0),  # Daily at 1:00 AM
+    },
     # Process today's audio data excluding last hour - runs every hour
     'process-today-audio-data': {
         'task': 'data_analysis.tasks.process_today_audio_data',
