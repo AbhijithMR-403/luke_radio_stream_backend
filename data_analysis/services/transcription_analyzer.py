@@ -6,11 +6,11 @@ from django.utils import timezone
 from decouple import config
 from core_admin.models import Channel, WellnessBucket
 from core_admin.repositories import GeneralSettingService
-from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
 
 from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail
+from data_analysis.services.openai import OpenAIService
 from audio_policy.models import ContentTypeDeactivationRule
 
 class TranscriptionAnalyzer:
@@ -172,52 +172,56 @@ class TranscriptionAnalyzer:
         # Validate OpenAI API key
         api_key = ValidationUtils.validate_openai_api_key(transcription_detail.audio_segment.channel.id)
         settings = ValidationUtils.validate_settings_exist(transcription_detail.audio_segment.channel.id)
-        client = OpenAI(api_key=api_key)
+        client = OpenAIService.get_client(api_key=api_key)
         transcript = transcription_detail.transcript
 
-        def chat_params(prompt, transcript, max_tokens):
-            return {
-                "model": settings.chatgpt_model,
-                "messages": [
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": transcript}
-                ],
-                "max_tokens": max_tokens if max_tokens > 0 else None,
-                "temperature": settings.chatgpt_temperature,
-                "top_p": settings.chatgpt_top_p,
-            }
-
         # Summary
-        summary_resp = client.chat.completions.create(
-            **{k: v for k, v in chat_params(settings.summarize_transcript_prompt, transcript, 150).items() if v is not None}
+        summary = OpenAIService.get_chat_completion(
+            client=client,
+            settings=settings,
+            system_prompt=settings.summarize_transcript_prompt,
+            user_prompt=transcript,
+            max_tokens=150,
         )
-        summary = summary_resp.choices[0].message.content.strip()
+
         # Sentiment
-        sentiment_resp = client.chat.completions.create(
-            **{k: v for k, v in chat_params(settings.sentiment_analysis_prompt, transcript, 10).items() if v is not None}
+        sentiment = OpenAIService.get_chat_completion(
+            client=client,
+            settings=settings,
+            system_prompt=settings.sentiment_analysis_prompt,
+            user_prompt=transcript,
+            max_tokens=10,
         )
-        sentiment = sentiment_resp.choices[0].message.content.strip()
 
         # General topics
-        general_topics_resp = client.chat.completions.create(
-            **{k: v for k, v in chat_params(settings.general_topics_prompt, transcript, 100).items() if v is not None}
+        general_topics = OpenAIService.get_chat_completion(
+            client=client,
+            settings=settings,
+            system_prompt=settings.general_topics_prompt,
+            user_prompt=transcript,
+            max_tokens=100,
         )
-        general_topics = general_topics_resp.choices[0].message.content.strip()
 
         # IAB topics
-        iab_topics_resp = client.chat.completions.create(
-            **{k: v for k, v in chat_params(settings.iab_topics_prompt, transcript, 100).items() if v is not None}
+        iab_topics = OpenAIService.get_chat_completion(
+            client=client,
+            settings=settings,
+            system_prompt=settings.iab_topics_prompt,
+            user_prompt=transcript,
+            max_tokens=100,
         )
-        iab_topics = iab_topics_resp.choices[0].message.content.strip()
 
         # Wellness bucket analysis
         bucket_prompt = TranscriptionAnalyzer.get_bucket_prompt(transcription_detail.audio_segment.channel.id)
         wellness_buckets = ""
         if bucket_prompt:
-            wellness_buckets_resp = client.chat.completions.create(
-                **{k: v for k, v in chat_params(bucket_prompt, transcript, 50).items() if v is not None}
+            wellness_buckets = OpenAIService.get_chat_completion(
+                client=client,
+                settings=settings,
+                system_prompt=bucket_prompt,
+                user_prompt=transcript,
+                max_tokens=50,
             )
-            wellness_buckets = wellness_buckets_resp.choices[0].message.content.strip()
         else:
             print("No wellness bucket prompt available, skipping bucket analysis")
 
@@ -230,10 +234,13 @@ class TranscriptionAnalyzer:
                 # Replace {{segments}} placeholder with the transcript
                 content_type_instruction = determine_radio_content_type_prompt.replace("{{segments}}", content_type_definitions)
 
-                content_type_resp = client.chat.completions.create(
-                    **{k: v for k, v in chat_params(content_type_instruction, transcript, 30).items() if v is not None}
+                content_type_result = OpenAIService.get_chat_completion(
+                    client=client,
+                    settings=settings,
+                    system_prompt=content_type_instruction,
+                    user_prompt=transcript,
+                    max_tokens=30,
                 )
-                content_type_result = content_type_resp.choices[0].message.content.strip()
                 print(content_type_result)
         except Exception as e:
             print(f"Error generating content type classification: {e}")
