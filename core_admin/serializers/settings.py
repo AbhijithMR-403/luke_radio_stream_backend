@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from data_analysis.services.transcription_analyzer import TranscriptionAnalyzer
 from ..models import WellnessBucket, GeneralSetting
-from ..utils import OpenAIUtils, ACRCloudUtils, RevAIUtils
+from ..utils import ACRCloudUtils, RevAIUtils
 
 
 # ============================================================
@@ -189,30 +189,6 @@ class GeneralSettingSerializer(serializers.Serializer):
         # Always set openai_org_id from API key email if available
         if self._openai_email and 'openai_api_key' in attrs:
             attrs['openai_org_id'] = self._openai_email
-
-        # Validate ChatGPT model if provided
-        model = attrs.get('chatgpt_model')
-        if model and model.strip():
-            api_key = attrs.get('openai_api_key')
-
-            if not api_key:
-                active_setting = GeneralSetting.objects.filter(is_active=True).first()
-                if active_setting:
-                    api_key = active_setting.openai_api_key
-
-            if not api_key:
-                raise serializers.ValidationError({
-                    'chatgpt_model': (
-                        'OpenAI API key is required to validate the model. '
-                        'Provide openai_api_key or ensure it exists in the database.'
-                    )
-                })
-
-            result = OpenAIUtils.validate_model(model.strip(), api_key)
-            if not result.get("is_valid"):
-                raise serializers.ValidationError({
-                    'chatgpt_model': result.get("error_message") or f'Invalid model: {model}'
-                })
 
         return attrs
 
