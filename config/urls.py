@@ -33,6 +33,7 @@ urlpatterns = [
     path('api/', include('logger.urls')),
     path('api/', include('acr_cloud.urls')),
     path('api/', include('download_pdf.urls')),
+    path('api/', include('openrouter.urls')),
 ]
 
 if settings.DEBUG:

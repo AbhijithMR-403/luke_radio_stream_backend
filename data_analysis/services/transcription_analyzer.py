@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
 
 from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail
-from data_analysis.services.openai import OpenAIService
+from openrouter.services import OpenRouterService
 from audio_policy.models import ContentTypeDeactivationRule
 
 class TranscriptionAnalyzer:
@@ -169,59 +169,42 @@ class TranscriptionAnalyzer:
             print(f"Error checking existing transcription analysis: {e}")
             # Continue with API calls if check fails
 
-        # Validate OpenAI API key
-        api_key = ValidationUtils.validate_openai_api_key(transcription_detail.audio_segment.channel.id)
-        settings = ValidationUtils.validate_settings_exist(transcription_detail.audio_segment.channel.id)
-        client = OpenAIService.get_client(api_key=api_key)
+        channel_id = transcription_detail.audio_segment.channel.id
+        settings = ValidationUtils.validate_settings_exist(channel_id)
+        api_key = (settings.openai_api_key or "").strip()
+        if not api_key:
+            raise ValidationError(
+                f"OpenRouter API key not configured for channel {channel_id} in GeneralSetting"
+            )
         transcript = transcription_detail.transcript
 
+        def _complete(system_prompt: str, max_tokens: int) -> str:
+            return OpenRouterService.get_chat_completion(
+                bearer_token=api_key,
+                model=settings.chatgpt_model,
+                system_prompt=system_prompt,
+                user_prompt=transcript,
+                max_tokens=max_tokens,
+                temperature=settings.chatgpt_temperature,
+            )
+
         # Summary
-        summary = OpenAIService.get_chat_completion(
-            client=client,
-            settings=settings,
-            system_prompt=settings.summarize_transcript_prompt,
-            user_prompt=transcript,
-            max_tokens=150,
-        )
+        summary = _complete(settings.summarize_transcript_prompt, 150)
 
         # Sentiment
-        sentiment = OpenAIService.get_chat_completion(
-            client=client,
-            settings=settings,
-            system_prompt=settings.sentiment_analysis_prompt,
-            user_prompt=transcript,
-            max_tokens=10,
-        )
+        sentiment = _complete(settings.sentiment_analysis_prompt, 10)
 
         # General topics
-        general_topics = OpenAIService.get_chat_completion(
-            client=client,
-            settings=settings,
-            system_prompt=settings.general_topics_prompt,
-            user_prompt=transcript,
-            max_tokens=100,
-        )
+        general_topics = _complete(settings.general_topics_prompt, 100)
 
         # IAB topics
-        iab_topics = OpenAIService.get_chat_completion(
-            client=client,
-            settings=settings,
-            system_prompt=settings.iab_topics_prompt,
-            user_prompt=transcript,
-            max_tokens=100,
-        )
+        iab_topics = _complete(settings.iab_topics_prompt, 100)
 
         # Wellness bucket analysis
-        bucket_prompt = TranscriptionAnalyzer.get_bucket_prompt(transcription_detail.audio_segment.channel.id)
+        bucket_prompt = TranscriptionAnalyzer.get_bucket_prompt(channel_id)
         wellness_buckets = ""
         if bucket_prompt:
-            wellness_buckets = OpenAIService.get_chat_completion(
-                client=client,
-                settings=settings,
-                system_prompt=bucket_prompt,
-                user_prompt=transcript,
-                max_tokens=50,
-            )
+            wellness_buckets = _complete(bucket_prompt, 50)
         else:
             print("No wellness bucket prompt available, skipping bucket analysis")
 
@@ -234,13 +217,7 @@ class TranscriptionAnalyzer:
                 # Replace {{segments}} placeholder with the transcript
                 content_type_instruction = determine_radio_content_type_prompt.replace("{{segments}}", content_type_definitions)
 
-                content_type_result = OpenAIService.get_chat_completion(
-                    client=client,
-                    settings=settings,
-                    system_prompt=content_type_instruction,
-                    user_prompt=transcript,
-                    max_tokens=30,
-                )
+                content_type_result = _complete(content_type_instruction, 30)
                 print(content_type_result)
         except Exception as e:
             print(f"Error generating content type classification: {e}")

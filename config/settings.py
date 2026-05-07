@@ -53,7 +53,8 @@ INSTALLED_APPS = [
     "logger",
     "audio_policy",
     "acr_cloud",
-    "download_pdf"
+    "download_pdf",
+    "openrouter",
 ]
 
 MIDDLEWARE = [
