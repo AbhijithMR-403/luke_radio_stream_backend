@@ -192,7 +192,7 @@ class TranscriptionAnalyzer:
         summary = _complete(settings.summarize_transcript_prompt, 150)
 
         # Sentiment
-        sentiment = _complete(settings.sentiment_analysis_prompt, 10)
+        sentiment = _complete(settings.sentiment_analysis_prompt, 16)
 
         # General topics
         general_topics = _complete(settings.general_topics_prompt, 100)

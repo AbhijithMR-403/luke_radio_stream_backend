@@ -71,17 +71,43 @@ class OpenRouterService:
             "temperature": temperature,
         }
 
-        response = requests.post(
-            OpenRouterService.CHAT_COMPLETIONS_ENDPOINT,
-            headers=headers,
-            json={key: value for key, value in payload.items() if value is not None},
-            timeout=OpenRouterService.TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
+        request_body = {key: value for key, value in payload.items() if value is not None}
+
+        try:
+            response = requests.post(
+                OpenRouterService.CHAT_COMPLETIONS_ENDPOINT,
+                headers=headers,
+                json=request_body,
+                timeout=OpenRouterService.TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            print(
+                f"[OpenRouter] connection error model={model!r} "
+                f"system_prompt_len={len(system_prompt or '')} "
+                f"user_prompt_len={len(user_prompt or '')} error={exc}"
+            )
+            raise
+
+        if not response.ok:
+            try:
+                upstream_error = response.json()
+            except ValueError:
+                upstream_error = response.text
+
+            print(
+                f"[OpenRouter] HTTP {response.status_code} model={model!r} "
+                f"system_prompt_len={len(system_prompt or '')} "
+                f"user_prompt_len={len(user_prompt or '')} "
+                f"max_tokens={request_body.get('max_tokens')} "
+                f"temperature={request_body.get('temperature')} "
+                f"upstream_response={upstream_error!r}"
+            )
+            response.raise_for_status()
 
         response_data = response.json()
         choices = response_data.get("choices", [])
         if not choices:
+            print(f"[OpenRouter] empty choices model={model!r} response={response_data!r}")
             return ""
 
         message = choices[0].get("message", {})

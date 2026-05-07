@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import requests
 from typing import Optional, Dict, Any
 import os
+from urllib.parse import urlparse
 from django.utils import timezone
 from django.db.models import Q
 from decouple import config
@@ -12,7 +13,7 @@ from openai import OpenAI
 from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
 
-from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail, AudioSegments
+from data_analysis.models import RevTranscriptionJob, TranscriptionDetail, AudioSegments
 from segmentor.models import TitleMappingRule
 
 
@@ -137,11 +138,34 @@ class RevAISpeechToText:
             if audio_segment is None:
                 continue
 
-            # Check if TranscriptionDetail already exists for this audio segment (transcription already completed)
-            if TranscriptionDetail.objects.filter(audio_segment=audio_segment).exists():
-                print(f"Skipping segment {audio_segment.id} - TranscriptionDetail already exists")
-                continue  # Skip this segment if TranscriptionDetail already exists
-            
+            # Transcription already stored: skip new Rev job; optionally queue analysis (same as Rev callback)
+            existing_detail = TranscriptionDetail.objects.filter(
+                audio_segment=audio_segment
+            ).select_related("rev_job").first()
+            if existing_detail:
+                if audio_segment.is_analysis_completed:
+                    print(
+                        f"Skipping segment {audio_segment.id} - TranscriptionDetail exists and analysis completed"
+                    )
+                    continue
+                job = existing_detail.rev_job
+                if job and job.status == "transcribed":
+                    from data_analysis.tasks import analyze_transcription_task
+
+                    media_url = job.media_url
+                    parsed_url = urlparse(str(media_url))
+                    analyze_transcription_task.delay(job.pk, parsed_url.path, media_url)
+                    print(
+                        f"Queued analysis for segment {audio_segment.id} "
+                        f"(TranscriptionDetail exists, analysis not completed)"
+                    )
+                else:
+                    print(
+                        f"Skipping segment {audio_segment.id} - TranscriptionDetail exists but "
+                        f"cannot analyze (job status={getattr(job, 'status', None)})"
+                    )
+                continue
+
             # # Check if RevTranscriptionJob already exists (job already created, even if not completed)
             if RevTranscriptionJob.objects.filter(
                 audio_segment=audio_segment,
