@@ -74,19 +74,6 @@ class GeneralSettingSerializer(serializers.Serializer):
     def validate_openai_api_key(self, value):
         if self._validation_error_occurred:
             return value
-
-        if value and value.strip():
-            result = OpenAIUtils.validate_api_key(value)
-            if not result.get("is_valid"):
-                self._validation_error_occurred = True
-                raise serializers.ValidationError(
-                    result.get("error_message") or 'Invalid OpenAI API key'
-                )
-
-            email = result.get("email")
-            if email:
-                self._openai_email = email
-
         return value
 
     def validate_acr_cloud_api_key(self, value):
