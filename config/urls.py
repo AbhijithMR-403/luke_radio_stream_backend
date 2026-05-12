@@ -35,6 +35,7 @@ urlpatterns = [
     path('api/', include('download_pdf.urls')),
     path('api/', include('openrouter.urls')),
     path('api/', include('prompt_automation.urls')),
+    path('api/audio/filter/', include('audio_filter.urls')),
 ]
 
 if settings.DEBUG:

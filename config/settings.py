@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "download_pdf",
     "openrouter",
     "prompt_automation",
+    "audio_filter",
 ]
 
 MIDDLEWARE = [
