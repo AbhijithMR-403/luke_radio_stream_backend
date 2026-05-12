@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "acr_cloud",
     "download_pdf",
     "openrouter",
+    "prompt_automation",
 ]
 
 MIDDLEWARE = [

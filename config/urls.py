@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/', include('acr_cloud.urls')),
     path('api/', include('download_pdf.urls')),
     path('api/', include('openrouter.urls')),
+    path('api/', include('prompt_automation.urls')),
 ]
 
 if settings.DEBUG:
