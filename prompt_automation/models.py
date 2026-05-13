@@ -16,6 +16,16 @@ class Prompt(models.Model):
 
 
 class PromptRun(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+
+    audio_segments = models.ManyToManyField(AudioSegments)
+
+    prompts = models.ManyToManyField(Prompt)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PromptResult(models.Model):
     STATUS_CHOICES = [
         ("pending", "Pending"),
         ("processing", "Processing"),
@@ -23,22 +33,6 @@ class PromptRun(models.Model):
         ("failed", "Failed"),
     ]
 
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-
-    audio_segments = models.ManyToManyField(AudioSegments)
-
-    prompts = models.ManyToManyField(Prompt)
-
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default="pending"
-    )
-
-    created_at = models.DateTimeField(auto_now_add=True)
-
-
-class PromptResult(models.Model):
     prompt_run = models.ForeignKey(
         PromptRun,
         on_delete=models.CASCADE,
@@ -50,6 +44,14 @@ class PromptResult(models.Model):
         on_delete=models.CASCADE
     )
 
-    response = models.TextField()
+    response = models.TextField(blank=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="pending"
+    )
+
+    error_message = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

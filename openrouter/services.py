@@ -113,3 +113,82 @@ class OpenRouterService:
         message = choices[0].get("message", {})
         content = message.get("content")
         return content.strip() if isinstance(content, str) else ""
+
+    @staticmethod
+    def get_chat_completion_with_transcripts(
+        bearer_token: str,
+        model: str,
+        system_prompt: str,
+        transcripts: list[str],
+        max_tokens: int = 1000,
+        temperature: float = 0.7,
+    ) -> str:
+        headers = {
+            "Authorization": f"Bearer {bearer_token}",
+            "Content-Type": "application/json",
+            "X-OpenRouter-Experimental-Metadata": "enabled",
+        }
+
+        content_blocks = [
+            {"type": "text", "text": f"Transcript {i + 1}:\n{t}"}
+            for i, t in enumerate(transcripts)
+        ]
+
+        payload: dict = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content_blocks},
+            ],
+        }
+        if max_tokens is not None and max_tokens > 0:
+            payload["max_tokens"] = max_tokens
+        if temperature is not None:
+            payload["temperature"] = temperature
+
+        request_body = payload
+
+        transcript_total_len = sum(len(str(t or "")) for t in transcripts)
+
+        try:
+            response = requests.post(
+                OpenRouterService.CHAT_COMPLETIONS_ENDPOINT,
+                headers=headers,
+                json=request_body,
+                timeout=OpenRouterService.TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            print(
+                f"[OpenRouter] connection error model={model!r} "
+                f"system_prompt_len={len(system_prompt or '')} "
+                f"transcript_count={len(transcripts)} "
+                f"transcript_total_len={transcript_total_len} error={exc}"
+            )
+            raise
+
+        if not response.ok:
+            try:
+                upstream_error = response.json()
+            except ValueError:
+                upstream_error = response.text
+
+            print(
+                f"[OpenRouter] HTTP {response.status_code} model={model!r} "
+                f"system_prompt_len={len(system_prompt or '')} "
+                f"transcript_count={len(transcripts)} "
+                f"transcript_total_len={transcript_total_len} "
+                f"max_tokens={request_body.get('max_tokens')} "
+                f"temperature={request_body.get('temperature')} "
+                f"upstream_response={upstream_error!r}"
+            )
+            response.raise_for_status()
+
+        response_data = response.json()
+        choices = response_data.get("choices", [])
+        if not choices:
+            print(f"[OpenRouter] empty choices model={model!r} response={response_data!r}")
+            return ""
+
+        message = choices[0].get("message", {})
+        content = message.get("content")
+        return content.strip() if isinstance(content, str) else ""
