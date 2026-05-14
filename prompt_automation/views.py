@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Prefetch
 from rest_framework import generics, permissions, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -68,7 +69,11 @@ class PromptRunExecuteView(APIView):
 
 
 class PromptRunListView(generics.ListAPIView):
-    """List prompt runs for the current user with prompts, audio segments, and results."""
+    """List prompt runs for the authenticated user with prompts, audio segments, and results.
+
+    Query params:
+    - channel_id: only runs that include at least one audio segment on this channel.
+    """
 
     serializer_class = PromptRunListSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -77,9 +82,24 @@ class PromptRunListView(generics.ListAPIView):
         audio_with_transcript = AudioSegments.objects.select_related(
             "transcription_detail"
         )
+        user = self.request.user
+        if not user.is_authenticated or user.pk is None:
+            return PromptRun.objects.none().order_by("-created_at")
+
+        qs = PromptRun.objects.filter(user_id=user.pk)
+
+        channel_id_raw = self.request.query_params.get("channel_id")
+        if channel_id_raw not in (None, ""):
+            try:
+                channel_id = int(channel_id_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    {"channel_id": "Must be a valid integer."}
+                ) from exc
+            qs = qs.filter(audio_segments__channel_id=channel_id).distinct()
+
         return (
-            PromptRun.objects.filter(user=self.request.user)
-            .prefetch_related(
+            qs.prefetch_related(
                 "prompts",
                 Prefetch("audio_segments", queryset=audio_with_transcript),
                 Prefetch(
