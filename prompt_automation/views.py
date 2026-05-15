@@ -14,7 +14,8 @@ from .serializers import (
     PromptRunListSerializer,
     PromptSerializer,
 )
-from .utils import run_prompts_for_audio_segments
+from .tasks import run_prompt_run_llm_task
+from .utils import prepare_prompt_run
 
 
 class PromptRunExecuteView(APIView):
@@ -43,7 +44,7 @@ class PromptRunExecuteView(APIView):
         audio_segments = [segments_by_id[sid] for sid in audio_segment_ids]
 
         try:
-            results = run_prompts_for_audio_segments(
+            prompt_run, results = prepare_prompt_run(
                 request.user,
                 prompts,
                 audio_segments,
@@ -59,16 +60,17 @@ class PromptRunExecuteView(APIView):
                 detail = [str(m) for m in exc.messages]
             return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
 
-        prompt_run_id = results[0].prompt_run_id if results else None
+        run_prompt_run_llm_task.delay(prompt_run.pk, max_tokens=max_tokens)
+
         response_serializer = PromptRunExecuteResponseSerializer(
             {
-                "prompt_run_id": prompt_run_id,
+                "prompt_run_id": prompt_run.pk,
                 "max_tokens": max_tokens,
                 "audio_segments": audio_segments,
                 "results": results,
             }
         )
-        return Response(response_serializer.data, status=status.HTTP_200_OK)
+        return Response(response_serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
 class PromptRunRetrieveView(APIView):

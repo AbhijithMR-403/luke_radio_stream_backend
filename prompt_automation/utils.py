@@ -29,19 +29,7 @@ def _transcripts_from_audio_segments(
     return transcripts
 
 
-def run_prompts_for_audio_segments(
-    user,
-    prompts: list[Prompt],
-    audio_segments: list[AudioSegments],
-    max_tokens: int = 1000,
-) -> list[PromptResult]:
-    ValidationUtils.validate_required_field(user, "user")
-    ValidationUtils.validate_list_not_empty(prompts, "prompts")
-    ValidationUtils.validate_list_not_empty(audio_segments, "audio_segments")
-    if max_tokens < 0:
-        raise ValidationError("max_tokens must be non-negative")
-
-    # All segments must share a channel so we know which API key / model to use.
+def _llm_settings_for_audio_segments(audio_segments: list[AudioSegments]):
     channel_ids = {segment.channel_id for segment in audio_segments}
     if len(channel_ids) > 1:
         raise ValidationError(
@@ -57,46 +45,93 @@ def run_prompts_for_audio_segments(
             f"OpenRouter API key not configured for channel {channel_id} in GeneralSetting"
         )
 
-    transcripts = _transcripts_from_audio_segments(audio_segments)
+    return {
+        "api_key": api_key,
+        "model": settings.chatgpt_model,
+        "temperature": settings.chatgpt_temperature,
+        "transcripts": _transcripts_from_audio_segments(audio_segments),
+    }
 
-    effective_model =  settings.chatgpt_model
-    effective_temperature = settings.chatgpt_temperature
+
+def _validate_prompt_run_inputs(
+    user,
+    prompts: list[Prompt],
+    audio_segments: list[AudioSegments],
+    max_tokens: int,
+) -> None:
+    ValidationUtils.validate_required_field(user, "user")
+    ValidationUtils.validate_list_not_empty(prompts, "prompts")
+    ValidationUtils.validate_list_not_empty(audio_segments, "audio_segments")
+    if max_tokens < 0:
+        raise ValidationError("max_tokens must be non-negative")
+    _llm_settings_for_audio_segments(audio_segments)
+
+
+def prepare_prompt_run(
+    user,
+    prompts: list[Prompt],
+    audio_segments: list[AudioSegments],
+    max_tokens: int = 1000,
+) -> tuple[PromptRun, list[PromptResult]]:
+    """Validate inputs, create ``PromptRun`` and pending ``PromptResult`` rows."""
+    _validate_prompt_run_inputs(user, prompts, audio_segments, max_tokens)
 
     with transaction.atomic():
         prompt_run = PromptRun.objects.create(user=user)
         prompt_run.prompts.set(prompts)
         prompt_run.audio_segments.set(audio_segments)
+        results = [
+            PromptResult.objects.create(
+                prompt_run=prompt_run,
+                prompt=prompt,
+                status="pending",
+            )
+            for prompt in prompts
+        ]
 
-    results: list[PromptResult] = []
-    for prompt in prompts:
-        result = PromptResult.objects.create(
-            prompt_run=prompt_run,
-            prompt=prompt,
-            status="processing",
+    return prompt_run, results
+
+
+def execute_prompt_run_llm(prompt_run_id: int, max_tokens: int = 1000) -> None:
+    """Run OpenRouter for each pending result on an existing prompt run."""
+    if max_tokens < 0:
+        raise ValidationError("max_tokens must be non-negative")
+
+    prompt_run = (
+        PromptRun.objects.prefetch_related(
+            "prompts",
+            "results",
         )
+        .prefetch_related(
+            "audio_segments__transcription_detail",
+        )
+        .get(pk=prompt_run_id)
+    )
+    audio_segments = list(prompt_run.audio_segments.all())
+    llm = _llm_settings_for_audio_segments(audio_segments)
+
+    for result in prompt_run.results.select_related("prompt").order_by("id"):
+        if result.status not in ("pending", "processing"):
+            continue
+
+        PromptResult.objects.filter(pk=result.pk).update(status="processing")
 
         try:
             response_text = OpenRouterService.get_chat_completion_with_transcripts(
-                bearer_token=api_key,
-                model=effective_model,
-                system_prompt=prompt.content,
-                transcripts=transcripts,
+                bearer_token=llm["api_key"],
+                model=llm["model"],
+                system_prompt=result.prompt.content,
+                transcripts=llm["transcripts"],
                 max_tokens=max_tokens,
-                temperature=effective_temperature,
+                temperature=llm["temperature"],
             )
         except Exception as exc:
             PromptResult.objects.filter(pk=result.pk).update(
                 status="failed",
                 error_message=str(exc),
             )
-            result.refresh_from_db()
         else:
             PromptResult.objects.filter(pk=result.pk).update(
                 status="completed",
                 response=response_text,
             )
-            result.refresh_from_db()
-
-        results.append(result)
-
-    return results
