@@ -9,7 +9,7 @@ from data_analysis.models import AudioSegments
 
 from .models import Prompt, PromptResult, PromptRun
 from .serializers import (
-    PromptResultReadSerializer,
+    PromptRunExecuteResponseSerializer,
     PromptRunExecuteSerializer,
     PromptRunListSerializer,
     PromptSerializer,
@@ -36,7 +36,9 @@ class PromptRunExecuteView(APIView):
 
         segments_by_id = {
             s.pk: s
-            for s in AudioSegments.objects.filter(id__in=audio_segment_ids)
+            for s in AudioSegments.objects.filter(id__in=audio_segment_ids).select_related(
+                "transcription_detail"
+            )
         }
         audio_segments = [segments_by_id[sid] for sid in audio_segment_ids]
 
@@ -58,14 +60,48 @@ class PromptRunExecuteView(APIView):
             return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
 
         prompt_run_id = results[0].prompt_run_id if results else None
-        return Response(
+        response_serializer = PromptRunExecuteResponseSerializer(
             {
                 "prompt_run_id": prompt_run_id,
                 "max_tokens": max_tokens,
-                "results": PromptResultReadSerializer(results, many=True).data,
-            },
-            status=status.HTTP_200_OK,
+                "audio_segments": audio_segments,
+                "results": results,
+            }
         )
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
+class PromptRunRetrieveView(APIView):
+    """Return a stored prompt run in the same shape as ``PromptRunExecuteView`` POST."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            prompt_run = (
+                PromptRun.objects.prefetch_related(
+                    Prefetch(
+                        "audio_segments",
+                        queryset=AudioSegments.objects.select_related(
+                            "transcription_detail"
+                        ),
+                    ),
+                    Prefetch(
+                        "results",
+                        queryset=PromptResult.objects.order_by("id"),
+                    ),
+                ).get(pk=pk, user_id=request.user.pk)
+            )
+        except PromptRun.DoesNotExist:
+            return Response(
+                {"detail": "Prompt run not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        response_serializer = PromptRunExecuteResponseSerializer.from_prompt_run(
+            prompt_run
+        )
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
 
 
 class PromptRunListView(generics.ListAPIView):

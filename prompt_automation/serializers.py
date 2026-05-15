@@ -1,3 +1,4 @@
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
 from data_analysis.models import AudioSegments, TranscriptionDetail
@@ -99,6 +100,57 @@ class PromptResultReadSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = fields
+
+
+class PromptRunAudioSegmentSerializer(serializers.ModelSerializer):
+    audio_segment_id = serializers.IntegerField(source="pk", read_only=True)
+    before_title = serializers.CharField(source="title_before", allow_null=True)
+    after_title = serializers.CharField(source="title_after", allow_null=True)
+    transcript = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AudioSegments
+        fields = (
+            "audio_segment_id",
+            "title",
+            "before_title",
+            "after_title",
+            "transcript",
+        )
+        read_only_fields = fields
+
+    def get_transcript(self, obj: AudioSegments) -> str | None:
+        try:
+            raw = obj.transcription_detail.transcript
+        except ObjectDoesNotExist:
+            return None
+        text = (raw or "").strip()
+        return text or None
+
+
+class PromptRunExecuteResponseSerializer(serializers.Serializer):
+    """Response shape shared by prompt run execute (POST) and retrieve (GET)."""
+
+    prompt_run_id = serializers.IntegerField(allow_null=True)
+    max_tokens = serializers.IntegerField(allow_null=True)
+    audio_segments = PromptRunAudioSegmentSerializer(many=True)
+    results = PromptResultReadSerializer(many=True)
+
+    @classmethod
+    def from_prompt_run(
+        cls, prompt_run: PromptRun, *, max_tokens: int | None = None
+    ):
+        audio_segments = prompt_run.audio_segments.select_related(
+            "transcription_detail"
+        ).all()
+        return cls(
+            {
+                "prompt_run_id": prompt_run.pk,
+                "max_tokens": max_tokens,
+                "audio_segments": audio_segments,
+                "results": prompt_run.results.order_by("id"),
+            }
+        )
 
 
 class SegmentTranscriptSerializer(serializers.ModelSerializer):
