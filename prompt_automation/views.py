@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Prefetch
+from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -42,6 +45,23 @@ class PromptRunExecuteView(APIView):
             )
         }
         audio_segments = [segments_by_id[sid] for sid in audio_segment_ids]
+
+        # if same user, same prompts, same segments, and less than 2 minutes old, return 409
+        cutoff = timezone.now() - timedelta(minutes=2)
+        recent = PromptRun.objects.filter(
+            user=request.user,
+            created_at__gte=cutoff,
+        )
+        for pid in prompt_ids:
+            recent = recent.filter(prompts=pid)
+        for sid in audio_segment_ids:
+            recent = recent.filter(audio_segments=sid)
+
+        if recent.exists():
+            return Response(
+                {"detail": "Already executed."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         try:
             prompt_run, results = prepare_prompt_run(
