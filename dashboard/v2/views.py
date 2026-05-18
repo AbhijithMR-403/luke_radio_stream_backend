@@ -355,7 +355,7 @@ class GeneralTopicCountByShiftView(APIView):
             end_datetime (str): End datetime in YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS format (required)
             channel_id (int): Channel ID to filter by (required if report_folder_id not provided)
             report_folder_id (int): Report folder ID to filter by (required if channel_id not provided)
-            show_all_topics (bool): If True, show all topics. If False, only show topics that are in GeneralTopic model (default: False)
+            show_all_topics (bool): If True, show all topics. If False, exclude topics that are in GeneralTopic model (default: False)
         """
         try:
             # Validate query parameters

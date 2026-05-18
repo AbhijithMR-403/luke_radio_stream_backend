@@ -441,7 +441,7 @@ class TopicService:
             end_dt: End datetime
             channel_id: Channel ID to filter by (required if report_folder_id not provided)
             report_folder_id: Report folder ID to filter by (required if channel_id not provided)
-            show_all_topics: If True, show all topics. If False, only show topics that are in GeneralTopic model (default: False)
+            show_all_topics: If True, show all topics. If False, exclude topics that are in GeneralTopic model (default: False)
             
         Returns:
             Dictionary with general topic counts grouped by shift
@@ -480,12 +480,8 @@ class TopicService:
             is_active=True
         )
         
-        # Get GeneralTopic names if we need to filter
-        if show_all_topics:
-            generaltopic_names = None
-        else:
-            # Only count topics that are in GeneralTopic model
-            generaltopic_names = TopicService._get_all_generaltopic_names()
+        # Get GeneralTopic names (only if we need to filter them out)
+        generaltopic_names = None if show_all_topics else TopicService._get_all_generaltopic_names()
         
         # Convert to UTC for shift filtering
         if start_dt.tzinfo is None:
@@ -571,8 +567,8 @@ class TopicService:
                         # Show all topics (no filtering)
                         filtered_topics = topics
                     else:
-                        # Only count topics that are in GeneralTopic model
-                        filtered_topics = [topic for topic in topics if topic.lower() in generaltopic_names]
+                        # Exclude topics that are in GeneralTopic model
+                        filtered_topics = TopicService._filter_out_generaltopic_topics(topics, generaltopic_names)
                     
                     # Count each topic
                     for topic in filtered_topics:
