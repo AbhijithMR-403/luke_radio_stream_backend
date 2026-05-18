@@ -25,7 +25,7 @@ class IsAdminUser(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.is_admin
 
-# Admin: Create user (only email required)
+# Admin: Create user (email, name, and is_admin required)
 class AdminCreateUserView(APIView):
     permission_classes = [IsAdminUser]
 
@@ -34,6 +34,7 @@ class AdminCreateUserView(APIView):
         if serializer.is_valid():
             email = serializer.validated_data['email']
             name = serializer.validated_data['name']
+            is_admin = serializer.validated_data['is_admin']
             
             # Check if user already exists
             if User.objects.filter(email=email).exists():
@@ -41,6 +42,12 @@ class AdminCreateUserView(APIView):
             
             # Create user without password
             user = User.objects.create_user(email=email, name=name)
+            user.is_admin = is_admin
+
+            if 'is_active' in serializer.validated_data:
+                user.is_active = serializer.validated_data['is_active']
+
+            user.save()
             
             # Generate and send magic link
             magic_link = generate_and_send_magic_link(user)
@@ -75,6 +82,9 @@ class AdminUpdateUserView(APIView):
             
             if 'is_active' in serializer.validated_data:
                 user.is_active = serializer.validated_data['is_active']
+
+            if 'is_admin' in serializer.validated_data:
+                user.is_admin = serializer.validated_data['is_admin']
             
             user.save()
             

@@ -11,11 +11,13 @@ class UserSerializer(serializers.ModelSerializer):
 class AdminCreateUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
     name = serializers.CharField(max_length=255)
+    is_admin = serializers.BooleanField()
     is_active = serializers.BooleanField(required=False)
 
 class AdminUpdateUserSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=False)
     is_active = serializers.BooleanField(required=False)
+    is_admin = serializers.BooleanField(required=False)
 
 class MagicLinkVerificationSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=64, min_length=64)
