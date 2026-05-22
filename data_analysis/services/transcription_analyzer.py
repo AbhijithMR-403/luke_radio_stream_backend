@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError
 from config.validation import ValidationUtils
 
 from data_analysis.models import RevTranscriptionJob, TranscriptionAnalysis, TranscriptionDetail
-from openrouter.services import OpenRouterService
+from data_analysis.services.openai import OpenAIService
 from audio_policy.models import ContentTypeDeactivationRule
 
 class TranscriptionAnalyzer:
@@ -174,18 +174,18 @@ class TranscriptionAnalyzer:
         api_key = (settings.openai_api_key or "").strip()
         if not api_key:
             raise ValidationError(
-                f"OpenRouter API key not configured for channel {channel_id} in GeneralSetting"
+                f"OpenAI API key not configured for channel {channel_id} in GeneralSetting"
             )
         transcript = transcription_detail.transcript
+        client = OpenAIService.get_client(api_key)
 
         def _complete(system_prompt: str, max_tokens: int) -> str:
-            return OpenRouterService.get_chat_completion(
-                bearer_token=api_key,
-                model=settings.chatgpt_model,
-                system_prompt=system_prompt,
-                user_prompt=transcript,
-                max_tokens=max_tokens,
-                temperature=settings.chatgpt_temperature,
+            return OpenAIService.get_chat_completion(
+                client,
+                settings,
+                system_prompt,
+                transcript,
+                max_tokens,
             )
 
         # Summary
