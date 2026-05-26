@@ -419,6 +419,7 @@ class BucketCountService:
         # Calculate totals
         total_time_period_seconds = (end_dt - start_dt).total_seconds()
         total = sum(bucket_counts.values())
+        total_category_bucket_duration = sum(bucket_durations.values())
         
         result = {}
         for bucket_title in category_buckets.keys():
@@ -430,7 +431,8 @@ class BucketCountService:
                 'percentage': BucketCountService._calc_pct(count, total),
                 'duration_seconds': duration_sec,
                 'duration_hours': round(duration_sec / 3600, 2),
-                'content_time_percentage': BucketCountService._calc_pct(duration_sec, total_filtered_duration)
+                # Normalize within the returned category buckets so the values sum to ~100%.
+                'content_time_percentage': BucketCountService._calc_pct(duration_sec, total_category_bucket_duration)
             }
         
         return {
