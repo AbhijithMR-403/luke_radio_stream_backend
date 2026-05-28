@@ -95,6 +95,7 @@ def _serialize_segment(segment):
 
     return {
         "id": segment.id,
+        "channel_id": segment.channel_id,
         "start_time": segment.start_time.isoformat() if segment.start_time else None,
         "end_time": segment.end_time.isoformat() if segment.end_time else None,
         "duration_seconds": segment.duration_seconds,
@@ -124,7 +125,7 @@ class AudioSegmentFilterView(APIView):
     - start_datetime: Required datetime range start.
     - end_datetime: Required datetime range end.
     - id: Optional audio segment ID.
-    - channel_Id: Optional channel ID.
+    - channel_id: Optional channel ID.
     - title_name: Optional, case-insensitive search across title, title_before, and title_after.
     - transcribed_only: Optional boolean. When true, returns only transcribed segments.
     - limit: Optional positive integer. Defaults to 10 newest segments.
@@ -168,8 +169,8 @@ class AudioSegmentFilterView(APIView):
             limit = _parse_positive_int(request.query_params.get("limit"), "limit")
             segment_id = _parse_optional_positive_int(request.query_params.get("id"), "id")
             channel_id = _parse_optional_positive_int(
-                request.query_params.get("channel_Id"),
-                "channel_Id",
+                request.query_params.get("channel_id"),
+                "channel_id",
             )
         except ValueError as exc:
             return Response(
@@ -187,7 +188,7 @@ class AudioSegmentFilterView(APIView):
             segments = segments.filter(id=segment_id)
 
         if channel_id:
-            segments = segments.filter(channel_id=channel_id)
+            segments = segments.filter(channel=channel_id)
 
         if title_name:
             segments = segments.filter(
@@ -217,7 +218,7 @@ class AudioSegmentFilterView(APIView):
                     "start_datetime": start_datetime.isoformat(),
                     "end_datetime": end_datetime.isoformat(),
                     "id": segment_id,
-                    "channel_Id": channel_id,
+                    "channel_id": channel_id,
                     "title_name": title_name or None,
                     "transcribed_only": transcribed_only,
                     "limit": limit,
