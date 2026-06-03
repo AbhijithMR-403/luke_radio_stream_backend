@@ -54,6 +54,7 @@ class RadioUser(AbstractBaseUser):
     name = models.CharField(max_length=255, verbose_name="Full Name")
     is_active = models.BooleanField(default=True)
     is_admin = models.BooleanField(default=False)
+    is_channel_admin = models.BooleanField(default=False)
     password_set = models.BooleanField(default=False)  # Track if user has set their password
 
     objects = RadioUserManager()

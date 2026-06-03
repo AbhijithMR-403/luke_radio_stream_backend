@@ -6,18 +6,37 @@ from core_admin.models import Channel
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = RadioUser
-        fields = ['id', 'email', 'name', 'password_set', 'is_admin', 'is_active']
+        fields = ['id', 'email', 'name', 'password_set', 'is_admin', 'is_channel_admin', 'is_active']
 
 class AdminCreateUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
     name = serializers.CharField(max_length=255)
     is_admin = serializers.BooleanField()
+    is_channel_admin = serializers.BooleanField(required=False, default=False)
     is_active = serializers.BooleanField(required=False)
+
+    def validate(self, data):
+        if data.get('is_admin', False) and data.get('is_channel_admin', False):
+            raise serializers.ValidationError(
+                'A user cannot be both a global admin and a channel admin.'
+            )
+        return data
 
 class AdminUpdateUserSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=False)
     is_active = serializers.BooleanField(required=False)
     is_admin = serializers.BooleanField(required=False)
+    is_channel_admin = serializers.BooleanField(required=False)
+
+    def validate(self, data):
+        is_admin = data.get('is_admin')
+        is_channel_admin = data.get('is_channel_admin')
+
+        if is_admin and is_channel_admin:
+            raise serializers.ValidationError(
+                'A user cannot be both a global admin and a channel admin.'
+            )
+        return data
 
 class MagicLinkVerificationSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=64, min_length=64)
@@ -50,6 +69,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token['email'] = user.email
         token['name'] = user.name
         token['is_admin'] = user.is_admin
+        token['is_channel_admin'] = user.is_channel_admin
         token['password_set'] = user.password_set
         return token
 

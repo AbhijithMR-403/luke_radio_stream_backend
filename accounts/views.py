@@ -25,7 +25,7 @@ class IsAdminUser(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.is_admin
 
-# Admin: Create user (email, name, and is_admin required)
+# Admin: Create user (email, name, is_admin required; is_channel_admin optional)
 class AdminCreateUserView(APIView):
     permission_classes = [IsAdminUser]
 
@@ -35,33 +35,32 @@ class AdminCreateUserView(APIView):
             email = serializer.validated_data['email']
             name = serializer.validated_data['name']
             is_admin = serializer.validated_data['is_admin']
-            
+            is_channel_admin = serializer.validated_data.get('is_channel_admin', False)
+
             # Check if user already exists
             if User.objects.filter(email=email).exists():
                 return Response({'error': 'User with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
-            
+
             # Create user without password
             user = User.objects.create_user(email=email, name=name)
             user.is_admin = is_admin
+            user.is_channel_admin = is_channel_admin
 
             if 'is_active' in serializer.validated_data:
                 user.is_active = serializer.validated_data['is_active']
 
             user.save()
-            
+
             # Generate and send magic link
             magic_link = generate_and_send_magic_link(user)
+            response_data = {'user': UserSerializer(user).data}
             if magic_link:
-                return Response({
-                    'message': 'User created successfully. Magic link sent to email.',
-                    'user': UserSerializer(user).data
-                }, status=status.HTTP_201_CREATED)
+                response_data['message'] = 'User created successfully. Magic link sent to email.'
+                return Response(response_data, status=status.HTTP_201_CREATED)
             else:
-                return Response({
-                    'error': 'User created but failed to send magic link email.',
-                    'user': UserSerializer(user).data
-                }, status=status.HTTP_201_CREATED)
-        
+                response_data['error'] = 'User created but failed to send magic link email.'
+                return Response(response_data, status=status.HTTP_201_CREATED)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # Admin: Update user information
@@ -85,7 +84,14 @@ class AdminUpdateUserView(APIView):
 
             if 'is_admin' in serializer.validated_data:
                 user.is_admin = serializer.validated_data['is_admin']
-            
+                if user.is_admin:
+                    user.is_channel_admin = False
+
+            if 'is_channel_admin' in serializer.validated_data:
+                user.is_channel_admin = serializer.validated_data['is_channel_admin']
+                if user.is_channel_admin:
+                    user.is_admin = False
+
             user.save()
             
             return Response({
@@ -222,7 +228,8 @@ class UserChannelsView(APIView):
             return Response({
                 'user': user_data,
                 'channels': channels_data,
-                'is_admin': False
+                'is_admin': False,
+                'is_channel_admin': request.user.is_channel_admin,
             })
 
 # User: Verify magic link token
