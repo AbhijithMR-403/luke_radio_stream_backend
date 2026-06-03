@@ -1,5 +1,6 @@
 from datetime import date, datetime
 
+from audio_filter.utils import AudioSegmentFilterV3Utils
 from core_admin.models import Channel
 from django.utils import timezone
 from rest_framework import serializers
@@ -245,6 +246,11 @@ class AudioSegmentFilterV3SegmentSerializer(serializers.Serializer):
             except AttributeError:
                 analysis = None
 
+        flag = AudioSegmentFilterV3Utils.build_segment_flags(
+            segment,
+            self.context.get("flag_condition"),
+        )
+
         return {
             "id": segment.id,
             "start_time": segment.start_time.isoformat() if segment.start_time else None,
@@ -262,6 +268,7 @@ class AudioSegmentFilterV3SegmentSerializer(serializers.Serializer):
             "is_transcribed": transcription_detail is not None,
             "transcription": transcription,
             "analysis": analysis,
+            "flag": flag,
             "channel": {
                 "id": segment.channel_id,
                 "name": segment.channel.name if segment.channel else None,

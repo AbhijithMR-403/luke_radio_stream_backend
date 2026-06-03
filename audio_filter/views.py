@@ -259,7 +259,6 @@ class AudioSegmentFilterV3View(APIView):
             "search_text": serializer.validated_data.get("search_text"),
             "search_in": serializer.validated_data.get("search_in"),
             "search_type": serializer.validated_data.get("search_type"),
-            "show_flagged_only": serializer.validated_data.get("show_flagged_only"),
             "duration_seconds_min": serializer.validated_data.get("duration_seconds_min"),
             "duration_seconds_max": serializer.validated_data.get("duration_seconds_max"),
             "sentiment_min": serializer.validated_data.get("sentiment_min"),
@@ -293,7 +292,12 @@ class AudioSegmentFilterV3View(APIView):
             )
 
         audio_segments = audio_segments.order_by("start_time")
-        data = AudioSegmentFilterV3SegmentSerializer(audio_segments, many=True).data
+        flag_condition = AudioSegmentFilterV3Utils.get_active_flag_condition(channel)
+        data = AudioSegmentFilterV3SegmentSerializer(
+            audio_segments,
+            many=True,
+            context={"flag_condition": flag_condition},
+        ).data
 
         response = {
             "success": True,
