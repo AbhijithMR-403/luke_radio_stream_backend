@@ -5,9 +5,12 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from audio_filter.serializers import (
+    AudioSegmentFilterV3SegmentSerializer,
+    AudioSegmentFilterV3Serializer,
+)
 from data_analysis.models import AudioSegments
-
-
+from audio_filter.utils import AudioSegmentFilterV3Utils
 TRUE_VALUES = {"true", "1", "yes", "y"}
 FALSE_VALUES = {"false", "0", "no", "n"}
 
@@ -227,3 +230,76 @@ class AudioSegmentFilterView(APIView):
                 "data": data,
             }
         )
+
+class AudioSegmentFilterV3View(APIView):
+    serializer_class = AudioSegmentFilterV3Serializer
+    def get(self, request):
+        serializer = self.serializer_class(data=request.query_params)
+        if not serializer.is_valid():
+            return Response(
+                {"success": False, "error": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        start_datetime = serializer.validated_data["start_datetime"]
+        end_datetime = serializer.validated_data["end_datetime"]
+        channel = serializer.validated_data["channel"]
+        audio_segments = AudioSegmentFilterV3Utils.get_segments(
+            channel_id=serializer.validated_data["channel_id"],
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            shift_id=serializer.validated_data.get("shift_id"),
+            predefined_filter_id=serializer.validated_data.get("predefined_filter_id"),
+        )
+        filter_data = {
+            "status": serializer.validated_data.get("status"),
+            "content_type": serializer.validated_data.get("content_type"),
+            "transcribed_only": serializer.validated_data.get("transcribed_only"),
+            "slot_date": serializer.validated_data.get("slot_date"),
+            "slot_index": serializer.validated_data.get("slot_index"),
+            "search_text": serializer.validated_data.get("search_text"),
+            "search_in": serializer.validated_data.get("search_in"),
+            "search_type": serializer.validated_data.get("search_type"),
+            "show_flagged_only": serializer.validated_data.get("show_flagged_only"),
+            "duration_seconds_min": serializer.validated_data.get("duration_seconds_min"),
+            "duration_seconds_max": serializer.validated_data.get("duration_seconds_max"),
+            "sentiment_min": serializer.validated_data.get("sentiment_min"),
+            "sentiment_max": serializer.validated_data.get("sentiment_max"),
+        }
+        audio_segments = AudioSegmentFilterV3Utils.filter_segments(audio_segments, filter_data)
+
+        is_search_mode = filter_data.get("search_text") and filter_data.get("search_in")
+        pagination = None
+        if not is_search_mode:
+            slot_date = serializer.validated_data.get("slot_date")
+            slot_index = serializer.validated_data.get("slot_index")
+            if slot_date is None or slot_index is None:
+                slot_date, slot_index = AudioSegmentFilterV3Utils.find_first_slot_with_data(
+                    audio_segments, channel, start_datetime, end_datetime
+                )
+                if slot_date is None:
+                    slot_date, slot_index = AudioSegmentFilterV3Utils.default_slot(
+                        channel, start_datetime
+                    )
+            pagination = AudioSegmentFilterV3Utils.build_slot_pagination(
+                audio_segments,
+                channel,
+                start_datetime,
+                end_datetime,
+                slot_date,
+                slot_index,
+            )
+            audio_segments = AudioSegmentFilterV3Utils.filter_by_slot(
+                audio_segments, channel, slot_date, slot_index
+            )
+
+        audio_segments = audio_segments.order_by("start_time")
+        data = AudioSegmentFilterV3SegmentSerializer(audio_segments, many=True).data
+
+        response = {
+            "success": True,
+            "count": len(data),
+            "data": data,
+        }
+        if pagination is not None:
+            response["pagination"] = pagination
+        return Response(response)

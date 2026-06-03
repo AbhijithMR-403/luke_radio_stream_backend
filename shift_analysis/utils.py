@@ -2,7 +2,8 @@ from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 
 from django.db.models import Q, QuerySet
-from django.utils import timezone as dj_timezone
+from django.utils import timezone
+
 
 from .models import Shift, PredefinedFilter, FilterSchedule
 from data_analysis.models import AudioSegments
@@ -11,6 +12,84 @@ from data_analysis.models import AudioSegments
 def _weekday_str(dt: date) -> str:
     return dt.strftime("%A").lower()
 
+
+def get_shift_datetime_filter(shift: Shift, utc_start: datetime, utc_end: datetime) -> Q:
+    
+    if utc_start.tzinfo is None or utc_end.tzinfo is None:
+        raise ValueError("utc_start and utc_end must be timezone-aware in UTC")
+    if utc_end <= utc_start:
+        return Q(pk__isnull=True)  # Return a Q that matches nothing
+    
+    tz = ZoneInfo( shift.channel.timezone)
+    
+    # Parse the shift's days_of_week field
+    shift_days = [day.strip().lower() for day in shift.days.split(',')] if shift.days else []
+    
+    # Iterate days in local tz covering the UTC range
+    start_local = utc_start.astimezone(tz)
+    end_local = utc_end.astimezone(tz)
+    
+    windows = []
+    day = start_local.date()
+    while day <= end_local.date():
+        # Check if this day matches any of the shift's specified days
+        current_day_name = day.strftime('%A').lower()
+        
+        # If shift has specific days defined, only process matching days
+        if not shift_days or current_day_name in shift_days:
+            windows.extend(_build_utc_windows_for_local_day(shift.start_time, shift.end_time, day, tz))
+        
+        day += timedelta(days=1)
+    
+    # Build Q object from windows
+    q = Q()
+    for start_utc, end_utc in windows:
+        q |= Q(start_time__lt=end_utc, end_time__gt=start_utc)
+    
+    return q
+    
+
+def get_predefined_filter_datetime_filter(
+    predefined_filter: PredefinedFilter,
+    start_datetime: datetime,
+    end_datetime: datetime,
+) -> Q:
+    """Apply predefined filter-based time filtering."""
+    if start_datetime.tzinfo is None or end_datetime.tzinfo is None:
+        raise ValueError("start_datetime and end_datetime must be timezone-aware")
+    if end_datetime <= start_datetime:
+        return Q(pk__isnull=True)
+
+    filter_tz = ZoneInfo(predefined_filter.channel.timezone)
+    base_start_local = start_datetime.astimezone(filter_tz)
+    base_end_local = end_datetime.astimezone(filter_tz)
+
+    valid_windows = []
+    current_date = base_start_local.date()
+    end_date = base_end_local.date()
+
+    while current_date <= end_date:
+        day_of_week = current_date.strftime('%A').lower()
+        schedules = FilterSchedule.objects.filter(
+            predefined_filter=predefined_filter, day_of_week=day_of_week
+        )
+
+        for schedule in schedules:
+            day_windows = _build_utc_windows_for_local_day(
+                schedule.start_time, schedule.end_time, current_date, filter_tz
+            )
+            for window_start, window_end in day_windows:
+                intersection_start = max(start_datetime, window_start)
+                intersection_end = min(end_datetime, window_end)
+                if intersection_start < intersection_end:
+                    valid_windows.append((intersection_start, intersection_end))
+
+        current_date += timedelta(days=1)
+
+    q = Q()
+    for start_utc, end_utc in valid_windows:
+        q |= Q(start_time__lt=end_utc, end_time__gt=start_utc)
+    return q
 
 def _build_utc_windows_for_local_day(start_t: time, end_t: time, local_day: date, tz: ZoneInfo):
     """
