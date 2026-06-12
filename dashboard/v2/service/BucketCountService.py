@@ -401,15 +401,16 @@ class BucketCountService:
             if not bucket_text:
                 continue
             
-            # Use 0 if None
-            duration_seconds = entry.get('duration_seconds') or 0
-            total_filtered_duration += duration_seconds
-            
             found_buckets = BucketCountService._extract_bucket_titles_for_category(
                 bucket_text,
                 category_name,
                 bucket_title_to_category
             )
+            if not found_buckets:
+                continue
+            
+            duration_seconds = entry.get('duration_seconds') or 0
+            total_filtered_duration += duration_seconds
             
             for bucket_title in found_buckets:
                 if bucket_title in bucket_counts:
