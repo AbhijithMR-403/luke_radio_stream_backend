@@ -8,11 +8,26 @@ from openrouter.services import OpenRouterService
 from .models import Prompt, PromptResult, PromptRun
 
 
+def _segment_display_title(segment: AudioSegments) -> str:
+    title = (segment.title or "").strip()
+    if title:
+        return title
+    before = (segment.title_before or "").strip()
+    after = (segment.title_after or "").strip()
+    if before and after:
+        return f"{before} -> {after}"
+    if before:
+        return before
+    if after:
+        return after
+    return ""
+
+
 def _transcripts_from_audio_segments(
     audio_segments: list[AudioSegments],
-) -> list[str]:
-    transcripts: list[str] = []
-    for segment in audio_segments:
+) -> list[dict[str, str]]:
+    transcripts: list[dict[str, str]] = []
+    for i, segment in enumerate(audio_segments):
         try:
             raw = segment.transcription_detail.transcript
         except ObjectDoesNotExist as exc:
@@ -25,7 +40,10 @@ def _transcripts_from_audio_segments(
             raise ValidationError(
                 f"Audio segment {segment.pk} has an empty transcript."
             )
-        transcripts.append(text)
+        label = _segment_display_title(segment) or f"Transcript {i + 1}"
+        transcripts.append({"title": label, "text": text})
+    print(transcripts)
+    print("---------------\n\n\n\n")
     return transcripts
 
 
@@ -72,12 +90,14 @@ def prepare_prompt_run(
     prompts: list[Prompt],
     audio_segments: list[AudioSegments],
     max_tokens: int = 1000,
+    *,
+    title: str = "",
 ) -> tuple[PromptRun, list[PromptResult]]:
     """Validate inputs, create ``PromptRun`` and pending ``PromptResult`` rows."""
     _validate_prompt_run_inputs(user, prompts, audio_segments, max_tokens)
 
     with transaction.atomic():
-        prompt_run = PromptRun.objects.create(user=user)
+        prompt_run = PromptRun.objects.create(user=user, title=title.strip())
         prompt_run.prompts.set(prompts)
         prompt_run.audio_segments.set(audio_segments)
         results = [

@@ -119,7 +119,7 @@ class OpenRouterService:
         bearer_token: str,
         model: str,
         system_prompt: str,
-        transcripts: list[str],
+        transcripts: list[dict[str, str]],
         max_tokens: int = 1000,
         temperature: float = 0.7,
     ) -> str:
@@ -130,8 +130,8 @@ class OpenRouterService:
         }
 
         content_blocks = [
-            {"type": "text", "text": f"Transcript {i + 1}:\n{t}"}
-            for i, t in enumerate(transcripts)
+            {"type": "text", "text": f"{t['title']}:\n{t['text']}"}
+            for t in transcripts
         ]
 
         payload: dict = {
@@ -148,7 +148,7 @@ class OpenRouterService:
 
         request_body = payload
 
-        transcript_total_len = sum(len(str(t or "")) for t in transcripts)
+        transcript_total_len = sum(len(str(t.get("text") or "")) for t in transcripts)
 
         try:
             response = requests.post(

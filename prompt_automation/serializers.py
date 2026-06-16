@@ -42,6 +42,7 @@ class PromptRunExecuteSerializer(serializers.Serializer):
         allow_empty=False,
     )
     max_tokens = serializers.IntegerField(default=1000, min_value=0)
+    title = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
 
     def validate_prompt_ids(self, value: list[int]) -> list[int]:
         if len(value) != len(set(value)):
@@ -88,6 +89,10 @@ class PromptRunExecuteSerializer(serializers.Serializer):
         return attrs
 
 
+class PromptRunTitleUpdateSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=255, allow_blank=True)
+
+
 class PromptResultReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = PromptResult
@@ -132,6 +137,7 @@ class PromptRunExecuteResponseSerializer(serializers.Serializer):
     """Response shape shared by prompt run execute (POST) and retrieve (GET)."""
 
     prompt_run_id = serializers.IntegerField(allow_null=True)
+    title = serializers.CharField(allow_blank=True)
     max_tokens = serializers.IntegerField(allow_null=True)
     audio_segments = PromptRunAudioSegmentSerializer(many=True)
     results = PromptResultReadSerializer(many=True)
@@ -146,6 +152,7 @@ class PromptRunExecuteResponseSerializer(serializers.Serializer):
         return cls(
             {
                 "prompt_run_id": prompt_run.pk,
+                "title": prompt_run.title,
                 "max_tokens": max_tokens,
                 "audio_segments": audio_segments,
                 "results": prompt_run.results.order_by("id"),
@@ -193,7 +200,7 @@ class PromptRunListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PromptRun
-        fields = ("id", "created_at", "prompts", "audio_segments")
+        fields = ("id", "title", "created_at", "prompts", "audio_segments")
         read_only_fields = fields
 
     def get_prompts(self, run: PromptRun):

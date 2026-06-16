@@ -18,6 +18,8 @@ class Prompt(models.Model):
 class PromptRun(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
 
+    title = models.CharField(max_length=255, blank=True)
+
     audio_segments = models.ManyToManyField(AudioSegments)
 
     prompts = models.ManyToManyField(Prompt)

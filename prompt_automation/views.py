@@ -15,6 +15,7 @@ from .serializers import (
     PromptRunExecuteResponseSerializer,
     PromptRunExecuteSerializer,
     PromptRunListSerializer,
+    PromptRunTitleUpdateSerializer,
     PromptSerializer,
 )
 from .tasks import run_prompt_run_llm_task
@@ -32,6 +33,7 @@ class PromptRunExecuteView(APIView):
         prompt_ids = serializer.validated_data["prompt_ids"]
         audio_segment_ids = serializer.validated_data["audio_segment_ids"]
         max_tokens = serializer.validated_data["max_tokens"]
+        title = serializer.validated_data.get("title", "")
 
         prompts_by_id = {
             p.pk: p for p in Prompt.objects.filter(id__in=prompt_ids)
@@ -69,6 +71,7 @@ class PromptRunExecuteView(APIView):
                 prompts,
                 audio_segments,
                 max_tokens=max_tokens,
+                title=title,
             )
         except DjangoValidationError as exc:
             err_dict = getattr(exc, "message_dict", None) or getattr(
@@ -85,6 +88,7 @@ class PromptRunExecuteView(APIView):
         response_serializer = PromptRunExecuteResponseSerializer(
             {
                 "prompt_run_id": prompt_run.pk,
+                "title": prompt_run.title,
                 "max_tokens": max_tokens,
                 "audio_segments": audio_segments,
                 "results": results,
@@ -124,6 +128,32 @@ class PromptRunRetrieveView(APIView):
             prompt_run
         )
         return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
+class PromptRunTitleUpdateView(APIView):
+    """Update the title of a prompt run owned by the authenticated user."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        serializer = PromptRunTitleUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            prompt_run = PromptRun.objects.get(pk=pk, user_id=request.user.pk)
+        except PromptRun.DoesNotExist:
+            return Response(
+                {"detail": "Prompt run not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        prompt_run.title = serializer.validated_data["title"].strip()
+        prompt_run.save(update_fields=["title"])
+
+        return Response(
+            {"id": prompt_run.pk, "title": prompt_run.title},
+            status=status.HTTP_200_OK,
+        )
 
 
 class PromptRunListView(generics.ListAPIView):
