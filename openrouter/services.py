@@ -115,6 +115,107 @@ class OpenRouterService:
         return content.strip() if isinstance(content, str) else ""
 
     @staticmethod
+    def get_chat_completion_chained(
+        bearer_token: str,
+        model: str,
+        transcripts: list[dict[str, str]],
+        current_prompt: str,
+        history: list[dict[str, str]],
+        session_id: str = "",
+        max_tokens: int = 10000,
+        temperature: float = 0.7,
+    ) -> str:
+        """Send current_prompt with accumulated history as a multi-turn conversation.
+
+        Transcripts are sent as the first user message with cache_control on the last
+        block so the token prefix is reused across the chain.  history is a list of
+        {"prompt": str, "response": str} pairs from earlier prompts in the same run.
+        session_id pins all calls in the same run to the same provider for sticky routing.
+        """
+        headers = {
+            "Authorization": f"Bearer {bearer_token}",
+            "Content-Type": "application/json",
+            "X-OpenRouter-Experimental-Metadata": "enabled",
+        }
+
+        transcript_blocks = []
+        for i, t in enumerate(transcripts):
+            block: dict = {"type": "text", "text": f"{t['title']}:\n{t['text']}"}
+            if i == len(transcripts) - 1:
+                block["cache_control"] = {"type": "ephemeral"}
+            transcript_blocks.append(block)
+
+        if not history:
+            first_content = transcript_blocks + [
+                {"type": "text", "text": f"\n\n{current_prompt}"}
+            ]
+            messages: list[dict] = [{"role": "user", "content": first_content}]
+        else:
+            first_content = transcript_blocks + [
+                {"type": "text", "text": f"\n\n{history[0]['prompt']}"}
+            ]
+            messages = [{"role": "user", "content": first_content}]
+            messages.append({"role": "assistant", "content": history[0]["response"]})
+            for h in history[1:]:
+                messages.append({"role": "user", "content": h["prompt"]})
+                messages.append({"role": "assistant", "content": h["response"]})
+            messages.append({"role": "user", "content": current_prompt})
+        payload: dict = {"model": model, "messages": messages}
+        if max_tokens is not None and max_tokens > 0:
+            payload["max_tokens"] = max_tokens
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if session_id:
+            payload["session_id"] = session_id[:256]
+
+        transcript_total_len = sum(len(str(t.get("text") or "")) for t in transcripts)
+
+        try:
+            response = requests.post(
+                OpenRouterService.CHAT_COMPLETIONS_ENDPOINT,
+                headers=headers,
+                json=payload,
+                timeout=OpenRouterService.TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            print(
+                f"[OpenRouter] connection error model={model!r} "
+                f"prompt_len={len(current_prompt)} "
+                f"history_len={len(history)} "
+                f"transcript_count={len(transcripts)} "
+                f"transcript_total_len={transcript_total_len} error={exc}"
+            )
+            raise
+
+        if not response.ok:
+            try:
+                upstream_error = response.json()
+            except ValueError:
+                upstream_error = response.text
+
+            print(
+                f"[OpenRouter] HTTP {response.status_code} model={model!r} "
+                f"prompt_len={len(current_prompt)} "
+                f"history_len={len(history)} "
+                f"transcript_count={len(transcripts)} "
+                f"transcript_total_len={transcript_total_len} "
+                f"max_tokens={payload.get('max_tokens')} "
+                f"temperature={payload.get('temperature')} "
+                f"upstream_response={upstream_error!r}"
+            )
+            response.raise_for_status()
+
+        response_data = response.json()
+        choices = response_data.get("choices", [])
+        if not choices:
+            print(f"[OpenRouter] empty choices model={model!r} response={response_data!r}")
+            return ""
+
+        message = choices[0].get("message", {})
+        content = message.get("content")
+        return content.strip() if isinstance(content, str) else ""
+
+    @staticmethod
     def get_chat_completion_with_transcripts(
         bearer_token: str,
         model: str,

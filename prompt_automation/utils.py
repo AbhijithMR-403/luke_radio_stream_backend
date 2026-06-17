@@ -42,8 +42,6 @@ def _transcripts_from_audio_segments(
             )
         label = _segment_display_title(segment) or f"Transcript {i + 1}"
         transcripts.append({"title": label, "text": text})
-    print(transcripts)
-    print("---------------\n\n\n\n")
     return transcripts
 
 
@@ -112,7 +110,7 @@ def prepare_prompt_run(
     return prompt_run, results
 
 
-def execute_prompt_run_llm(prompt_run_id: int, max_tokens: int = 1000) -> None:
+def execute_prompt_run_llm(prompt_run_id: int, max_tokens: int = 10000) -> None:
     """Run OpenRouter for each pending result on an existing prompt run."""
     if max_tokens < 0:
         raise ValidationError("max_tokens must be non-negative")
@@ -130,6 +128,9 @@ def execute_prompt_run_llm(prompt_run_id: int, max_tokens: int = 1000) -> None:
     audio_segments = list(prompt_run.audio_segments.all())
     llm = _llm_settings_for_audio_segments(audio_segments)
 
+    history: list[dict[str, str]] = []
+    session_id = str(prompt_run_id)
+
     for result in prompt_run.results.select_related("prompt").order_by("id"):
         if result.status not in ("pending", "processing"):
             continue
@@ -137,11 +138,13 @@ def execute_prompt_run_llm(prompt_run_id: int, max_tokens: int = 1000) -> None:
         PromptResult.objects.filter(pk=result.pk).update(status="processing")
 
         try:
-            response_text = OpenRouterService.get_chat_completion_with_transcripts(
+            response_text = OpenRouterService.get_chat_completion_chained(
                 bearer_token=llm["api_key"],
                 model=llm["model"],
-                system_prompt=result.prompt.content,
                 transcripts=llm["transcripts"],
+                current_prompt=result.prompt.content,
+                history=history,
+                session_id=session_id,
                 max_tokens=max_tokens,
                 temperature=llm["temperature"],
             )
@@ -155,3 +158,4 @@ def execute_prompt_run_llm(prompt_run_id: int, max_tokens: int = 1000) -> None:
                 status="completed",
                 response=response_text,
             )
+            history.append({"prompt": result.prompt.content, "response": response_text})
