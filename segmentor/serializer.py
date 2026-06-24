@@ -54,6 +54,7 @@ class AudioUnrecognizedCategorySerializer(serializers.ModelSerializer):
 
 class TitleMappingRuleSerializer(serializers.ModelSerializer):
     category_detail = AudioUnrecognizedCategorySerializer(source="category", read_only=True)
+    after_title = serializers.CharField(allow_blank=True, allow_null=True, required=False, default="")
 
     class Meta:
         model = TitleMappingRule
@@ -72,7 +73,9 @@ class TitleMappingRuleSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at", "category_detail"]
     
     def validate(self, data):
-        """Validate that before_title is unique per channel"""
+        if data.get("after_title") is None:
+            data["after_title"] = ""
+
         before_title = data.get('before_title')
         category = data.get('category')
         

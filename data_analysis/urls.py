@@ -10,7 +10,7 @@ urlpatterns = [
     path('rev-callback', views.RevCallbackView.as_view(), name='rev-callback'),
     path('download_media/<path:file_path>', views.MediaDownloadView.as_view(), name='download_media'),
     path('transcribe_and_analyze', views.AudioTranscriptionAndAnalysisView.as_view(), name='transcribe_and_analyze'),
-    # V2 API endpoints
+    # V2 API endpoints Deplicated
     path('v2/audio-segments/', v2_views.ListAudioSegmentsV2View.as_view(), name='v2_audio_segments'),
     path('v2/filter/options/', v2_views.ContentTypePromptView.as_view(), name='v2_content_type_prompt'),
     path('v2/custom-audio/download/', v2_views.DownloadCustomAudioV2View.as_view(), name='v2_custom_audio_download'),
