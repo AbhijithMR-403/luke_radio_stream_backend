@@ -8,20 +8,19 @@ def create_or_update_contact(
     name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Create or update a contact in GHL.
-    
-    First searches for a contact by email. If found, updates the contact's
-    set_url custom field. If not found, creates a new contact with the
-    provided email, name, and link.
-    
+    Create or update a contact in GHL, setting its set_url custom field to `link`.
+
+    Uses GHL API v3's upsert endpoint (one call, create-or-update handled by GHL itself
+    based on email match), rather than a separate search-then-create/update flow.
+
     Args:
         email: Email address of the contact (required)
         link: The link/URL string to set in the custom field (required)
         name: Name of the contact (optional, only used when creating new contact)
-    
+
     Returns:
-        Dictionary containing the API response from create or update operation
-    
+        Dictionary containing the API response from the upsert operation
+
     Raises:
         ValueError: If email or link is not provided
         requests.exceptions.RequestException: If the API request fails
@@ -30,27 +29,9 @@ def create_or_update_contact(
         raise ValueError("email is required")
     if not link:
         raise ValueError("link is required")
-    
-    # Initialize GHL service
-    ghl = GHL()
-    
-    try:
-        # Try to find existing contact by email
-        contact = ghl.search_contact_by_email(email)
-        
-        # Contact found - update it
-        if contact and isinstance(contact, dict) and contact.get("id"):
-            ghl.contact_id = contact["id"]
-            return ghl.update_contact(link)
-        else:
-            # Contact not found in response - create new one
-            if not name:
-                name = email.split("@")[0]  # Use email prefix as default name
-            return ghl.create_contact(name=name, email=email, link=link)
-    
-    except (IndexError, KeyError, TypeError, AttributeError):
-        # Contact not found - create new one
-        if not name:
-            name = email.split("@")[0]  # Use email prefix as default name
-        return ghl.create_contact(name=name, email=email, link=link)
 
+    if not name:
+        name = email.split("@")[0]  # Use email prefix as default name
+
+    ghl = GHL()
+    return ghl.upsert_contact(email=email, link=link, name=name)

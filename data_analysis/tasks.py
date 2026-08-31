@@ -2,14 +2,17 @@ from celery import shared_task
 from datetime import datetime, timedelta
 import logging
 
+from django.utils import timezone
+
 from data_analysis.services.analysis_prereq_check import mark_requires_analysis
 from data_analysis.services.transcription_analyzer import TranscriptionAnalyzer
 from data_analysis.services.transcription_service import RevAISpeechToText
 from data_analysis.services.audio_segments import AudioSegments
 from data_analysis.services.audio_download import ACRCloudAudioDownloader
-from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel 
+from data_analysis.models import RevTranscriptionJob, AudioSegments as AudioSegmentsModel
 from core_admin.models import Channel
 from core_admin.repositories import GeneralSettingService
+from monitoring.services import record_ingestion_health
 
 
 logger = logging.getLogger(__name__)
@@ -96,8 +99,9 @@ def process_channel_task(self, channel_id, date_str=None, is_today=False):
     multiple channels in parallel across different workers.
     """
     try:
+        run_started_at = timezone.now()
         channel = Channel.objects.get(pk=channel_id)
-        
+
         if is_today:
             segments_data = AudioSegments.get_today_data_excluding_last_hour(
                 channel.project_id, channel.channel_id
@@ -108,7 +112,12 @@ def process_channel_task(self, channel_id, date_str=None, is_today=False):
             )
 
         count = _handle_channel_processing(channel, segments_data)
-        
+
+        try:
+            record_ingestion_health(channel, segments_data, count, is_today, date_str, run_started_at)
+        except Exception:
+            logger.exception("monitoring: failed to record ingestion health for channel %s", channel_id)
+
         return {
             'channel_id': channel_id,
             'status': 'success',

@@ -31,7 +31,17 @@ app.conf.beat_schedule = {
     'process-previous-day-audio-data': {
         'task': 'data_analysis.tasks.process_previous_day_audio_data',
         'schedule': crontab(hour=2, minute=0),  # Daily at 2:00 AM
-    }
+    },
+    # System health check (stale ingestion, processing backlog) - every 15 min
+    'check-system-health': {
+        'task': 'monitoring.tasks.check_system_health',
+        'schedule': 900.0,
+    },
+    # OpenAI billing/key validity check - hourly, since it makes real (billed) API calls
+    'check-openai-billing': {
+        'task': 'monitoring.tasks.check_openai_billing',
+        'schedule': 3600.0,
+    },
 }
 
 @app.task(bind=True)

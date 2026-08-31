@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "openrouter",
     "prompt_automation",
     "audio_filter",
+    "monitoring",
 ]
 
 MIDDLEWARE = [
@@ -202,6 +203,7 @@ FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 GHL_API_KEY = config('GHL_API_KEY', default='')
 GHL_LOCATION_ID = config('GHL_LOCATION_ID', default='')
 GHL_CUSTOM_FIELD_SET_URL = config('GHL_CUSTOM_FIELD_SET_URL', default='')
+GHL_CUSTOM_FIELD_ALERT_MESSAGE = config('GHL_CUSTOM_FIELD_ALERT_MESSAGE', default='')
 
 # REST Framework configuration
 REST_FRAMEWORK = {
