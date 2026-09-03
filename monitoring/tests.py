@@ -119,6 +119,28 @@ class RecordIngestionHealthTests(TestCase):
         row = ComponentHealth.objects.get(component=ComponentHealth.COMPONENT_ACR_INGESTION, channel=self.channel)
         self.assertEqual(row.status, ComponentHealth.STATUS_HEALTHY)
 
+    def test_is_today_window_is_the_now_minus_3h_to_now_minus_2h_slot(self):
+        from monitoring.services import _compute_expected_window
+
+        run_started_at = datetime(2026, 1, 1, 19, 0, tzinfo=dt_timezone.utc)  # 7pm
+        window_start, window_end = _compute_expected_window(True, None, run_started_at)
+        self.assertEqual(window_start, datetime(2026, 1, 1, 16, 0, tzinfo=dt_timezone.utc))  # 4pm
+        self.assertEqual(window_end, datetime(2026, 1, 1, 17, 0, tzinfo=dt_timezone.utc))  # 5pm
+
+    def test_is_today_run_only_evaluates_the_recent_hour_slot_not_the_whole_day(self):
+        run_started_at = datetime(2026, 1, 1, 19, 0, tzinfo=dt_timezone.utc)
+        # Segments cover midnight to 6pm (mostly healthy day) but nothing in the 4pm-5pm slot
+        # this run actually checks - should be flagged despite the rest of the day looking fine.
+        make_segment(
+            self.channel,
+            datetime(2026, 1, 1, 0, 0, tzinfo=dt_timezone.utc),
+            datetime(2026, 1, 1, 16, 0, tzinfo=dt_timezone.utc),
+        )
+        record_ingestion_health(self.channel, {"data": [{}]}, 1, True, None, run_started_at)
+        row = ComponentHealth.objects.get(component=ComponentHealth.COMPONENT_ACR_INGESTION, channel=self.channel)
+        self.assertEqual(row.coverage_ratio, 0.0)
+        self.assertEqual(row.status, ComponentHealth.STATUS_WARNING)
+
 
 class CheckSystemHealthTests(TestCase):
     def test_stale_channel_is_flagged_unhealthy(self):

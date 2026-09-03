@@ -109,10 +109,23 @@ def _validate_response_shape(segments_data):
 def _compute_expected_window(is_today, date_str, run_started_at):
     """Returns (window_start_utc, window_end_utc)."""
     if is_today:
-        window_start = run_started_at.replace(hour=0, minute=0, second=0, microsecond=0)
-        window_end = run_started_at - timedelta(hours=1)
-        if window_end < window_start:
-            window_end = window_start
+        # A single, recently-completed 1-hour slot - [now-3h, now-2h] - rather than the whole
+        # day so far. This is deliberately more sensitive to a recent gap than a whole-day
+        # average would be (a 2-3h outage late in the day wouldn't get diluted by many earlier
+        # healthy hours). The 2-hour buffer from "now" gives ACRCloud extra margin to finalize
+        # that hour's data, on top of the 1-hour buffer AudioSegments.get_today_data_excluding_last_hour
+        # already uses for its own fetch.
+        window_end = run_started_at - timedelta(hours=2)
+        window_start = run_started_at - timedelta(hours=3)
+
+        today_midnight = run_started_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        if window_start < today_midnight:
+            # Early in the day - the slot we'd check hasn't happened "today" yet (or spills into
+            # yesterday), matching get_today_data_excluding_last_hour's own early-day no-op
+            # behavior. Not a problem, just nothing to check yet - zero-length window skips
+            # the volume/coverage penalty entirely (see _record_ingestion_health).
+            return today_midnight, today_midnight
+
         return window_start, window_end
 
     if date_str:
@@ -140,6 +153,9 @@ def _evaluate_volume(channel, segments_saved, expected_window_seconds):
     """
     Single-threshold, always-unhealthy-on-trip check - this is the incident-detection check
     (a severely corrupted/degraded ACRCloud feed is a hard problem, not a soft warning).
+
+    expected_window_seconds is normally exactly 1 hour for is_today runs (the fixed
+    [now-3h, now-2h] slot), so this scales down to a full-day window for date_str runs too.
     """
     config = ChannelMonitoringConfig.objects.filter(channel=channel).first()
     if config and config.expected_segments_per_hour and config.low_volume_alert_enabled:
