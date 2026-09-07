@@ -41,7 +41,7 @@ def _pg_dump_version() -> str:
             [_pg_dump_path(), "--version"],
             capture_output=True, text=True, timeout=15,
         )
-        return out.stdout.strip()
+        return out.stdout.strip()[:255]
     except Exception:
         return ""
 
@@ -60,34 +60,35 @@ def run_backup(backup: DBBackup) -> DBBackup:
         backup.save(update_fields=["status", "error", "finished_at"])
         raise BackupLocked(backup.error)
 
-    db = _db_config()
-    backup.status = DBBackup.Status.RUNNING
-    backup.started_at = timezone.now()
-    backup.pg_dump_version = _pg_dump_version()
-    backup.save(update_fields=["status", "started_at", "pg_dump_version"])
-
-    stamp = backup.started_at.strftime("%Y%m%d_%H%M%S")
-    file_name = f"{db.get('NAME', 'db')}_{stamp}.dump"
-    out_path = _backups_dir() / file_name
-
-    cmd = [
-        _pg_dump_path(),
-        "--format=custom",
-        "--compress=6",
-        "--no-owner",
-        "--no-privileges",
-        "--host", str(db.get("HOST") or "localhost"),
-        "--port", str(db.get("PORT") or "5432"),
-        "--username", str(db.get("USER") or ""),
-        "--dbname", str(db.get("NAME") or ""),
-    ]
-    env = {**os.environ}
-    if db.get("PASSWORD"):
-        env["PGPASSWORD"] = str(db["PASSWORD"])
-
-    time_limit = getattr(settings, "DB_BACKUP_TIMEOUT_SECONDS", 60 * 60 * 2)
-
+    out_path = None
     try:
+        db = _db_config()
+        backup.status = DBBackup.Status.RUNNING
+        backup.started_at = timezone.now()
+        backup.pg_dump_version = _pg_dump_version()
+        backup.save(update_fields=["status", "started_at", "pg_dump_version"])
+
+        stamp = backup.started_at.strftime("%Y%m%d_%H%M%S")
+        file_name = f"{db.get('NAME', 'db')}_{stamp}.dump"
+        out_path = _backups_dir() / file_name
+
+        cmd = [
+            _pg_dump_path(),
+            "--format=custom",
+            "--compress=6",
+            "--no-owner",
+            "--no-privileges",
+            "--host", str(db.get("HOST") or "localhost"),
+            "--port", str(db.get("PORT") or "5432"),
+            "--username", str(db.get("USER") or ""),
+            "--dbname", str(db.get("NAME") or ""),
+        ]
+        env = {**os.environ}
+        if db.get("PASSWORD"):
+            env["PGPASSWORD"] = str(db["PASSWORD"])
+
+        time_limit = getattr(settings, "DB_BACKUP_TIMEOUT_SECONDS", 60 * 60 * 2)
+
         with open(out_path, "wb") as stdout:
             proc = subprocess.run(
                 cmd, stdout=stdout, stderr=subprocess.PIPE,
@@ -105,7 +106,8 @@ def run_backup(backup: DBBackup) -> DBBackup:
         backup.status = DBBackup.Status.SUCCESS
         backup.error = ""
     except Exception as exc:
-        out_path.unlink(missing_ok=True)
+        if out_path is not None:
+            out_path.unlink(missing_ok=True)
         backup.status = DBBackup.Status.FAILED
         backup.error = str(exc)[:5000]
     finally:

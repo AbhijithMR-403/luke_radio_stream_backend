@@ -35,7 +35,7 @@ class DBBackup(models.Model):
     file_name = models.CharField(max_length=255, blank=True)
     size_bytes = models.BigIntegerField(null=True, blank=True)
 
-    pg_dump_version = models.CharField(max_length=50, blank=True)
+    pg_dump_version = models.CharField(max_length=255, blank=True)
     celery_task_id = models.CharField(max_length=255, blank=True)
     error = models.TextField(blank=True)
 
