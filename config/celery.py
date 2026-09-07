@@ -42,6 +42,16 @@ app.conf.beat_schedule = {
         'task': 'monitoring.tasks.check_openai_billing',
         'schedule': 3600.0,
     },
+    # Weekly PostgreSQL backup via pg_dump
+    'scheduled-db-backup': {
+        'task': 'db_backup.tasks.scheduled_db_backup',
+        'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Sundays 3:00 AM UTC
+    },
+    # Prune old database backups, keeping the most recent few
+    'cleanup-old-db-backups': {
+        'task': 'db_backup.tasks.cleanup_old_db_backups',
+        'schedule': crontab(hour=4, minute=0, day_of_week=0),  # Sundays 4:00 AM UTC
+    },
 }
 
 @app.task(bind=True)

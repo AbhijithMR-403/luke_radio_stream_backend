@@ -37,6 +37,7 @@ urlpatterns = [
     path('api/', include('openrouter.urls')),
     path('api/', include('prompt_automation.urls')),
     path('api/audio/filter/', include('audio_filter.urls')),
+    path('api/', include('db_backup.urls')),
 ]
 
 if settings.DEBUG:

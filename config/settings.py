@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "prompt_automation",
     "audio_filter",
     "monitoring",
+    "db_backup",
 ]
 
 MIDDLEWARE = [
@@ -158,6 +159,12 @@ AUTH_USER_MODEL = 'accounts.RadioUser'
 
 MEDIA_URL = "/api/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# Database backup (db_backup app) - dumps are written to MEDIA_ROOT/backups/
+DB_BACKUP_PG_DUMP_PATH = config("PG_DUMP_PATH", default="pg_dump")
+DB_BACKUP_RETENTION_DAYS = config("DB_BACKUP_RETENTION_DAYS", default=60, cast=int)
+DB_BACKUP_KEEP_MIN = config("DB_BACKUP_KEEP_MIN", default=5, cast=int)
+DB_BACKUP_TIMEOUT_SECONDS = config("DB_BACKUP_TIMEOUT_SECONDS", default=7200, cast=int)
 
 # Celery Configuration
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
