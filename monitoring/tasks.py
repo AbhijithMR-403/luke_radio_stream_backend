@@ -65,11 +65,14 @@ def _check_stale_ingestion():
         ).first()
         if not row or not row.last_run_at:
             continue  # no run recorded yet - first-run case, not a confirmed failure
-        if row.last_run_at >= stale_cutoff or row.status == ComponentHealth.STATUS_UNHEALTHY:
-            continue  # recent enough, or already flagged unhealthy (nothing new to alert on)
+        if row.last_run_at >= stale_cutoff:
+            continue  # recent enough
 
         previous_status = row.status
-        row.status = ComponentHealth.STATUS_UNHEALTHY
-        row.message = f"No ingestion run recorded since {row.last_run_at.isoformat()}"
-        row.save(update_fields=["status", "message", "updated_at"])
+        if row.status != ComponentHealth.STATUS_UNHEALTHY:
+            row.status = ComponentHealth.STATUS_UNHEALTHY
+            row.message = f"No ingestion run recorded since {row.last_run_at.isoformat()}"
+            row.save(update_fields=["status", "message", "updated_at"])
+        # Always re-evaluate the alert, even if already unhealthy - otherwise a channel that
+        # stays stale indefinitely would get exactly one alert, ever, with no 24h reminder.
         maybe_send_alert(row, previous_status)

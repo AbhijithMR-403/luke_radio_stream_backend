@@ -159,6 +159,28 @@ class CheckSystemHealthTests(TestCase):
         self.assertEqual(row.status, ComponentHealth.STATUS_UNHEALTHY)
         self.assertIn("No ingestion run recorded", row.message)
 
+    @patch("monitoring.tasks.maybe_send_alert")
+    def test_still_stale_channel_still_gets_reevaluated_for_reminders(self, mock_alert):
+        # A channel that's been stale for a long time must keep getting maybe_send_alert
+        # called every tick (so the 24h reminder can fire), not be skipped forever once
+        # it's already flagged unhealthy.
+        channel = make_channel()
+        make_valid_general_setting(channel)
+        ComponentHealth.objects.create(
+            component=ComponentHealth.COMPONENT_ACR_INGESTION,
+            channel=channel,
+            status=ComponentHealth.STATUS_UNHEALTHY,
+            last_run_at=timezone.now() - timedelta(days=5),
+            last_alert_sent_at=timezone.now() - timedelta(days=5),
+        )
+
+        check_system_health()
+
+        mock_alert.assert_called_once()
+        args, _ = mock_alert.call_args
+        self.assertEqual(args[0].status, ComponentHealth.STATUS_UNHEALTHY)
+        self.assertEqual(args[1], ComponentHealth.STATUS_UNHEALTHY)  # previous_status unchanged
+
     def test_channel_with_no_row_yet_is_not_flagged(self):
         channel = make_channel()
         make_valid_general_setting(channel)

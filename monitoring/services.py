@@ -56,11 +56,19 @@ def _record_ingestion_health(channel, segments_data, segments_saved_count, is_to
         status, message = ComponentHealth.STATUS_UNHEALTHY, f"Invalid ACRCloud response: {reason}"
     else:
         window_start, window_end = _compute_expected_window(is_today, date_str, run_started_at)
-        # Re-query what this run actually persisted (by creation time), rather than requiring
-        # the caller to pass the segment objects through - keeps the ingestion task's own code
-        # untouched beyond a single call site.
+        # Query by actual audio time range overlapping the window, not by DB insertion time -
+        # insert_audio_segments dedupes by file_path and leaves created_at untouched for
+        # segments that already existed, so a segment covering this window's audio time was
+        # very likely inserted in an earlier run, not "now". Filtering by created_at would
+        # match an essentially unrelated, incidental set of rows instead of what's actually in
+        # this window. This also keeps the ingestion task's own code untouched beyond one call site.
         run_segments = list(
-            AudioSegments.objects.filter(channel=channel, is_delete=False, created_at__gte=run_started_at)
+            AudioSegments.objects.filter(
+                channel=channel,
+                is_delete=False,
+                start_time__lt=window_end,
+                end_time__gt=window_start,
+            )
         )
         expected_window_seconds, actual_coverage_seconds, coverage_ratio = _compute_coverage(
             run_segments, window_start, window_end
