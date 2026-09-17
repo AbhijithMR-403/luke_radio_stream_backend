@@ -38,6 +38,7 @@ urlpatterns = [
     path('api/', include('prompt_automation.urls')),
     path('api/audio/filter/', include('audio_filter.urls')),
     path('api/', include('db_backup.urls')),
+    path('api/audio-recovery/', include('audio_recovery.urls')),
 ]
 
 if settings.DEBUG:

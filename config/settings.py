@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "audio_filter",
     "monitoring",
     "db_backup",
+    "audio_recovery",
 ]
 
 MIDDLEWARE = [
@@ -165,6 +166,11 @@ DB_BACKUP_PG_DUMP_PATH = config("PG_DUMP_PATH", default="pg_dump")
 DB_BACKUP_RETENTION_DAYS = config("DB_BACKUP_RETENTION_DAYS", default=60, cast=int)
 DB_BACKUP_KEEP_MIN = config("DB_BACKUP_KEEP_MIN", default=5, cast=int)
 DB_BACKUP_TIMEOUT_SECONDS = config("DB_BACKUP_TIMEOUT_SECONDS", default=7200, cast=int)
+
+# ACRCloud Identification API (audio_recovery app) - project console credentials,
+# distinct from the per-tenant Settings.acr_cloud_api_key bearer token used elsewhere.
+ACR_ACCESS_KEY = config("ACR_ACCESS_KEY", default="")
+ACR_ACCESS_SECRET = config("ACR_ACCESS_SECRET", default="")
 
 # Celery Configuration
 CELERY_BROKER_URL = 'redis://localhost:6379/0'

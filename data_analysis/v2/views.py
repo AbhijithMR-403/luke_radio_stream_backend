@@ -10,8 +10,9 @@ from rest_framework import status
 from django.core.cache import cache
 
 from data_analysis.services.custom_audio_service import CustomAudioService
-from data_analysis.v2.serializer import CustomAudioDownloadSerializer
-from data_analysis.models import SavedAudioSegment
+from data_analysis.v2.serializer import CustomAudioDownloadSerializer, AudioSegmentDeleteSerializer
+from data_analysis.models import SavedAudioSegment, DeletedAudioSegment
+from data_analysis.repositories import AudioSegmentDAO
 from core_admin.repositories import GeneralSettingService
 
 
@@ -344,3 +345,43 @@ class DownloadCustomAudioV2View(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+
+class AudioSegmentDeleteView(APIView):
+    """
+    V2 API endpoint to soft-delete a single audio segment.
+    Sets is_delete=True and is_active=False, and records the deletion
+    in DeletedAudioSegment for future reference.
+    """
+
+    def delete(self, request, segment_id, *args, **kwargs):
+        try:
+            serializer = AudioSegmentDeleteSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            reason = serializer.validated_data.get('reason')
+
+            segment = AudioSegmentDAO.get_by_id(segment_id)
+            if not segment:
+                return Response({
+                    'success': False,
+                    'error': f'Audio segment not found: {segment_id}'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            AudioSegmentDAO.soft_delete(segment_id)
+
+            DeletedAudioSegment.objects.create(
+                audio_segment_id=segment_id,
+                channel=segment.channel,
+                reason=reason,
+                deleted_by=request.user if request.user.is_authenticated else None,
+            )
+
+            return Response({
+                'success': True,
+                'message': f'Audio segment {segment_id} deleted',
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

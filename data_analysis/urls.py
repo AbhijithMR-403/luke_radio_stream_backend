@@ -14,4 +14,5 @@ urlpatterns = [
     path('v2/audio-segments/', v2_views.ListAudioSegmentsV2View.as_view(), name='v2_audio_segments'),
     path('v2/filter/options/', v2_views.ContentTypePromptView.as_view(), name='v2_content_type_prompt'),
     path('v2/custom-audio/download/', v2_views.DownloadCustomAudioV2View.as_view(), name='v2_custom_audio_download'),
+    path('v2/audio-segments/<int:segment_id>/delete/', v2_views.AudioSegmentDeleteView.as_view(), name='v2_audio_segment_delete'),
 ]

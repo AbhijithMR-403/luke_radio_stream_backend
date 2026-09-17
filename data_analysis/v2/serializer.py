@@ -190,3 +190,11 @@ class CustomAudioDownloadSerializer(serializers.Serializer):
                 )
             attrs["channel_id"] = folder.channel_id
         return attrs
+
+
+class AudioSegmentDeleteSerializer(serializers.Serializer):
+    """Serializer for soft-deleting a single audio segment"""
+    reason = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True,
+        help_text="Optional reason for the deletion, stored in the audit record"
+    )

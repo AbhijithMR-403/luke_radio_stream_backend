@@ -225,6 +225,8 @@ class AudioSegments(models.Model):
     is_analysis_completed = models.BooleanField(default=False, help_text="Whether data analysis has been completed for this audio segment")
     is_audio_downloaded = models.BooleanField(default=False, help_text="Whether the audio file has been downloaded")
     is_manually_processed = models.BooleanField(default=False, help_text="Whether the segment was manually transcribed or analyzed")
+    # This field is used to track whether the audio segment was manually uploaded (e.g., recovery of corrupted ACRCloud audio) rather than fetched by the automated pipeline.
+    is_recovered_audio = models.BooleanField(default=False, help_text="Whether the segment's audio was manually uploaded (e.g. recovery of corrupted ACRCloud audio) rather than fetched by the automated pipeline")
     is_delete = models.BooleanField(default=False)
 
     # -------------------------
@@ -452,6 +454,30 @@ class AudioSegments(models.Model):
             AudioSegments: Created AudioSegments instance
         """
         return AudioSegments.insert_audio_segments([segment_data], channel_id)[0]
+
+
+class DeletedAudioSegment(models.Model):
+    """Record kept when an AudioSegments row is soft-deleted (is_delete=True,
+    is_active=False), for future reference in case the segment is looked up later.
+    """
+
+    audio_segment = models.ForeignKey(
+        AudioSegments,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='deletion_logs',
+    )
+    channel = models.ForeignKey(Channel, on_delete=models.SET_NULL, null=True, blank=True, related_name='deleted_audio_segments')
+    reason = models.TextField(null=True, blank=True, help_text="Why the segment was deleted")
+    deleted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='deleted_audio_segments')
+    deleted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-deleted_at']
+
+    def __str__(self):
+        return f"Deleted segment {self.audio_segment_id} at {self.deleted_at}"
 
 
 class ReportFolder(models.Model):
