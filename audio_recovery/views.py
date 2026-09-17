@@ -12,11 +12,26 @@ from audio_recovery.tasks import recover_audio_task
 
 
 class RecoverAudioView(APIView):
-    """POST a URL + recorded_at + channel; queues the download + ACRCloud
-    identification as a Celery task and returns immediately (202) with the
-    RecoveredAudioFile id to poll for status/segments."""
+    """GET  /recover/ -> list recovery jobs (newest first), optionally filtered
+    by channel_id / status query params.
+    POST /recover/ -> queue the download + ACRCloud identification as a Celery
+    task and return immediately (202) with the RecoveredAudioFile id to poll
+    for status/segments."""
 
     permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        queryset = RecoveredAudioFile.objects.all().order_by("-created_at")
+
+        channel_id = request.query_params.get("channel_id")
+        if channel_id:
+            queryset = queryset.filter(channel_id=channel_id)
+
+        status_param = request.query_params.get("status")
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+
+        return Response(RecoveredAudioFileSerializer(queryset, many=True).data)
 
     def post(self, request):
         form = RecoverAudioSerializer(data=request.data)
