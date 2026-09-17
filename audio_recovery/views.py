@@ -47,6 +47,7 @@ class RecoverAudioView(APIView):
         recovered_audio_file = create_pending_recovery(
             data["channel"],
             data["recorded_at"],
+            data["url"],
             created_by=request.user,
         )
         folder = data["recorded_at"].strftime("%Y%m%d")

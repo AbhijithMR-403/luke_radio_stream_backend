@@ -10,6 +10,23 @@ class RecoverAudioSerializer(serializers.Serializer):
     channel_id = serializers.PrimaryKeyRelatedField(queryset=Channel.objects.all(), source="channel")
     recorded_at = serializers.DateTimeField(help_text="Real UTC start time of the source recording.")
 
+    def validate_url(self, value):
+        active_statuses = [
+            RecoveredAudioFile.Status.PENDING,
+            RecoveredAudioFile.Status.RUNNING,
+            RecoveredAudioFile.Status.SUCCESS,
+        ]
+        existing = (
+            RecoveredAudioFile.objects.filter(source_url=value, status__in=active_statuses)
+            .order_by("-created_at")
+            .first()
+        )
+        if existing:
+            raise serializers.ValidationError(
+                f"This URL already has a recovery job (id={existing.id}) with status '{existing.get_status_display()}'."
+            )
+        return value
+
 
 class RecoveredSegmentSerializer(serializers.ModelSerializer):
     class Meta:

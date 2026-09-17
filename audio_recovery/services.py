@@ -41,13 +41,15 @@ def save_json(data) -> str:
 def create_pending_recovery(
     channel,
     recorded_at,
+    url: str,
     created_by=None,
 ) -> RecoveredAudioFile:
     """Create the RecoveredAudioFile row (status=PENDING) before the async job
     starts, so the caller has an id to return / poll right away.
 
-    Nothing here is user-supplied except channel/recorded_at - the source URL
-    is what's kept for reference, on the row itself.
+    `url` is stored up front (not just once the task runs) so callers can check
+    for an already-active job on the same URL - see
+    RecoverAudioSerializer.validate_url.
     """
     if not isinstance(channel, Channel):
         channel = Channel.objects.get(pk=channel)
@@ -55,6 +57,7 @@ def create_pending_recovery(
     return RecoveredAudioFile.objects.create(
         channel=channel,
         recorded_at=recorded_at,
+        source_url=url,
         created_by=created_by,
         status=RecoveredAudioFile.Status.PENDING,
     )
@@ -95,9 +98,8 @@ def recover_audio_from_url(
                 check=True,
             )
 
-            recovered_audio_file.source_url = url
             recovered_audio_file.duration_seconds = audio_duration_seconds(full_path)
-            recovered_audio_file.save(update_fields=["source_url", "duration_seconds"])
+            recovered_audio_file.save(update_fields=["duration_seconds"])
 
             results = identify_audio_file(str(full_path), access_key, access_secret)
             save_json(results)
