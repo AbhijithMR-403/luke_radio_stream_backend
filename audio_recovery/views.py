@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 
 from audio_recovery.models import RecoveredAudioFile
 from audio_recovery.serializers import RecoverAudioSerializer, RecoveredAudioFileSerializer
-from audio_recovery.services import create_pending_recovery
+from audio_recovery.services import cleanup_recovery, create_pending_recovery
 from audio_recovery.tasks import recover_audio_task
 
 
@@ -76,3 +76,20 @@ class RecoveryStatusView(APIView):
     def get(self, request, recovered_audio_file_id):
         recovered_audio_file = get_object_or_404(RecoveredAudioFile, pk=recovered_audio_file_id)
         return Response(RecoveredAudioFileSerializer(recovered_audio_file).data)
+
+
+class RecoveryCleanupView(APIView):
+    """POST /recover/<id>/cleanup/ -> delete every AudioSegments a failed
+    recovery job left behind (and their files), in one call. Only works on
+    jobs whose status is 'failed'. Resubmit the same URL via /recover/ afterwards."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, recovered_audio_file_id):
+        get_object_or_404(RecoveredAudioFile, pk=recovered_audio_file_id)
+        try:
+            result = cleanup_recovery(recovered_audio_file_id)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(result, status=status.HTTP_200_OK)
