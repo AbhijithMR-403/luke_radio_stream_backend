@@ -57,16 +57,28 @@ class RecoveredSegmentSerializer(serializers.ModelSerializer):
         ]
 
 
-class RecoveredAudioFileSerializer(serializers.ModelSerializer):
-    segments = serializers.SerializerMethodField()
+class RecoveredAudioFileListSerializer(serializers.ModelSerializer):
+    """Used for GET /recover/ (list) - no nested segments, so listing many
+    jobs doesn't run a query per row."""
 
     class Meta:
         model = RecoveredAudioFile
         fields = [
             "id", "status", "channel", "source_url",
             "recorded_at", "duration_seconds", "celery_task_id", "error",
-            "created_at", "started_at", "finished_at", "segments",
+            "created_at", "started_at", "finished_at",
         ]
+        read_only_fields = fields
+
+
+class RecoveredAudioFileSerializer(RecoveredAudioFileListSerializer):
+    """Used for POST /recover/ and GET /recover/<id>/status/ - includes the
+    segments a successful job created."""
+
+    segments = serializers.SerializerMethodField()
+
+    class Meta(RecoveredAudioFileListSerializer.Meta):
+        fields = RecoveredAudioFileListSerializer.Meta.fields + ["segments"]
         read_only_fields = fields
 
     def get_segments(self, obj):

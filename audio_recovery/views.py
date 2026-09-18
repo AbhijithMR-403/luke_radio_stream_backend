@@ -6,7 +6,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from audio_recovery.models import RecoveredAudioFile
-from audio_recovery.serializers import RecoverAudioSerializer, RecoveredAudioFileSerializer
+from audio_recovery.serializers import (
+    RecoverAudioSerializer,
+    RecoveredAudioFileListSerializer,
+    RecoveredAudioFileSerializer,
+)
 from audio_recovery.services import cleanup_recovery, create_pending_recovery
 from audio_recovery.tasks import recover_audio_task
 
@@ -31,7 +35,7 @@ class RecoverAudioView(APIView):
         if status_param:
             queryset = queryset.filter(status=status_param)
 
-        return Response(RecoveredAudioFileSerializer(queryset, many=True).data)
+        return Response(RecoveredAudioFileListSerializer(queryset, many=True).data)
 
     def post(self, request):
         form = RecoverAudioSerializer(data=request.data)
