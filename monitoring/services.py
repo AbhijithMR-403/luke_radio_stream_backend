@@ -1,10 +1,10 @@
 import logging
 from datetime import datetime, timedelta, timezone as dt_timezone
 
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 
-from data_analysis.models import AudioSegments
+from data_analysis.models import AudioSegments, RevTranscriptionJob
 from monitoring.integrations import send_alert_via_ghl
 from monitoring.models import AlertRecipient, ChannelMonitoringConfig, ComponentHealth
 
@@ -279,6 +279,90 @@ def _record_openai_billing_health(channel, is_valid, error_message):
         defaults=defaults,
     )
     maybe_send_alert(component_health, previous_status)
+
+
+# ---------------------------------------------------------------------------
+# Rev.ai transcription
+# ---------------------------------------------------------------------------
+
+def record_transcription_health(channel, account_result):
+    """Upserts the transcription ComponentHealth row for `channel`. Never raises."""
+    try:
+        _record_transcription_health(channel, account_result)
+    except Exception:
+        logger.exception("monitoring: failed to record transcription health for channel %s", channel.id)
+
+
+def _record_transcription_health(channel, account_result):
+    previous = ComponentHealth.objects.filter(
+        component=ComponentHealth.COMPONENT_TRANSCRIPTION, channel=channel
+    ).first()
+    previous_status = previous.status if previous else ComponentHealth.STATUS_UNKNOWN
+
+    balance_status, balance_message = _evaluate_revai_account(account_result)
+    jobs_status, jobs_message, job_details = _evaluate_recent_rev_jobs(channel)
+    status, message = _combine_status(balance_status, balance_message, jobs_status, jobs_message)
+
+    now = timezone.now()
+    defaults = {
+        "status": status,
+        "last_run_at": now,
+        "message": message[:255],
+        "details": {"balance_seconds": account_result.get("balance_seconds"), **job_details},
+    }
+    if status == ComponentHealth.STATUS_HEALTHY:
+        defaults["last_success_at"] = now
+
+    component_health, _ = ComponentHealth.objects.update_or_create(
+        component=ComponentHealth.COMPONENT_TRANSCRIPTION,
+        channel=channel,
+        defaults=defaults,
+    )
+    maybe_send_alert(component_health, previous_status)
+
+
+def _evaluate_revai_account(account_result):
+    """Invalid key / zero credit is a hard outage; low credit is a warning so it can be topped up first."""
+    if not account_result.get("is_valid"):
+        return ComponentHealth.STATUS_UNHEALTHY, account_result.get("error_message") or "Rev.ai access token invalid"
+
+    balance_seconds = account_result.get("balance_seconds")
+    if balance_seconds is None:
+        return ComponentHealth.STATUS_HEALTHY, ""  # couldn't read it - the job check below still applies
+    if balance_seconds <= 0:
+        return ComponentHealth.STATUS_UNHEALTHY, "Rev.ai credit balance exhausted - transcription has stopped"
+    if balance_seconds < 5 * 3600:
+        return ComponentHealth.STATUS_WARNING, (
+            f"Rev.ai credit balance low: {balance_seconds / 3600:.1f}h of audio remaining"
+        )
+    return ComponentHealth.STATUS_HEALTHY, ""
+
+
+def _evaluate_recent_rev_jobs(channel):
+    """
+    Unhealthy if every Rev job that resolved in the last 2h failed (min 5, so a single bad
+    file doesn't page anyone). Recovers on its own as soon as one job transcribes again, which
+    also covers the case where the balance couldn't be read.
+    """
+    window_start = timezone.now() - timedelta(hours=2)
+    recent = RevTranscriptionJob.objects.filter(audio_segment__channel=channel, updated_at__gte=window_start)
+    failed = recent.filter(status="failed")
+    failed_count = failed.count()
+    transcribed_count = recent.filter(status="transcribed").count()
+    top_failure = (
+        failed.values("failure").annotate(n=Count("id")).order_by("-n").values_list("failure", flat=True).first()
+    )
+    details = {
+        "jobs_failed_2h": failed_count,
+        "jobs_transcribed_2h": transcribed_count,
+        "top_failure_2h": top_failure,
+    }
+
+    if failed_count >= 5 and transcribed_count == 0:
+        return ComponentHealth.STATUS_UNHEALTHY, (
+            f"All {failed_count} Rev.ai jobs in the last 2h failed ({top_failure or 'unknown reason'})"
+        ), details
+    return ComponentHealth.STATUS_HEALTHY, "", details
 
 
 # ---------------------------------------------------------------------------

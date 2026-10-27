@@ -47,6 +47,7 @@ class HealthCheckView(views.APIView):
 
         acr_rows = [r for r in rows if r.component == ComponentHealth.COMPONENT_ACR_INGESTION]
         openai_rows = [r for r in rows if r.component == ComponentHealth.COMPONENT_OPENAI_BILLING]
+        transcription_rows = [r for r in rows if r.component == ComponentHealth.COMPONENT_TRANSCRIPTION]
         pipeline_row = next(
             (r for r in rows if r.component == ComponentHealth.COMPONENT_PROCESSING_PIPELINE), None
         )
@@ -59,6 +60,10 @@ class HealthCheckView(views.APIView):
             "openai_billing": {
                 "status": _worst([r.status for r in openai_rows]),
                 "channels": [_channel_row(r) for r in openai_rows],
+            },
+            "transcription": {
+                "status": _worst([r.status for r in transcription_rows]),
+                "channels": [{**_channel_row(r), "details": r.details} for r in transcription_rows],
             },
             "processing_pipeline": {
                 "status": pipeline_row.status if pipeline_row else ComponentHealth.STATUS_UNKNOWN,

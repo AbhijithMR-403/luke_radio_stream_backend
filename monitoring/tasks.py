@@ -6,12 +6,13 @@ from django.utils import timezone
 
 from core_admin.models import GeneralSetting
 from data_analysis.tasks import deactivate_channels_without_valid_settings
-from monitoring.integrations import validate_openai_api_key
+from monitoring.integrations import get_revai_account_balance, validate_openai_api_key
 from monitoring.models import ComponentHealth
 from monitoring.services import (
     maybe_send_alert,
     record_openai_billing_health,
     record_processing_backlog_health,
+    record_transcription_health,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,28 @@ def check_openai_billing():
             record_openai_billing_health(setting.channel, result["is_valid"], result["error_message"])
         except Exception:
             logger.exception("monitoring: failed openai billing check for channel %s", setting.channel_id)
+
+
+@shared_task
+def check_transcription_health():
+    """
+    Beat-scheduled task (every 15 min) - checks each active channel's Rev.ai credit balance and
+    whether its recent Rev jobs are all failing. Rev.ai accepts jobs on an exhausted account and
+    fails them afterwards via the callback, so without this an empty balance stops transcription
+    (and therefore analysis) silently.
+    """
+    active_settings = GeneralSetting.objects.filter(
+        is_active=True, channel__is_active=True, channel__is_deleted=False
+    ).select_related("channel")
+
+    for setting in active_settings:
+        if not setting.revai_access_token:
+            continue
+        try:
+            account_result = get_revai_account_balance(setting.revai_access_token)
+            record_transcription_health(setting.channel, account_result)
+        except Exception:
+            logger.exception("monitoring: failed transcription check for channel %s", setting.channel_id)
 
 
 def _check_stale_ingestion():

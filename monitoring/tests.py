@@ -6,10 +6,10 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from core_admin.models import Channel, GeneralSetting
-from data_analysis.models import AudioSegments
+from data_analysis.models import AudioSegments, RevTranscriptionJob
 from monitoring.models import AlertRecipient, ChannelMonitoringConfig, ComponentHealth
 from monitoring.services import maybe_send_alert, record_ingestion_health
-from monitoring.tasks import check_openai_billing, check_system_health
+from monitoring.tasks import check_openai_billing, check_system_health, check_transcription_health
 
 
 def make_channel(**kwargs):
@@ -359,3 +359,116 @@ class ValidateOpenAIApiKeyTests(TestCase):
         mock_post.side_effect = requests_module.exceptions.ConnectionError("down")
         result = validate_openai_api_key("sk-whatever")
         self.assertTrue(result["is_valid"])
+
+
+def make_rev_job(segment, status, failure=None):
+    return RevTranscriptionJob.objects.create(
+        job_id=f"job-{RevTranscriptionJob.objects.count()}-{segment.pk}",
+        job_name="test",
+        media_url="https://example.com/a.mp3",
+        status=status,
+        created_on=timezone.now(),
+        failure=failure,
+        audio_segment=segment,
+    )
+
+
+class CheckTranscriptionHealthTests(TestCase):
+    def setUp(self):
+        self.channel = make_channel()
+        make_valid_general_setting(self.channel)
+        now = timezone.now()
+        self.segment = make_segment(self.channel, now - timedelta(minutes=5), now)
+
+    def _row(self):
+        return ComponentHealth.objects.get(component=ComponentHealth.COMPONENT_TRANSCRIPTION, channel=self.channel)
+
+    @patch("monitoring.tasks.get_revai_account_balance")
+    def test_healthy_balance(self, mock_balance):
+        mock_balance.return_value = {"is_valid": True, "balance_seconds": 100 * 3600, "error_message": None}
+        check_transcription_health()
+        self.assertEqual(self._row().status, ComponentHealth.STATUS_HEALTHY)
+        self.assertEqual(self._row().details["balance_seconds"], 100 * 3600)
+
+    @patch("monitoring.tasks.get_revai_account_balance")
+    def test_zero_balance_is_unhealthy(self, mock_balance):
+        mock_balance.return_value = {"is_valid": True, "balance_seconds": 0, "error_message": None}
+        check_transcription_health()
+        self.assertEqual(self._row().status, ComponentHealth.STATUS_UNHEALTHY)
+        self.assertIn("exhausted", self._row().message)
+
+    @patch("monitoring.tasks.get_revai_account_balance")
+    def test_low_balance_is_warning(self, mock_balance):
+        mock_balance.return_value = {"is_valid": True, "balance_seconds": 3600, "error_message": None}
+        check_transcription_health()
+        self.assertEqual(self._row().status, ComponentHealth.STATUS_WARNING)
+
+    @patch("monitoring.tasks.get_revai_account_balance")
+    def test_invalid_key_is_unhealthy(self, mock_balance):
+        mock_balance.return_value = {"is_valid": False, "balance_seconds": None, "error_message": "Unauthorized"}
+        check_transcription_health()
+        self.assertEqual(self._row().status, ComponentHealth.STATUS_UNHEALTHY)
+
+    @patch("monitoring.tasks.get_revai_account_balance")
+    def test_all_recent_jobs_failing_is_unhealthy_even_if_balance_unknown(self, mock_balance):
+        mock_balance.return_value = {"is_valid": True, "balance_seconds": None, "error_message": None}
+        for _ in range(5):
+            make_rev_job(self.segment, "failed", failure="insufficient_balance")
+        check_transcription_health()
+        self.assertEqual(self._row().status, ComponentHealth.STATUS_UNHEALTHY)
+        self.assertIn("insufficient_balance", self._row().message)
+
+    @patch("monitoring.tasks.get_revai_account_balance")
+    def test_one_success_among_failures_is_healthy(self, mock_balance):
+        mock_balance.return_value = {"is_valid": True, "balance_seconds": None, "error_message": None}
+        for _ in range(5):
+            make_rev_job(self.segment, "failed", failure="download_failure")
+        make_rev_job(self.segment, "transcribed")
+        check_transcription_health()
+        self.assertEqual(self._row().status, ComponentHealth.STATUS_HEALTHY)
+
+    @patch("monitoring.services.send_alert_via_ghl")
+    @patch("monitoring.tasks.get_revai_account_balance")
+    def test_alert_sent_to_channel_recipient_on_exhausted_balance(self, mock_balance, mock_ghl):
+        AlertRecipient.objects.create(email="ops@example.com", channel=self.channel, is_active=True)
+        mock_balance.return_value = {"is_valid": True, "balance_seconds": 0, "error_message": None}
+        check_transcription_health()
+        mock_ghl.assert_called_once()
+        self.assertIn("[UNHEALTHY] transcription", mock_ghl.call_args.kwargs["message"])
+
+    @patch("monitoring.tasks.get_revai_account_balance")
+    def test_channel_without_rev_token_is_skipped(self, mock_balance):
+        GeneralSetting.objects.filter(channel=self.channel).update(revai_access_token="")
+        check_transcription_health()
+        mock_balance.assert_not_called()
+
+
+class RevaiAccountBalanceTests(TestCase):
+    @patch("monitoring.integrations.requests.get")
+    def test_reads_balance(self, mock_get):
+        from monitoring.integrations import get_revai_account_balance
+
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {"email": "x@example.com", "balance_seconds": 1234}
+        result = get_revai_account_balance("token")
+        self.assertEqual(result, {"is_valid": True, "balance_seconds": 1234, "error_message": None})
+
+    @patch("monitoring.integrations.requests.get")
+    def test_unauthorized(self, mock_get):
+        from monitoring.integrations import get_revai_account_balance
+
+        mock_get.return_value.status_code = 401
+        mock_get.return_value.json.return_value = {"title": "Authorization has been denied for this request"}
+        result = get_revai_account_balance("bad")
+        self.assertFalse(result["is_valid"])
+
+    @patch("monitoring.integrations.requests.get")
+    def test_network_error_fails_open(self, mock_get):
+        import requests as requests_module
+
+        from monitoring.integrations import get_revai_account_balance
+
+        mock_get.side_effect = requests_module.exceptions.ConnectionError("down")
+        result = get_revai_account_balance("token")
+        self.assertTrue(result["is_valid"])
+        self.assertIsNone(result["balance_seconds"])

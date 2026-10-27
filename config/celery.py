@@ -42,6 +42,11 @@ app.conf.beat_schedule = {
         'task': 'monitoring.tasks.check_openai_billing',
         'schedule': 3600.0,
     },
+    # Rev.ai credit balance + failing-jobs check - every 15 min (the /account call is free)
+    'check-transcription-health': {
+        'task': 'monitoring.tasks.check_transcription_health',
+        'schedule': 900.0,
+    },
     # Weekly PostgreSQL backup via pg_dump
     'scheduled-db-backup': {
         'task': 'db_backup.tasks.scheduled_db_backup',

@@ -53,6 +53,44 @@ def validate_openai_api_key(api_key: str, max_attempts: int = 2):
     return {"is_valid": False, "error_message": f"Unexpected response from OpenAI API: {response.status_code}"}
 
 
+def get_revai_account_balance(access_token: str):
+    """
+    Reads the Rev.ai account's remaining credit via GET /speechtotext/v1/account (free, not
+    billed). Rev.ai accepts jobs on an exhausted account and only fails them afterwards with
+    insufficient_balance, so the balance is the earliest signal that transcription will stop.
+
+    Returns dict: {"is_valid": bool, "balance_seconds": int or None, "error_message": str or None}
+    balance_seconds is None when it couldn't be determined (network/server error - fails open).
+    """
+    if not access_token or not access_token.strip():
+        return {"is_valid": False, "balance_seconds": None, "error_message": "Rev.ai access token cannot be empty"}
+
+    url = "https://api.rev.ai/speechtotext/v1/account"
+    headers = {"Authorization": f"Bearer {access_token.strip()}"}
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+    except requests.exceptions.RequestException:
+        return {"is_valid": True, "balance_seconds": None, "error_message": None}
+
+    if response.status_code >= 500:
+        return {"is_valid": True, "balance_seconds": None, "error_message": None}
+    if response.status_code in (401, 403):
+        error_message = BaseAPIUtils.extract_error_message(response, "Invalid Rev.ai access token")
+        return {"is_valid": False, "balance_seconds": None, "error_message": error_message}
+    if response.status_code != 200:
+        return {
+            "is_valid": True,
+            "balance_seconds": None,
+            "error_message": f"Unexpected response from Rev.ai API: {response.status_code}",
+        }
+
+    try:
+        balance_seconds = int(response.json().get("balance_seconds"))
+    except (ValueError, TypeError, AttributeError):
+        balance_seconds = None
+    return {"is_valid": True, "balance_seconds": balance_seconds, "error_message": None}
+
+
 _GHL_BASE_URL = "https://services.leadconnectorhq.com"
 _GHL_API_VERSION = "v3"
 

@@ -9,10 +9,12 @@ class ComponentHealth(models.Model):
     COMPONENT_ACR_INGESTION = "acr_ingestion"
     COMPONENT_PROCESSING_PIPELINE = "processing_pipeline"
     COMPONENT_OPENAI_BILLING = "openai_billing"
+    COMPONENT_TRANSCRIPTION = "transcription"
     COMPONENT_CHOICES = (
         (COMPONENT_ACR_INGESTION, "ACRCloud Ingestion"),
         (COMPONENT_PROCESSING_PIPELINE, "Processing Pipeline"),
         (COMPONENT_OPENAI_BILLING, "OpenAI Billing"),
+        (COMPONENT_TRANSCRIPTION, "Rev.ai Transcription"),
     )
 
     STATUS_HEALTHY = "healthy"
@@ -111,7 +113,8 @@ class AlertRecipient(models.Model):
         blank=True,
         related_name="alert_recipients",
         help_text=(
-            "Only notified about this channel's components (acr_ingestion, openai_billing). "
+            "Only notified about this channel's components (acr_ingestion, openai_billing, "
+            "transcription). "
             "Leave blank to be notified about every channel plus channel-independent "
             "components (e.g. the processing pipeline backlog)."
         ),
